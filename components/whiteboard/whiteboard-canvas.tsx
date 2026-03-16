@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStageStore } from '@/lib/store';
 import { useCanvasStore } from '@/lib/store/canvas';
+import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { ScreenElement } from '@/components/slide-renderer/Editor/ScreenElement';
 import type { PPTElement } from '@/lib/types/slides';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -95,6 +96,41 @@ export function WhiteboardCanvas() {
   const whiteboard = stage?.whiteboard?.[0];
   const elements = whiteboard?.elements || [];
 
+  // Auto-snapshot: save previous elements when content is replaced by AI.
+  // Debounced (2s) so adding elements one-by-one doesn't spam snapshots.
+  const prevElementsRef = useRef<PPTElement[]>([]);
+  const elementsKey = elements.map((e) => e.id).join(',');
+  const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const prev = prevElementsRef.current;
+    const prevKey = prev.map((e) => e.id).join(',');
+
+    // Clear any pending snapshot timer
+    if (snapshotTimerRef.current) {
+      clearTimeout(snapshotTimerRef.current);
+      snapshotTimerRef.current = null;
+    }
+
+    // Only snapshot when old content was non-empty and IDs actually changed
+    // Skip if we're in the middle of a restore operation
+    const { isRestoring } = useWhiteboardHistoryStore.getState();
+    if (prev.length > 0 && prevKey !== elementsKey && elementsKey !== '' && !isRestoring) {
+      // Capture prev in closure before it's overwritten
+      const elementsToSave = prev;
+      snapshotTimerRef.current = setTimeout(() => {
+        useWhiteboardHistoryStore.getState().pushSnapshot(elementsToSave);
+        snapshotTimerRef.current = null;
+      }, 2000);
+    }
+    prevElementsRef.current = elements;
+
+    return () => {
+      if (snapshotTimerRef.current) {
+        clearTimeout(snapshotTimerRef.current);
+      }
+    };
+  }, [elementsKey, elements]);
+
   // Whiteboard fixed size: 1000 x 562.5 (16:9)
   const canvasWidth = 1000;
   const canvasHeight = 562.5;
@@ -129,8 +165,8 @@ export function WhiteboardCanvas() {
     for (const el of elements) {
       const left = el.left ?? 0;
       const top = el.top ?? 0;
-      const width = el.width ?? 0;
-      const height = el.height ?? 0;
+      const width = 'width' in el ? (el.width ?? 0) : 0;
+      const height = 'height' in el ? (el.height ?? 0) : 0;
       minX = Math.min(minX, left);
       minY = Math.min(minY, top);
       maxX = Math.max(maxX, left + width);
@@ -168,8 +204,7 @@ export function WhiteboardCanvas() {
   const [isResetting, setIsResetting] = useState(false);
 
   // Reset view only when whiteboard content actually changes (not on every re-render).
-  // Use a stable string key from element IDs instead of object reference.
-  const elementsKey = elements.map((e) => e.id).join(',');
+  // elementsKey is defined above (auto-snapshot section)
   useEffect(() => {
     setViewZoom(1);
     setPanX(0);
@@ -323,7 +358,7 @@ export function WhiteboardCanvas() {
                 whileHover={{ opacity: 1 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleDoubleClick();
+                  handleDoubleClick(e as unknown as React.MouseEvent);
                 }}
                 className="absolute bottom-3 right-3 z-50 px-2.5 py-1 rounded-md
                   bg-black/60 text-white text-xs backdrop-blur-sm
