@@ -58,7 +58,11 @@ export async function POST(req: Request) {
         result = await searchWithBrave({ query: query.trim() });
         break;
       case 'baidu':
-        result = await searchWithBaidu({ query: query.trim(), apiKey, subSources: baiduSubSources });
+        result = await searchWithBaidu({
+          query: query.trim(),
+          apiKey,
+          subSources: baiduSubSources,
+        });
         break;
       case 'tavily':
       default:

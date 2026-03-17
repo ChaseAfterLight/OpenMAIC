@@ -314,9 +314,7 @@ function GenerationPreviewContent() {
             apiKey: wsApiKey || undefined,
             provider: wsSettings.webSearchProviderId,
             baiduSubSources:
-              wsSettings.webSearchProviderId === 'baidu'
-                ? wsSettings.baiduSubSources
-                : undefined,
+              wsSettings.webSearchProviderId === 'baidu' ? wsSettings.baiduSubSources : undefined,
           }),
           signal,
         });
