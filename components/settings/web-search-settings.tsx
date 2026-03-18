@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
+import { Eye, EyeOff } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
 import { WEB_SEARCH_PROVIDERS, BAIDU_SUB_SOURCES } from '@/lib/web-search/constants';
 import type { WebSearchProviderId, BaiduSubSources } from '@/lib/web-search/types';
-import { Eye, EyeOff } from 'lucide-react';
 
 interface WebSearchSettingsProps {
   selectedProviderId: WebSearchProviderId;
@@ -25,38 +25,43 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
 
   const provider = WEB_SEARCH_PROVIDERS[selectedProviderId];
   const isServerConfigured = !!webSearchProvidersConfig[selectedProviderId]?.isServerConfigured;
+  const showApiKeyInput = provider.requiresApiKey || isServerConfigured;
 
-  // Reset showApiKey when provider changes (derived state pattern)
   const [prevSelectedProviderId, setPrevSelectedProviderId] = useState(selectedProviderId);
   if (selectedProviderId !== prevSelectedProviderId) {
     setPrevSelectedProviderId(selectedProviderId);
     setShowApiKey(false);
   }
 
+  const effectiveBaseUrl =
+    webSearchProvidersConfig[selectedProviderId]?.baseUrl || provider.defaultBaseUrl || '';
+
   return (
     <div className="space-y-6 max-w-3xl">
-      {/* Server-configured notice */}
       {isServerConfigured && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
           {t('settings.serverConfiguredNotice')}
         </div>
       )}
 
-      {/* No API key needed notice (e.g., Brave Search) */}
       {!provider.requiresApiKey && !isServerConfigured && (
-        <div className="rounded-lg border border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30 p-3 text-sm text-green-700 dark:text-green-300">
+        <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300">
           {t('settings.webSearchNoApiKeyNeeded')}
         </div>
       )}
 
-      {/* API Key + Base URL Configuration — always show, but with different hints */}
-      <>
-        <div className="grid grid-cols-2 gap-4">
+      <div className={`grid gap-4 ${showApiKeyInput ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        {showApiKeyInput && (
           <div className="space-y-2">
             <Label className="text-sm">{t('settings.webSearchApiKey')}</Label>
             <div className="relative">
               <Input
+                name={`web-search-api-key-${selectedProviderId}`}
                 type={showApiKey ? 'text' : 'password'}
+                autoComplete="new-password"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 placeholder={
                   isServerConfigured ? t('settings.optionalOverride') : t('settings.enterApiKey')
                 }
@@ -78,37 +83,34 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
             </div>
             <p className="text-xs text-muted-foreground">{t('settings.webSearchApiKeyHint')}</p>
           </div>
+        )}
 
-          <div className="space-y-2">
-            <Label className="text-sm">{t('settings.webSearchBaseUrl')}</Label>
-            <Input
-              placeholder={provider.defaultBaseUrl || ''}
-              value={webSearchProvidersConfig[selectedProviderId]?.baseUrl || ''}
-              onChange={(e) =>
-                setWebSearchProviderConfig(selectedProviderId, {
-                  baseUrl: e.target.value,
-                })
-              }
-              className="text-sm"
-            />
-          </div>
+        <div className="space-y-2">
+          <Label className="text-sm">{t('settings.webSearchBaseUrl')}</Label>
+          <Input
+            name={`web-search-base-url-${selectedProviderId}`}
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder={provider.defaultBaseUrl || 'https://api.tavily.com'}
+            value={webSearchProvidersConfig[selectedProviderId]?.baseUrl || ''}
+            onChange={(e) =>
+              setWebSearchProviderConfig(selectedProviderId, {
+                baseUrl: e.target.value,
+              })
+            }
+            className="text-sm"
+          />
         </div>
+      </div>
 
-        {/* Request URL Preview */}
-        {(() => {
-          const effectiveBaseUrl =
-            webSearchProvidersConfig[selectedProviderId]?.baseUrl || provider.defaultBaseUrl || '';
-          if (!effectiveBaseUrl) return null;
-          const fullUrl = effectiveBaseUrl + '/search';
-          return (
-            <p className="text-xs text-muted-foreground break-all">
-              {t('settings.requestUrl')}: {fullUrl}
-            </p>
-          );
-        })()}
-      </>
+      {effectiveBaseUrl && (
+        <p className="text-xs text-muted-foreground break-all">
+          {t('settings.requestUrl')}: {effectiveBaseUrl}/search
+        </p>
+      )}
 
-      {/* ── Baidu Sub-Source Toggles ── */}
       {selectedProviderId === 'baidu' && (
         <div className="space-y-3">
           <Label className="text-sm font-medium">
