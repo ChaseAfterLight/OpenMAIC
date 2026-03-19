@@ -4,7 +4,9 @@ export const SUPPORTED_DOCUMENT_ACCEPT = ['.pdf', '.md', '.txt', '.markdown'].jo
 
 export type SupportedDocumentType = 'pdf' | 'text';
 
-export function getSupportedDocumentType(file: Pick<File, 'name' | 'type'>): SupportedDocumentType | null {
+export function getSupportedDocumentType(
+  file: Pick<File, 'name' | 'type'>,
+): SupportedDocumentType | null {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
 
   if ((TEXT_DOCUMENT_EXTENSIONS as readonly string[]).includes(ext)) {
