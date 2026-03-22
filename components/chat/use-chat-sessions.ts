@@ -353,6 +353,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
         apiKey: string;
         baseUrl?: string;
         model?: string;
+        providerType?: string;
       },
       controller: AbortController,
       sessionType: SessionType,
@@ -771,6 +772,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             apiKey: mc.apiKey,
             baseUrl: mc.baseUrl,
             model: mc.modelString,
+            providerType: mc.providerType,
           },
           controller,
           session.type,
@@ -1006,6 +1008,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             apiKey: mc.apiKey,
             baseUrl: mc.baseUrl,
             model: mc.modelString,
+            providerType: mc.providerType,
           },
           controller,
           sessionType,
@@ -1162,6 +1165,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             apiKey: mc.apiKey,
             baseUrl: mc.baseUrl,
             model: mc.modelString,
+            providerType: mc.providerType,
           },
           controller,
           'discussion',
