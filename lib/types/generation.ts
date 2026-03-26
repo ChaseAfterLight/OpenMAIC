@@ -7,6 +7,7 @@
 
 import type { ActionType } from './action';
 import type { MediaGenerationRequest } from '@/lib/media/types';
+import type { K12StructuredInput } from '@/lib/module-host/types';
 
 // ==================== PDF Image Types ====================
 
@@ -63,6 +64,8 @@ export interface UploadedDocument {
  * All details (topic, duration, style, etc.) should be included in the requirement text
  */
 export interface UserRequirements {
+  moduleId?: 'core' | 'k12'; // Active business module for prompt and UI selection
+  k12?: K12StructuredInput; // Structured K12 settings when active business module is k12
   requirement: string; // Single free-form text for all user input
   language: 'zh-CN' | 'en-US'; // Course language - critical for generation
   userNickname?: string; // Student nickname for personalization
@@ -93,6 +96,8 @@ export interface LegacyUserRequirements {
  */
 export interface SceneOutline {
   id: string;
+  moduleId?: 'core' | 'k12';
+  k12?: K12StructuredInput;
   type: 'slide' | 'quiz' | 'interactive' | 'pbl';
   title: string;
   description: string; // 1-2 sentences describing the purpose

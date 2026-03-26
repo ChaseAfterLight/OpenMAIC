@@ -45,6 +45,7 @@ import type {
   GenerationCallbacks,
 } from './pipeline-types';
 import { createLogger } from '@/lib/logger';
+import { buildSceneModuleContext } from '@/lib/module-host/prompt-context';
 const log = createLogger('Generation');
 
 // ==================== Stage 2: Full Scenes (Two-Step) ====================
@@ -544,6 +545,7 @@ async function generateSlideContent(
     canvas_width: canvasWidth,
     canvas_height: canvasHeight,
     teacherContext,
+    moduleContext: buildSceneModuleContext(outline),
   });
 
   if (!prompts) {
@@ -646,6 +648,7 @@ async function generateQuizContent(
     questionCount: quizConfig.questionCount,
     difficulty: quizConfig.difficulty,
     questionTypes: quizConfig.questionTypes.join(', '),
+    moduleContext: buildSceneModuleContext(outline),
   });
 
   if (!prompts) {
@@ -742,12 +745,14 @@ async function generateInteractiveContent(
   // Step 1: Scientific modeling (with fallback on failure)
   let scientificModel: ScientificModel | undefined;
   try {
+    const moduleContext = buildSceneModuleContext(outline);
     const modelPrompts = buildPrompt(PROMPT_IDS.INTERACTIVE_SCIENTIFIC_MODEL, {
       subject: config.subject || '',
       conceptName: config.conceptName,
       conceptOverview: config.conceptOverview,
       keyPoints: (outline.keyPoints || []).map((p, i) => `${i + 1}. ${p}`).join('\n'),
       designIdea: config.designIdea,
+      moduleContext,
     });
 
     if (modelPrompts) {
@@ -793,6 +798,7 @@ async function generateInteractiveContent(
     scientificConstraints,
     designIdea: config.designIdea,
     language,
+    moduleContext: buildSceneModuleContext(outline),
   });
 
   if (!htmlPrompts) {
@@ -848,6 +854,7 @@ async function generatePBLSceneContent(
         targetSkills: pblConfig.targetSkills,
         issueCount: pblConfig.issueCount,
         language: pblConfig.language,
+        moduleContext: buildSceneModuleContext(outline),
       },
       languageModel,
       {
@@ -931,6 +938,7 @@ export async function generateSceneActions(
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
       userProfile: userProfile || '',
+      moduleContext: buildSceneModuleContext(outline),
     });
 
     if (!prompts) {
@@ -959,6 +967,7 @@ export async function generateSceneActions(
       questions: questionsText,
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
+      moduleContext: buildSceneModuleContext(outline),
     });
 
     if (!prompts) {
@@ -986,6 +995,7 @@ export async function generateSceneActions(
       designIdea: config?.designIdea || '',
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
+      moduleContext: buildSceneModuleContext(outline),
     });
 
     if (!prompts) {
@@ -1013,6 +1023,7 @@ export async function generateSceneActions(
       projectDescription: pblConfig?.projectDescription || outline.description,
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
+      moduleContext: buildSceneModuleContext(outline),
     });
 
     if (!prompts) {

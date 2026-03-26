@@ -11,6 +11,7 @@ export interface PBLSystemPromptConfig {
   targetSkills: string[];
   issueCount?: number;
   language: string;
+  moduleContext?: string;
 }
 
 export function buildPBLSystemPrompt(config: PBLSystemPromptConfig): string {
@@ -38,6 +39,7 @@ The teacher has provided you with:
 - **Project Description**: ${projectDescription}
 - **Target Skills**: ${targetSkills.join(', ')}
 - **Suggested Number of Issues**: ${issueCount}
+${config.moduleContext ? `\n${config.moduleContext}\n` : ''}
 
 Based on this information, you must autonomously design the project. Do not ask for confirmation or additional input - make the best decisions based on the provided context.
 
@@ -103,6 +105,7 @@ function buildPBLSystemPromptZH(config: PBLSystemPromptConfig): string {
 - **项目描述**：${projectDescription}
 - **目标技能**：${targetSkills.join('、')}
 - **建议任务数量**：${issueCount}
+${config.moduleContext ? `\n${config.moduleContext}\n` : ''}
 
 根据以上信息自主设计项目，不要请求确认或额外输入。
 

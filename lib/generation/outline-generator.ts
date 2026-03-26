@@ -17,6 +17,7 @@ import { parseJsonResponse } from './json-repair';
 import { uniquifyMediaElementIds } from './scene-builder';
 import type { AICallFn, GenerationResult, GenerationCallbacks } from './pipeline-types';
 import { createLogger } from '@/lib/logger';
+import { buildOutlineModuleContext } from '@/lib/module-host/prompt-context';
 const log = createLogger('Generation');
 
 /**
@@ -111,6 +112,7 @@ export async function generateSceneOutlinesFromRequirements(
       options?.researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
     // Server-side generation populates this via options; client-side populates via formatTeacherPersonaForPrompt
     teacherContext: options?.teacherContext || '',
+    moduleContext: buildOutlineModuleContext(requirements),
   });
 
   if (!prompts) {
@@ -140,6 +142,8 @@ export async function generateSceneOutlinesFromRequirements(
     const enriched = outlines.map((outline, index) => ({
       ...outline,
       id: outline.id || nanoid(),
+      moduleId: requirements.moduleId,
+      k12: requirements.k12,
       order: index + 1,
       language: requirements.language,
     }));

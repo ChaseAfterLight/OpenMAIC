@@ -46,6 +46,24 @@ import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDraftCache } from '@/lib/hooks/use-draft-cache';
 import { SpeechButton } from '@/components/audio/speech-button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  getActiveModule,
+} from '@/lib/module-host/runtime';
+import {
+  resolveOptionLabel,
+  resolveLocalizedList,
+  resolveLocalizedText,
+  type K12ModulePresets,
+  type K12StructuredInput,
+  type SupportedLocale,
+} from '@/lib/module-host/types';
 
 const log = createLogger('Home');
 
@@ -71,7 +89,28 @@ function HomePage() {
   const { t, locale, setLocale } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
+  const activeModule = getActiveModule();
+  const isK12Module = activeModule.id === 'k12';
+  const k12Presets = (isK12Module ? activeModule.presets : undefined) as K12ModulePresets | undefined;
+  const activeLocale = (locale === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale;
+  const moduleBadge = resolveLocalizedText(activeModule.home.badge, activeLocale);
+  const moduleSlogan = resolveLocalizedText(activeModule.home.slogan, activeLocale);
+  const modulePlaceholder = resolveLocalizedText(activeModule.home.requirementPlaceholder, activeLocale);
+  const moduleSubmitLabel = resolveLocalizedText(activeModule.home.submitLabel, activeLocale);
+  const moduleFooterText = resolveLocalizedText(activeModule.home.footerText, activeLocale);
+  const quickPrompts = resolveLocalizedList(activeModule.home.quickPrompts, activeLocale);
   const [form, setForm] = useState<FormState>(initialFormState);
+  const [k12Form, setK12Form] = useState<K12StructuredInput>(() => {
+    const defaults = k12Presets?.defaults;
+    return (
+      defaults ?? {
+        gradeId: 'grade-4',
+        subjectId: 'math',
+        lessonTypeId: 'new-lesson',
+        durationMinutes: 40,
+      }
+    );
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
     import('@/lib/types/settings').SettingsSection | undefined
@@ -227,6 +266,41 @@ function HomePage() {
     );
   };
 
+  const getK12OptionLabel = (
+    options: K12ModulePresets['grades'] | K12ModulePresets['subjects'] | K12ModulePresets['lessonTypes'],
+    id: string,
+  ) => {
+    const option = options.find((item) => item.id === id) ?? options[0];
+    return option ? resolveOptionLabel(option, activeLocale) : id;
+  };
+
+  const buildK12RequirementText = () => {
+    if (!k12Presets) return form.requirement.trim();
+
+    const gradeLabel = getK12OptionLabel(k12Presets.grades, k12Form.gradeId);
+    const subjectLabel = getK12OptionLabel(k12Presets.subjects, k12Form.subjectId);
+    const lessonTypeLabel = getK12OptionLabel(k12Presets.lessonTypes, k12Form.lessonTypeId);
+    const freeform = form.requirement.trim();
+
+    if (activeLocale === 'zh-CN') {
+      return [
+        `请为${gradeLabel}${subjectLabel}设计一节${k12Form.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
+        '输出应适合小学课堂使用，包含导入、讲解、例题、随堂提问、练习和总结。',
+        freeform ? `补充要求：${freeform}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    return [
+      `Design a ${k12Form.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson for ${gradeLabel} ${subjectLabel}.`,
+      'The output should be ready for an elementary classroom and include warm-up, explanation, worked examples, in-class questions, practice, and wrap-up.',
+      freeform ? `Additional requirements: ${freeform}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
   const handleGenerate = async () => {
     // Validate setup before proceeding
     if (!currentModelId) {
@@ -239,7 +313,7 @@ function HomePage() {
       return;
     }
 
-    if (!form.requirement.trim()) {
+    if (!isK12Module && !form.requirement.trim()) {
       setError(t('upload.requirementRequired'));
       return;
     }
@@ -249,7 +323,9 @@ function HomePage() {
     try {
       const userProfile = useUserProfileStore.getState();
       const requirements: UserRequirements = {
-        requirement: form.requirement,
+        moduleId: activeModule.id,
+        k12: isK12Module ? k12Form : undefined,
+        requirement: isK12Module ? buildK12RequirementText() : form.requirement,
         language: form.language,
         userNickname: userProfile.nickname || undefined,
         userBio: userProfile.bio || undefined,
@@ -310,7 +386,9 @@ function HomePage() {
     return date.toLocaleDateString();
   };
 
-  const canGenerate = !!form.requirement.trim();
+  const canGenerate = isK12Module
+    ? Boolean(k12Form.gradeId && k12Form.subjectId && k12Form.lessonTypeId)
+    : !!form.requirement.trim();
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -475,10 +553,19 @@ function HomePage() {
           classrooms.length === 0 ? 'justify-center min-h-[calc(100dvh-8rem)]' : 'mt-[10vh]',
         )}
       >
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="mb-3 inline-flex items-center rounded-full border border-emerald-200/80 bg-emerald-50/90 px-3 py-1 text-[11px] font-semibold tracking-[0.14em] text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+        >
+          {moduleBadge}
+        </motion.div>
+
         {/* ── Logo ── */}
         <motion.img
           src="/logo-horizontal.png"
-          alt="OpenMAIC"
+          alt={activeModule.metadata.applicationName}
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{
@@ -497,8 +584,25 @@ function HomePage() {
           transition={{ delay: 0.25 }}
           className="text-sm text-muted-foreground/60 mb-8"
         >
-          {t('home.slogan')}
+          {moduleSlogan}
         </motion.p>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          className="mb-6 flex w-full flex-wrap items-center justify-center gap-2"
+        >
+          {quickPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => updateForm('requirement', prompt)}
+              className="rounded-full border border-border/60 bg-white/70 px-3 py-1.5 text-xs text-foreground/70 shadow-sm transition-colors hover:bg-white hover:text-foreground dark:bg-slate-900/60 dark:hover:bg-slate-900"
+            >
+              {prompt}
+            </button>
+          ))}
+        </motion.div>
 
         {/* ── Unified input area ── */}
         <motion.div
@@ -516,10 +620,79 @@ function HomePage() {
               </div>
             </div>
 
+            {isK12Module && k12Presets && (
+              <div className="grid gap-2 px-4 pb-1 pt-1 md:grid-cols-4">
+                <Select
+                  value={k12Form.gradeId}
+                  onValueChange={(value) => setK12Form((prev) => ({ ...prev, gradeId: value }))}
+                >
+                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {k12Presets.grades.map((grade) => (
+                      <SelectItem key={grade.id} value={grade.id}>
+                        {resolveOptionLabel(grade, activeLocale)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={k12Form.subjectId}
+                  onValueChange={(value) => setK12Form((prev) => ({ ...prev, subjectId: value }))}
+                >
+                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {k12Presets.subjects.map((subject) => (
+                      <SelectItem key={subject.id} value={subject.id}>
+                        {resolveOptionLabel(subject, activeLocale)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={k12Form.lessonTypeId}
+                  onValueChange={(value) =>
+                    setK12Form((prev) => ({ ...prev, lessonTypeId: value }))
+                  }
+                >
+                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {k12Presets.lessonTypes.map((lessonType) => (
+                      <SelectItem key={lessonType.id} value={lessonType.id}>
+                        {resolveOptionLabel(lessonType, activeLocale)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={String(k12Form.durationMinutes)}
+                  onValueChange={(value) =>
+                    setK12Form((prev) => ({ ...prev, durationMinutes: Number(value) }))
+                  }
+                >
+                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {k12Presets.durations.map((duration) => (
+                      <SelectItem key={duration} value={String(duration)}>
+                        {activeLocale === 'zh-CN' ? `${duration} 分钟` : `${duration} min`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* Textarea */}
             <textarea
               ref={textareaRef}
-              placeholder={t('upload.requirementPlaceholder')}
+              placeholder={modulePlaceholder}
               className="w-full resize-none border-0 bg-transparent px-4 pt-1 pb-2 text-[13px] leading-relaxed placeholder:text-muted-foreground/40 focus:outline-none min-h-[140px] max-h-[300px]"
               value={form.requirement}
               onChange={(e) => updateForm('requirement', e.target.value)}
@@ -568,7 +741,7 @@ function HomePage() {
                     : 'bg-muted text-muted-foreground/40 cursor-not-allowed',
                 )}
               >
-                <span className="text-xs font-medium">{t('toolbar.enterClassroom')}</span>
+                <span className="text-xs font-medium">{moduleSubmitLabel}</span>
                 <ArrowUp className="size-3.5" />
               </button>
             </div>
@@ -669,7 +842,7 @@ function HomePage() {
 
       {/* Footer — flows with content, at the very end */}
       <div className="mt-auto pt-12 pb-4 text-center text-xs text-muted-foreground/40">
-        OpenMAIC Open Source Project
+        {moduleFooterText}
       </div>
     </div>
   );

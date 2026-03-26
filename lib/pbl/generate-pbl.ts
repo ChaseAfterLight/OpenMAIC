@@ -26,6 +26,7 @@ export interface GeneratePBLConfig {
   targetSkills: string[];
   issueCount?: number;
   language: string;
+  moduleContext?: string;
 }
 
 export interface GeneratePBLCallbacks {

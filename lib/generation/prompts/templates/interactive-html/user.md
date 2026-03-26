@@ -9,6 +9,8 @@ Create an interactive learning page for the following concept.
 **Concept Overview**: {{conceptOverview}}
 **Key Points**: {{keyPoints}}
 
+{{moduleContext}}
+
 ---
 
 ## Scientific Constraints

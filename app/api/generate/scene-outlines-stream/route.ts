@@ -33,6 +33,7 @@ import type {
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModelFromHeaders } from '@/lib/server/resolve-model';
+import { buildOutlineModuleContext } from '@/lib/module-host/prompt-context';
 const log = createLogger('Outlines Stream');
 
 export const maxDuration = 300;
@@ -184,6 +185,7 @@ export async function POST(req: NextRequest) {
       researchContext: researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
       mediaGenerationPolicy,
       teacherContext,
+      moduleContext: buildOutlineModuleContext(requirements),
     });
 
     if (!prompts) {
@@ -262,6 +264,9 @@ export async function POST(req: NextRequest) {
                   const enriched = {
                     ...outline,
                     id: outline.id || nanoid(),
+                    moduleId: requirements.moduleId,
+                    k12: requirements.k12,
+                    language: outline.language || requirements.language,
                     order: parsedOutlines.length + 1,
                   };
                   parsedOutlines.push(enriched);

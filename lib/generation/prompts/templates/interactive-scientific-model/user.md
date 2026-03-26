@@ -10,6 +10,8 @@ Please perform scientific modeling for the following concept.
 **Key Points for Mastery**: {{keyPoints}}
 **Design Idea**: {{designIdea}}
 
+{{moduleContext}}
+
 ---
 
 ## Task
