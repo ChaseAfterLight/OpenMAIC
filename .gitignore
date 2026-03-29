@@ -77,4 +77,8 @@ next-env.d.ts
 /dev.err.log
 /dev.out.log
 /scripts/
+!/scripts/
+scripts/*
+!/scripts/storage/
+!/scripts/storage/*.mjs
 /skills/

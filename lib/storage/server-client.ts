@@ -65,14 +65,20 @@ function toMetadataOnlyImageRecord(record: ServerImageFileMetadata): ImageFileRe
 async function toImageRecord(record: ServerImageFileMetadata): Promise<ImageFileRecord> {
   return {
     ...toMetadataOnlyImageRecord(record),
-    blob: await fetchBlob(record.downloadUrl, record.mimeType),
+    blob: record.downloadUrl
+      ? await fetchBlob(record.downloadUrl, record.mimeType)
+      : new Blob([], { type: record.mimeType }),
   };
 }
 
 async function toMediaRecord(record: ServerMediaFileMetadata): Promise<MediaFileRecord> {
   const [blob, poster] = await Promise.all([
-    fetchBlob(record.downloadUrl, record.mimeType),
-    record.posterDownloadUrl ? fetchBlob(record.posterDownloadUrl, 'image/png') : Promise.resolve(undefined),
+    record.downloadUrl
+      ? fetchBlob(record.downloadUrl, record.mimeType)
+      : Promise.resolve(new Blob([], { type: record.mimeType })),
+    record.posterDownloadUrl
+      ? fetchBlob(record.posterDownloadUrl, 'image/png')
+      : Promise.resolve(undefined),
   ]);
 
   return {
@@ -151,7 +157,10 @@ export const serverStorageClient = {
   },
 
   async countScenesByStageId(stageId: string): Promise<number> {
-    const response = await requestJson<{ count: number }>({ action: 'countScenesByStageId', stageId });
+    const response = await requestJson<{ count: number }>({
+      action: 'countScenesByStageId',
+      stageId,
+    });
     return response.count ?? 0;
   },
 
@@ -175,16 +184,16 @@ export const serverStorageClient = {
     await requestJson<{ ok: true }>({ action: 'deleteChatSessionsByStageId', stageId });
   },
 
-  async savePlaybackStateRecord(
-    record: PlaybackStateRecord & { sceneId?: string },
-  ): Promise<void> {
+  async savePlaybackStateRecord(record: PlaybackStateRecord & { sceneId?: string }): Promise<void> {
     await requestJson<{ ok: true }>({ action: 'savePlaybackStateRecord', record });
   },
 
   async getPlaybackStateRecord(
     stageId: string,
   ): Promise<(PlaybackStateRecord & { sceneId?: string }) | undefined> {
-    const response = await requestJson<{ record: (PlaybackStateRecord & { sceneId?: string }) | null }>({
+    const response = await requestJson<{
+      record: (PlaybackStateRecord & { sceneId?: string }) | null;
+    }>({
       action: 'getPlaybackStateRecord',
       stageId,
     });

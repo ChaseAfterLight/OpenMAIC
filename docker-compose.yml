@@ -1,10 +1,36 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: openmaic
+      POSTGRES_USER: openmaic
+      POSTGRES_PASSWORD: openmaic
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-18T16-25-55Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: openmaic
+      MINIO_ROOT_PASSWORD: openmaic123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
   openmaic:
     build: .
     ports:
       - "3000:3000"
     env_file:
       - .env.local
+    depends_on:
+      - postgres
+      - minio
     volumes:
       # Optional: mount server-providers.yml for provider config
       # - ./server-providers.yml:/app/server-providers.yml:ro
@@ -13,3 +39,5 @@ services:
 
 volumes:
   openmaic-data:
+  postgres-data:
+  minio-data:

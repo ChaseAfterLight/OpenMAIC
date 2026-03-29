@@ -8,15 +8,21 @@ import type {
   StageRecord,
 } from '@/lib/utils/database';
 
-export interface ServerImageFileMetadata
-  extends Omit<ImageFileRecord, 'blob'> {
-  downloadUrl: string;
+export interface ServerImageFileMetadata extends Omit<ImageFileRecord, 'blob'> {
+  downloadUrl?: string;
+  hasBlob?: boolean;
+  storageStatus?: 'ready' | 'pending' | 'failed';
+  storageError?: string;
+  objectKey?: string;
 }
 
-export interface ServerMediaFileMetadata
-  extends Omit<MediaFileRecord, 'blob' | 'poster'> {
-  downloadUrl: string;
+export interface ServerMediaFileMetadata extends Omit<MediaFileRecord, 'blob' | 'poster'> {
+  downloadUrl?: string;
   posterDownloadUrl?: string;
+  hasBlob?: boolean;
+  hasPoster?: boolean;
+  storageStatus?: 'ready' | 'pending' | 'failed';
+  storageError?: string;
 }
 
 export type StorageJsonAction =

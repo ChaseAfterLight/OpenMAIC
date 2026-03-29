@@ -4,6 +4,7 @@ import { createSelectors } from '@/lib/utils/create-selectors';
 import type { ChatSession } from '@/lib/types/chat';
 import type { SceneOutline } from '@/lib/types/generation';
 import { createLogger } from '@/lib/logger';
+import { getStorageAdapter } from '@/lib/storage';
 
 const log = createLogger('StageStore');
 
@@ -197,13 +198,22 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
 
   setOutlines: (outlines) => {
     set({ outlines });
-    // Persist outlines through storage abstraction
-    const stageId = get().stage?.id;
-    if (stageId) {
-      import('@/lib/utils/stage-storage').then(({ saveStageOutlines }) => {
-        void saveStageOutlines(stageId, outlines);
-      });
+    // Persist the stage first so server-side outline writes have a parent row.
+    const stage = get().stage;
+    if (!stage?.id) {
+      return;
     }
+
+    void (async () => {
+      try {
+        const storage = getStorageAdapter();
+        await storage.saveStageRecord(stage);
+        const { saveStageOutlines } = await import('@/lib/utils/stage-storage');
+        await saveStageOutlines(stage.id, outlines);
+      } catch (error) {
+        log.error('Failed to persist outlines:', error);
+      }
+    })();
   },
 
   setGenerationStatus: (generationStatus) => set({ generationStatus }),

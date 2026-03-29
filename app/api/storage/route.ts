@@ -32,10 +32,7 @@ import {
   countScenesByStageId,
 } from '@/lib/server/storage-repository';
 import type { StorageJsonAction } from '@/lib/storage/server-api-types';
-import type {
-  ImageFileRecord,
-  MediaFileRecord,
-} from '@/lib/utils/database';
+import type { ImageFileRecord, MediaFileRecord } from '@/lib/utils/database';
 
 function buildImageDownloadUrl(id: string): string {
   return `/api/storage?action=downloadImage&id=${encodeURIComponent(id)}`;
@@ -97,7 +94,7 @@ async function handleJsonAction(body: StorageJsonAction) {
         ok: true,
         media: media.map((record) => ({
           ...record,
-          downloadUrl: buildMediaDownloadUrl(body.stageId, record.id),
+          downloadUrl: record.hasBlob ? buildMediaDownloadUrl(body.stageId, record.id) : undefined,
           posterDownloadUrl: record.hasPoster
             ? buildMediaDownloadUrl(body.stageId, record.id, true)
             : undefined,
@@ -112,7 +109,10 @@ async function handleJsonAction(body: StorageJsonAction) {
       return apiSuccess({
         ok: true,
         image: image
-          ? { ...image, downloadUrl: buildImageDownloadUrl(body.id) }
+          ? {
+              ...image,
+              downloadUrl: image.hasBlob ? buildImageDownloadUrl(body.id) : undefined,
+            }
           : null,
       });
     }
@@ -122,7 +122,7 @@ async function handleJsonAction(body: StorageJsonAction) {
         ok: true,
         images: images.map((record) => ({
           ...record,
-          downloadUrl: buildImageDownloadUrl(record.id),
+          downloadUrl: record.hasBlob ? buildImageDownloadUrl(record.id) : undefined,
         })),
       });
     }

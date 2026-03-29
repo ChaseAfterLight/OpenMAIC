@@ -77,7 +77,7 @@ export interface AudioFileRecord {
   text?: string; // Corresponding text content
   voice?: string; // Voice used
   createdAt: number;
-  ossKey?: string; // Full CDN URL for this audio blob
+  ossKey?: string; // Stable object storage key for this audio blob
 }
 
 /**
@@ -147,8 +147,8 @@ export interface MediaFileRecord {
   params: string; // JSON-serialized generation params
   error?: string; // If set, this is a failed task (blob is empty placeholder)
   errorCode?: string; // Structured error code (e.g. 'CONTENT_SENSITIVE')
-  ossKey?: string; // Full CDN URL for this media blob
-  posterOssKey?: string; // Full CDN URL for the poster blob
+  ossKey?: string; // Stable object storage key for this media blob
+  posterOssKey?: string; // Stable object storage key for the poster blob
   createdAt: number;
 }
 
