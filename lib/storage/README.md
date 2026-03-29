@@ -35,5 +35,24 @@ $env:NEXT_PUBLIC_STORAGE_DRIVER='server'; pnpm build; pnpm start
 
 ## 说明
 
-- `server` 当前是骨架适配器，尚未实现时会抛出明确提示错误。
-- `hybrid` 当前先委托到本地 IndexedDB，后续可在此处加入同步逻辑。
+- `indexeddb`：完全使用浏览器本地 IndexedDB。
+- `server`：通过 `/api/storage` 读写服务端文件仓库，并在本地保留缓存用于恢复与回退。
+- `hybrid`：先写本地，再异步同步到服务端；读取时优先本地，并在后台尝试与服务端对齐。
+
+## 服务端落地
+
+- 服务端课堂数据默认保存在 `data/storage/`。
+- 课堂级记录会按 `stageId` 分目录保存：`stage/scenes/chat/playback/outlines/media`。
+- 图片/PDF 等文件引用会单独保存在 `data/storage/images/`。
+
+## Hybrid 同步状态
+
+- `hybrid` 模式会记录课堂级最小同步状态：`synced`、`pending`、`failed`。
+- 首页课堂卡片会展示“待同步”或“同步失败”标记。
+- 运行日志会输出中文同步结果，便于定位失败路径。
+
+## 当前限制
+
+- `hybrid` 当前使用“课堂级整体同步”，还没有更细粒度的冲突合并。
+- 当服务端与本地同时修改同一课堂时，当前版本不会自动做复杂冲突解决。
+- 验证依赖本地已安装完整依赖；若 `vitest` / `playwright` 缺失，则只能执行手工验证。

@@ -3,13 +3,13 @@
  *
  * Tracks per-element media generation status (pending → generating → done/failed).
  * Drives skeleton loading in slide renderer components.
- * Persistence is handled by IndexedDB (mediaFiles table), not Zustand middleware.
+ * Persistence is handled by the active storage adapter, not Zustand middleware.
  */
 
 import { create } from 'zustand';
 import type { MediaGenerationRequest } from '@/lib/media/types';
-import { db } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
+import { getStorageAdapter } from '@/lib/storage';
 
 const log = createLogger('MediaGenerationStore');
 
@@ -53,7 +53,7 @@ interface MediaGenerationState {
   getTask: (elementId: string) => MediaTask | undefined;
   isReady: (elementId: string) => boolean;
 
-  // Restore from IndexedDB on page load
+  // Restore from storage on page load
   restoreFromDB: (stageId: string) => Promise<void>;
 
   // Cleanup
@@ -159,7 +159,7 @@ export const useMediaGenerationStore = create<MediaGenerationState>()((set, get)
 
   restoreFromDB: async (stageId) => {
     try {
-      const records = await db.mediaFiles.where('stageId').equals(stageId).toArray();
+      const records = await getStorageAdapter().listMediaFilesByStageId(stageId);
       const restored: Record<string, MediaTask> = {};
       for (const rec of records) {
         // Extract elementId from compound key (stageId:elementId)

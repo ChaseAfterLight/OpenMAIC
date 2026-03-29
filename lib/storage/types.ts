@@ -46,6 +46,7 @@ export interface StorageAdapter {
   getStageOutlinesRecord(stageId: string): Promise<StageOutlinesRecord | undefined>;
   deleteStageOutlinesRecord(stageId: string): Promise<void>;
 
+  saveMediaFileRecord(record: MediaFileRecord): Promise<void>;
   listMediaFilesByStageId(stageId: string): Promise<MediaFileRecord[]>;
   deleteMediaFilesByStageId(stageId: string): Promise<void>;
 

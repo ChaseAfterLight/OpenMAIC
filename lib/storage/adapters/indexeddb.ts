@@ -98,6 +98,10 @@ export const indexedDbStorageAdapter: StorageAdapter = {
     await db.stageOutlines.delete(stageId);
   },
 
+  async saveMediaFileRecord(record: MediaFileRecord): Promise<void> {
+    await db.mediaFiles.put(record);
+  },
+
   async listMediaFilesByStageId(stageId: string): Promise<MediaFileRecord[]> {
     return db.mediaFiles.where('stageId').equals(stageId).toArray();
   },

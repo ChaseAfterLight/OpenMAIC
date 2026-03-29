@@ -8,10 +8,10 @@
 
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useSettingsStore } from '@/lib/store/settings';
-import { db, mediaFileKey } from '@/lib/utils/database';
 import type { SceneOutline } from '@/lib/types/generation';
 import type { MediaGenerationRequest } from '@/lib/media/types';
 import { createLogger } from '@/lib/logger';
+import { getStorageAdapter } from '@/lib/storage';
 
 const log = createLogger('MediaOrchestrator');
 
@@ -82,10 +82,6 @@ export async function retryMediaTask(elementId: string): Promise<void> {
     return;
   }
 
-  // Remove persisted failure record from DB so a fresh result can be written
-  const dbKey = mediaFileKey(task.stageId, elementId);
-  await db.mediaFiles.delete(dbKey).catch(() => {});
-
   store.markPendingForRetry(elementId);
   await generateSingleMedia(
     {
@@ -107,6 +103,7 @@ async function generateSingleMedia(
   abortSignal?: AbortSignal,
 ): Promise<void> {
   const store = useMediaGenerationStore.getState();
+  const storage = getStorageAdapter();
   store.markGenerating(req.elementId);
 
   try {
@@ -131,9 +128,9 @@ async function generateSingleMedia(
     const blob = await fetchAsBlob(resultUrl);
     const posterBlob = posterUrl ? await fetchAsBlob(posterUrl).catch(() => undefined) : undefined;
 
-    // Store in IndexedDB
-    await db.mediaFiles.put({
-      id: mediaFileKey(stageId, req.elementId),
+    // Store through the active storage adapter
+    await storage.saveMediaFileRecord({
+      id: `${stageId}:${req.elementId}`,
       stageId,
       type: req.type,
       blob,
@@ -161,9 +158,9 @@ async function generateSingleMedia(
 
     // Persist non-retryable failures to IndexedDB so they survive page refresh
     if (errorCode) {
-      await db.mediaFiles
-        .put({
-          id: mediaFileKey(stageId, req.elementId),
+      await storage
+        .saveMediaFileRecord({
+          id: `${stageId}:${req.elementId}`,
           stageId,
           type: req.type,
           blob: new Blob(), // empty placeholder

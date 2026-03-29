@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -56,6 +56,7 @@ import {
 import {
   getActiveModule,
 } from '@/lib/module-host/runtime';
+import { subscribeHybridSyncState } from '@/lib/storage/hybrid-sync';
 import {
   resolveOptionLabel,
   resolveLocalizedList,
@@ -184,7 +185,7 @@ function HomePage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [languageOpen, themeOpen]);
 
-  const loadClassrooms = async () => {
+  const loadClassrooms = useCallback(async () => {
     try {
       const list = await listStages();
       setClassrooms(list);
@@ -196,7 +197,7 @@ function HomePage() {
     } catch (err) {
       log.error('Failed to load classrooms:', err);
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Clear stale media store to prevent cross-course thumbnail contamination.
@@ -207,7 +208,13 @@ function HomePage() {
 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Store hydration on mount
     loadClassrooms();
-  }, []);
+  }, [loadClassrooms]);
+
+  useEffect(() => {
+    return subscribeHybridSyncState(() => {
+      void loadClassrooms();
+    });
+  }, [loadClassrooms]);
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1256,6 +1263,16 @@ function ClassroomCard({
         <span className="shrink-0 inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-900/30 px-2 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400">
           {classroom.sceneCount} {t('classroom.slides')} · {formatDate(classroom.updatedAt)}
         </span>
+        {classroom.sync?.status === 'pending' && (
+          <span className="shrink-0 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+            待同步
+          </span>
+        )}
+        {classroom.sync?.status === 'failed' && (
+          <span className="shrink-0 inline-flex items-center rounded-full bg-rose-100 dark:bg-rose-900/30 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-300">
+            同步失败
+          </span>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <p className="font-medium text-[15px] truncate text-foreground/90 min-w-0">

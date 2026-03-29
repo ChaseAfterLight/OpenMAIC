@@ -11,7 +11,9 @@ import type { SceneOutline } from '@/lib/types/generation';
 import { saveChatSessions, loadChatSessions, deleteChatSessions } from './chat-storage';
 import { clearPlaybackState } from './playback-storage';
 import { createLogger } from '@/lib/logger';
-import { getStorageAdapter } from '@/lib/storage';
+import { getActiveStorageDriver, getStorageAdapter } from '@/lib/storage';
+import type { HybridSyncRecord } from '@/lib/storage/hybrid-sync';
+import { getHybridSyncState } from '@/lib/storage/hybrid-sync';
 
 const log = createLogger('StageStorage');
 
@@ -29,6 +31,7 @@ export interface StageListItem {
   sceneCount: number;
   createdAt: number;
   updatedAt: number;
+  sync?: HybridSyncRecord;
 }
 
 /**
@@ -124,6 +127,8 @@ export async function deleteStageData(stageId: string): Promise<void> {
     // Delete chat sessions and playback state
     await deleteChatSessions(stageId);
     await clearPlaybackState(stageId);
+    await storage.deleteStageOutlinesRecord(stageId);
+    await storage.deleteMediaFilesByStageId(stageId);
 
     log.info(`Deleted stage: ${stageId}`);
   } catch (error) {
@@ -151,6 +156,7 @@ export async function listStages(): Promise<StageListItem[]> {
           sceneCount,
           createdAt: stage.createdAt,
           updatedAt: stage.updatedAt,
+          sync: getActiveStorageDriver() === 'hybrid' ? getHybridSyncState(stage.id) : undefined,
         };
       }),
     );
