@@ -5,7 +5,7 @@
  * position (sceneIndex + actionIndex) and consumed discussions.
  */
 
-import { db } from './database';
+import { getStorageAdapter } from '@/lib/storage';
 
 export interface PlaybackSnapshot {
   sceneIndex: number;
@@ -22,15 +22,15 @@ export async function savePlaybackState(
   stageId: string,
   snapshot: PlaybackSnapshot,
 ): Promise<void> {
-  await db.playbackState.put({
+  const storage = getStorageAdapter();
+  await storage.savePlaybackStateRecord({
     stageId,
     sceneIndex: snapshot.sceneIndex,
     actionIndex: snapshot.actionIndex,
     consumedDiscussions: snapshot.consumedDiscussions,
     sceneId: snapshot.sceneId,
     updatedAt: Date.now(),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any);
+  });
 }
 
 /**
@@ -38,7 +38,8 @@ export async function savePlaybackState(
  * Returns null if no saved state exists.
  */
 export async function loadPlaybackState(stageId: string): Promise<PlaybackSnapshot | null> {
-  const record = await db.playbackState.get(stageId);
+  const storage = getStorageAdapter();
+  const record = await storage.getPlaybackStateRecord(stageId);
   if (!record) return null;
 
   return {
@@ -54,5 +55,6 @@ export async function loadPlaybackState(stageId: string): Promise<PlaybackSnapsh
  * Clear playback state for a stage (e.g. on playback complete or stop).
  */
 export async function clearPlaybackState(stageId: string): Promise<void> {
-  await db.playbackState.delete(stageId);
+  const storage = getStorageAdapter();
+  await storage.deletePlaybackStateRecord(stageId);
 }

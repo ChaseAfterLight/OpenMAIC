@@ -7,10 +7,11 @@
 
 import { Stage, Scene } from '../types/stage';
 import { ChatSession } from '../types/chat';
-import { db } from './database';
+import type { SceneOutline } from '@/lib/types/generation';
 import { saveChatSessions, loadChatSessions, deleteChatSessions } from './chat-storage';
 import { clearPlaybackState } from './playback-storage';
 import { createLogger } from '@/lib/logger';
+import { getStorageAdapter } from '@/lib/storage';
 
 const log = createLogger('StageStorage');
 
@@ -35,10 +36,11 @@ export interface StageListItem {
  */
 export async function saveStageData(stageId: string, data: StageStoreData): Promise<void> {
   try {
+    const storage = getStorageAdapter();
     const now = Date.now();
 
     // Save to stages table
-    await db.stages.put({
+    await storage.saveStageRecord({
       id: stageId,
       name: data.stage.name || 'Untitled Stage',
       description: data.stage.description,
@@ -50,21 +52,15 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
       agentIds: data.stage.agentIds,
     });
 
-    // Delete old scenes first to avoid orphaned data
-    await db.scenes.where('stageId').equals(stageId).delete();
-
     // Save new scenes
-    if (data.scenes && data.scenes.length > 0) {
-      await db.scenes.bulkPut(
-        data.scenes.map((scene, index) => ({
-          ...scene,
-          stageId,
-          order: scene.order ?? index,
-          createdAt: scene.createdAt || now,
-          updatedAt: scene.updatedAt || now,
-        })),
-      );
-    }
+    const sceneRecords = (data.scenes || []).map((scene, index) => ({
+      ...scene,
+      stageId,
+      order: scene.order ?? index,
+      createdAt: scene.createdAt || now,
+      updatedAt: scene.updatedAt || now,
+    }));
+    await storage.replaceScenesByStageId(stageId, sceneRecords);
 
     // Save chat sessions to independent table
     if (data.chats) {
@@ -83,15 +79,17 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
  */
 export async function loadStageData(stageId: string): Promise<StageStoreData | null> {
   try {
+    const storage = getStorageAdapter();
+
     // Load stage
-    const stage = await db.stages.get(stageId);
+    const stage = await storage.getStageRecord(stageId);
     if (!stage) {
       log.info(`Stage not found: ${stageId}`);
       return null;
     }
 
     // Load scenes
-    const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('order');
+    const scenes = await storage.listScenesByStageId(stageId);
 
     // Load chat sessions from independent table
     const chats = await loadChatSessions(stageId);
@@ -115,11 +113,13 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
  */
 export async function deleteStageData(stageId: string): Promise<void> {
   try {
+    const storage = getStorageAdapter();
+
     // Delete stage
-    await db.stages.delete(stageId);
+    await storage.deleteStageRecord(stageId);
 
     // Delete scenes
-    await db.scenes.where('stageId').equals(stageId).delete();
+    await storage.deleteScenesByStageId(stageId);
 
     // Delete chat sessions and playback state
     await deleteChatSessions(stageId);
@@ -137,11 +137,12 @@ export async function deleteStageData(stageId: string): Promise<void> {
  */
 export async function listStages(): Promise<StageListItem[]> {
   try {
-    const stages = await db.stages.orderBy('updatedAt').reverse().toArray();
+    const storage = getStorageAdapter();
+    const stages = await storage.listStageRecordsByUpdatedAtDesc();
 
     const stageList: StageListItem[] = await Promise.all(
       stages.map(async (stage) => {
-        const sceneCount = await db.scenes.where('stageId').equals(stage.id).count();
+        const sceneCount = await storage.countScenesByStageId(stage.id);
 
         return {
           id: stage.id,
@@ -169,11 +170,12 @@ export async function listStages(): Promise<StageListItem[]> {
 export async function getFirstSlideByStages(
   stageIds: string[],
 ): Promise<Record<string, import('../types/slides').Slide>> {
+  const storage = getStorageAdapter();
   const result: Record<string, import('../types/slides').Slide> = {};
   try {
     await Promise.all(
       stageIds.map(async (stageId) => {
-        const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('order');
+        const scenes = await storage.listScenesByStageId(stageId);
         const firstSlide = scenes.find((s) => s.content?.type === 'slide');
         if (firstSlide && firstSlide.content.type === 'slide') {
           const slide = structuredClone(firstSlide.content.canvas);
@@ -184,7 +186,7 @@ export async function getFirstSlideByStages(
             (el: any) => el.type === 'image' && /^gen_(img|vid)_[\w-]+$/i.test(el.src as string),
           );
           if (placeholderEls.length > 0) {
-            const mediaRecords = await db.mediaFiles.where('stageId').equals(stageId).toArray();
+            const mediaRecords = await storage.listMediaFilesByStageId(stageId);
             const mediaMap = new Map(
               mediaRecords.map((r) => {
                 // Key format: stageId:elementId → extract elementId
@@ -219,10 +221,34 @@ export async function getFirstSlideByStages(
  */
 export async function stageExists(stageId: string): Promise<boolean> {
   try {
-    const stage = await db.stages.get(stageId);
+    const storage = getStorageAdapter();
+    const stage = await storage.getStageRecord(stageId);
     return !!stage;
   } catch (error) {
     log.error('Failed to check stage existence:', error);
     return false;
   }
+}
+
+/**
+ * Persist outlines for resume-on-refresh.
+ */
+export async function saveStageOutlines(stageId: string, outlines: SceneOutline[]): Promise<void> {
+  const storage = getStorageAdapter();
+  const now = Date.now();
+  await storage.saveStageOutlinesRecord({
+    stageId,
+    outlines,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+/**
+ * Load persisted outlines for a stage.
+ */
+export async function loadStageOutlines(stageId: string): Promise<SceneOutline[]> {
+  const storage = getStorageAdapter();
+  const record = await storage.getStageOutlinesRecord(stageId);
+  return record?.outlines || [];
 }

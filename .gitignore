@@ -15,7 +15,8 @@ CLAUDE.local.md
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+/openspec
+/.codex
 # testing
 /coverage
 

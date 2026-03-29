@@ -5,9 +5,10 @@
  * Images are stored as Blobs for efficient storage.
  */
 
-import { db, type ImageFileRecord } from './database';
+import type { ImageFileRecord } from './database';
 import { nanoid } from 'nanoid';
 import { createLogger } from '@/lib/logger';
+import { getStorageAdapter } from '@/lib/storage';
 
 const log = createLogger('ImageStorage');
 
@@ -49,6 +50,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
 export async function storeImages(
   images: Array<{ id: string; src: string; pageNumber?: number }>,
 ): Promise<string[]> {
+  const storage = getStorageAdapter();
   const sessionId = nanoid(10);
   const storedIds: string[] = [];
 
@@ -70,7 +72,7 @@ export async function storeImages(
         createdAt: Date.now(),
       };
 
-      await db.imageFiles.put(record);
+      await storage.saveImageFileRecord(record);
       storedIds.push(storageId);
     } catch (error) {
       log.error(`Failed to store image ${img.id}:`, error);
@@ -86,11 +88,12 @@ export async function storeImages(
  * @returns ImageMapping { img_1: "data:image/png;base64,..." }
  */
 export async function loadImageMapping(imageIds: string[]): Promise<Record<string, string>> {
+  const storage = getStorageAdapter();
   const mapping: Record<string, string> = {};
 
   for (const storageId of imageIds) {
     try {
-      const record = await db.imageFiles.get(storageId);
+      const record = await storage.getImageFileRecord(storageId);
       if (record) {
         const base64 = await blobToBase64(record.blob);
         // Extract original ID (img_1) from storage ID (session_xxx_img_1)
@@ -110,12 +113,13 @@ export async function loadImageMapping(imageIds: string[]): Promise<Record<strin
  */
 export async function cleanupSessionImages(sessionId: string): Promise<void> {
   try {
+    const storage = getStorageAdapter();
     const prefix = `session_${sessionId}_`;
-    const allImages = await db.imageFiles.toArray();
+    const allImages = await storage.listImageFileRecords();
     const toDelete = allImages.filter((img) => img.id.startsWith(prefix));
 
     for (const img of toDelete) {
-      await db.imageFiles.delete(img.id);
+      await storage.deleteImageFileRecord(img.id);
     }
 
     log.info(`Cleaned up ${toDelete.length} images for session ${sessionId}`);
@@ -129,8 +133,9 @@ export async function cleanupSessionImages(sessionId: string): Promise<void> {
  */
 export async function cleanupOldImages(hoursOld: number = 24): Promise<void> {
   try {
+    const storage = getStorageAdapter();
     const cutoff = Date.now() - hoursOld * 60 * 60 * 1000;
-    await db.imageFiles.where('createdAt').below(cutoff).delete();
+    await storage.deleteImageFileRecordsBefore(cutoff);
     log.info(`Cleaned up images older than ${hoursOld} hours`);
   } catch (error) {
     log.error('Failed to cleanup old images:', error);
@@ -141,7 +146,8 @@ export async function cleanupOldImages(hoursOld: number = 24): Promise<void> {
  * Get total size of stored images
  */
 export async function getImageStorageSize(): Promise<number> {
-  const images = await db.imageFiles.toArray();
+  const storage = getStorageAdapter();
+  const images = await storage.listImageFileRecords();
   return images.reduce((total, img) => total + img.size, 0);
 }
 
@@ -150,6 +156,7 @@ export async function getImageStorageSize(): Promise<number> {
  * Returns a storage key that can be used to retrieve the blob later.
  */
 export async function storePdfBlob(file: File): Promise<string> {
+  const storage = getStorageAdapter();
   const storageKey = `pdf_${nanoid(10)}`;
   const blob = new Blob([await file.arrayBuffer()], {
     type: file.type || 'application/pdf',
@@ -164,7 +171,7 @@ export async function storePdfBlob(file: File): Promise<string> {
     createdAt: Date.now(),
   };
 
-  await db.imageFiles.put(record);
+  await storage.saveImageFileRecord(record);
   return storageKey;
 }
 
@@ -172,6 +179,7 @@ export async function storePdfBlob(file: File): Promise<string> {
  * Load a PDF Blob from IndexedDB by its storage key.
  */
 export async function loadPdfBlob(key: string): Promise<Blob | null> {
-  const record = await db.imageFiles.get(key);
+  const storage = getStorageAdapter();
+  const record = await storage.getImageFileRecord(key);
   return record?.blob ?? null;
 }
