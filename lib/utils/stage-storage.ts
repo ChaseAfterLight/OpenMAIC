@@ -14,6 +14,9 @@ import { createLogger } from '@/lib/logger';
 import { getActiveStorageDriver, getStorageAdapter } from '@/lib/storage';
 import type { HybridSyncRecord } from '@/lib/storage/hybrid-sync';
 import { getHybridSyncState } from '@/lib/storage/hybrid-sync';
+import { buildLessonPackVersionRecord, ensureStageLessonPack } from '@/lib/utils/lesson-pack';
+import type { LessonPackVersionSource } from '@/lib/types/stage';
+import type { LessonPackVersionRecord } from '@/lib/utils/database';
 
 const log = createLogger('StageStorage');
 
@@ -31,6 +34,7 @@ export interface StageListItem {
   sceneCount: number;
   createdAt: number;
   updatedAt: number;
+  lessonPack: NonNullable<Stage['lessonPack']>;
   sync?: HybridSyncRecord;
 }
 
@@ -41,18 +45,24 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
   try {
     const storage = getStorageAdapter();
     const now = Date.now();
+    const stage = ensureStageLessonPack({
+      ...data.stage,
+      createdAt: data.stage.createdAt || now,
+      updatedAt: now,
+    });
 
     // Save to stages table
     await storage.saveStageRecord({
       id: stageId,
-      name: data.stage.name || 'Untitled Stage',
-      description: data.stage.description,
-      createdAt: data.stage.createdAt || now,
+      name: stage.name || 'Untitled Stage',
+      description: stage.description,
+      createdAt: stage.createdAt || now,
       updatedAt: now,
-      language: data.stage.language,
-      style: data.stage.style,
+      lessonPack: stage.lessonPack,
+      language: stage.language,
+      style: stage.style,
       currentSceneId: data.currentSceneId || undefined,
-      agentIds: data.stage.agentIds,
+      agentIds: stage.agentIds,
     });
 
     // Save new scenes
@@ -85,11 +95,12 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     const storage = getStorageAdapter();
 
     // Load stage
-    const stage = await storage.getStageRecord(stageId);
-    if (!stage) {
+    const storedStage = await storage.getStageRecord(stageId);
+    if (!storedStage) {
       log.info(`Stage not found: ${stageId}`);
       return null;
     }
+    const stage = ensureStageLessonPack(storedStage);
 
     // Load scenes
     const scenes = await storage.listScenesByStageId(stageId);
@@ -128,6 +139,7 @@ export async function deleteStageData(stageId: string): Promise<void> {
     await deleteChatSessions(stageId);
     await clearPlaybackState(stageId);
     await storage.deleteStageOutlinesRecord(stageId);
+    await storage.deleteLessonPackVersionsByStageId(stageId);
     await storage.deleteMediaFilesByStageId(stageId);
 
     log.info(`Deleted stage: ${stageId}`);
@@ -147,6 +159,7 @@ export async function listStages(): Promise<StageListItem[]> {
 
     const stageList: StageListItem[] = await Promise.all(
       stages.map(async (stage) => {
+        const normalizedStage = ensureStageLessonPack(stage);
         const sceneCount = await storage.countScenesByStageId(stage.id);
 
         return {
@@ -156,6 +169,7 @@ export async function listStages(): Promise<StageListItem[]> {
           sceneCount,
           createdAt: stage.createdAt,
           updatedAt: stage.updatedAt,
+          lessonPack: normalizedStage.lessonPack!,
           sync: getActiveStorageDriver() === 'hybrid' ? getHybridSyncState(stage.id) : undefined,
         };
       }),
@@ -257,4 +271,96 @@ export async function loadStageOutlines(stageId: string): Promise<SceneOutline[]
   const storage = getStorageAdapter();
   const record = await storage.getStageOutlinesRecord(stageId);
   return record?.outlines || [];
+}
+
+export async function saveLessonPackVersion(
+  stageId: string,
+  options?: {
+    note?: string;
+    source?: LessonPackVersionSource;
+  },
+): Promise<LessonPackVersionRecord> {
+  const storage = getStorageAdapter();
+  const [stage, scenes, chats, playback, outlines] = await Promise.all([
+    storage.getStageRecord(stageId),
+    storage.listScenesByStageId(stageId),
+    storage.listChatSessionsByStageId(stageId),
+    storage.getPlaybackStateRecord(stageId),
+    storage.getStageOutlinesRecord(stageId),
+  ]);
+
+  if (!stage) {
+    throw new Error(`Cannot save lesson pack version: stage ${stageId} not found`);
+  }
+
+  const createdAt = Date.now();
+  const record = buildLessonPackVersionRecord({
+    versionId: `lpv_${stageId}_${createdAt}`,
+    stageId,
+    createdAt,
+    note: options?.note,
+    source: options?.source ?? 'manual',
+    stage: ensureStageLessonPack(stage),
+    scenes,
+    chats,
+    playback,
+    outlines,
+  });
+
+  await storage.saveLessonPackVersionRecord(record);
+  return record;
+}
+
+export async function listLessonPackVersions(stageId: string): Promise<LessonPackVersionRecord[]> {
+  const storage = getStorageAdapter();
+  return storage.listLessonPackVersionRecordsByStageId(stageId);
+}
+
+export async function restoreLessonPackVersion(
+  stageId: string,
+  versionId: string,
+): Promise<LessonPackVersionRecord> {
+  const storage = getStorageAdapter();
+  const record = await storage.getLessonPackVersionRecord(stageId, versionId);
+
+  if (!record) {
+    throw new Error(`Lesson pack version not found: ${stageId}/${versionId}`);
+  }
+
+  const now = Date.now();
+  const restoredStage = ensureStageLessonPack({
+    ...record.snapshot.stage,
+    id: stageId,
+    updatedAt: now,
+    lessonPack: {
+      ...record.snapshot.stage.lessonPack,
+      status: 'draft',
+    },
+  });
+
+  await storage.saveStageRecord(restoredStage);
+  await storage.replaceScenesByStageId(stageId, record.snapshot.scenes);
+  await storage.replaceChatSessionsByStageId(stageId, record.snapshot.chats);
+
+  if (record.snapshot.playback) {
+    await storage.savePlaybackStateRecord({
+      ...record.snapshot.playback,
+      stageId,
+      updatedAt: now,
+    });
+  } else {
+    await storage.deletePlaybackStateRecord(stageId);
+  }
+
+  if (record.snapshot.outlines) {
+    await storage.saveStageOutlinesRecord({
+      ...record.snapshot.outlines,
+      stageId,
+      updatedAt: now,
+    });
+  } else {
+    await storage.deleteStageOutlinesRecord(stageId);
+  }
+
+  return record;
 }

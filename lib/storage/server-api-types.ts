@@ -1,6 +1,7 @@
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -43,6 +44,11 @@ export type StorageJsonAction =
   | { action: 'saveStageOutlinesRecord'; record: StageOutlinesRecord }
   | { action: 'getStageOutlinesRecord'; stageId: string }
   | { action: 'deleteStageOutlinesRecord'; stageId: string }
+  | { action: 'saveLessonPackVersionRecord'; record: LessonPackVersionRecord }
+  | { action: 'getLessonPackVersionRecord'; stageId: string; versionId: string }
+  | { action: 'listLessonPackVersionRecordsByStageId'; stageId: string }
+  | { action: 'deleteLessonPackVersionRecord'; stageId: string; versionId: string }
+  | { action: 'deleteLessonPackVersionsByStageId'; stageId: string }
   | { action: 'listMediaFilesByStageId'; stageId: string }
   | { action: 'deleteMediaFilesByStageId'; stageId: string }
   | { action: 'getImageFileRecordMetadata'; id: string }
@@ -54,6 +60,8 @@ export type StorageJsonResponse =
   | { ok: true }
   | { ok: true; record?: StageRecord | PlaybackStateRecord | StageOutlinesRecord | null }
   | { ok: true; records: StageRecord[] | SceneRecord[] | ChatSessionRecord[] }
+  | { ok: true; version?: LessonPackVersionRecord | null }
+  | { ok: true; versions: LessonPackVersionRecord[] }
   | { ok: true; count: number }
   | { ok: true; images: ServerImageFileMetadata[] }
   | { ok: true; image?: ServerImageFileMetadata | null }

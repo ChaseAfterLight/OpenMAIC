@@ -7,6 +7,7 @@ import type {
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -218,6 +219,42 @@ export const serverStorageClient = {
 
   async deleteStageOutlinesRecord(stageId: string): Promise<void> {
     await requestJson<{ ok: true }>({ action: 'deleteStageOutlinesRecord', stageId });
+  },
+
+  async saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+    await requestJson<{ ok: true }>({ action: 'saveLessonPackVersionRecord', record });
+  },
+
+  async getLessonPackVersionRecord(
+    stageId: string,
+    versionId: string,
+  ): Promise<LessonPackVersionRecord | undefined> {
+    const response = await requestJson<{ version: LessonPackVersionRecord | null }>({
+      action: 'getLessonPackVersionRecord',
+      stageId,
+      versionId,
+    });
+    return response.version ?? undefined;
+  },
+
+  async listLessonPackVersionRecordsByStageId(stageId: string): Promise<LessonPackVersionRecord[]> {
+    const response = await requestJson<{ versions: LessonPackVersionRecord[] }>({
+      action: 'listLessonPackVersionRecordsByStageId',
+      stageId,
+    });
+    return response.versions ?? [];
+  },
+
+  async deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void> {
+    await requestJson<{ ok: true }>({
+      action: 'deleteLessonPackVersionRecord',
+      stageId,
+      versionId,
+    });
+  },
+
+  async deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+    await requestJson<{ ok: true }>({ action: 'deleteLessonPackVersionsByStageId', stageId });
   },
 
   async saveMediaFileRecord(record: MediaFileRecord): Promise<void> {

@@ -1,6 +1,7 @@
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -54,6 +55,15 @@ export interface ServerStorageRepository {
   saveStageOutlinesRecord(record: StageOutlinesRecord): Promise<void>;
   getStageOutlinesRecord(stageId: string): Promise<StageOutlinesRecord | null>;
   deleteStageOutlinesRecord(stageId: string): Promise<void>;
+
+  saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void>;
+  getLessonPackVersionRecord(
+    stageId: string,
+    versionId: string,
+  ): Promise<LessonPackVersionRecord | null>;
+  listLessonPackVersionRecordsByStageId(stageId: string): Promise<LessonPackVersionRecord[]>;
+  deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void>;
+  deleteLessonPackVersionsByStageId(stageId: string): Promise<void>;
 
   saveMediaFileRecord(record: MediaFileRecord): Promise<void>;
   listMediaFilesByStageId(stageId: string): Promise<ServerMediaMetadata[]>;

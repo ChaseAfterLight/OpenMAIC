@@ -6,6 +6,7 @@ import type { StorageAdapter } from '@/lib/storage/types';
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -83,12 +84,13 @@ function queueImageSync(id: string, reason: string): void {
 
 async function syncStageToServer(stageId: string, reason: string): Promise<void> {
   try {
-    const [stage, scenes, chats, playback, outlines, media] = await Promise.all([
+    const [stage, scenes, chats, playback, outlines, versions, media] = await Promise.all([
       indexedDbStorageAdapter.getStageRecord(stageId),
       indexedDbStorageAdapter.listScenesByStageId(stageId),
       indexedDbStorageAdapter.listChatSessionsByStageId(stageId),
       indexedDbStorageAdapter.getPlaybackStateRecord(stageId),
       indexedDbStorageAdapter.getStageOutlinesRecord(stageId),
+      indexedDbStorageAdapter.listLessonPackVersionRecordsByStageId(stageId),
       indexedDbStorageAdapter.listMediaFilesByStageId(stageId),
     ]);
 
@@ -109,6 +111,10 @@ async function syncStageToServer(stageId: string, reason: string): Promise<void>
         ? serverStorageClient.saveStageOutlinesRecord(outlines)
         : serverStorageClient.deleteStageOutlinesRecord(stageId),
     ]);
+    await serverStorageClient.deleteLessonPackVersionsByStageId(stageId);
+    for (const record of versions) {
+      await serverStorageClient.saveLessonPackVersionRecord(record);
+    }
     await serverStorageClient.deleteMediaFilesByStageId(stageId);
     for (const record of media) {
       await serverStorageClient.saveMediaFileRecord(record);
@@ -144,11 +150,12 @@ async function refreshStageFromServer(stageId: string): Promise<void> {
     if (!stage) {
       return;
     }
-    const [scenes, chats, playback, outlines, media] = await Promise.all([
+    const [scenes, chats, playback, outlines, versions, media] = await Promise.all([
       serverStorageClient.listScenesByStageId(stageId),
       serverStorageClient.listChatSessionsByStageId(stageId),
       serverStorageClient.getPlaybackStateRecord(stageId),
       serverStorageClient.getStageOutlinesRecord(stageId),
+      serverStorageClient.listLessonPackVersionRecordsByStageId(stageId),
       serverStorageClient.listMediaFilesByStageId(stageId),
     ]);
     await indexedDbStorageAdapter.saveStageRecord(stage);
@@ -159,6 +166,10 @@ async function refreshStageFromServer(stageId: string): Promise<void> {
     }
     if (outlines) {
       await indexedDbStorageAdapter.saveStageOutlinesRecord(outlines);
+    }
+    await indexedDbStorageAdapter.deleteLessonPackVersionsByStageId(stageId);
+    for (const record of versions) {
+      await indexedDbStorageAdapter.saveLessonPackVersionRecord(record);
     }
     await indexedDbStorageAdapter.deleteMediaFilesByStageId(stageId);
     for (const record of media) {
@@ -354,6 +365,61 @@ export const hybridStorageAdapter: StorageAdapter = {
   async deleteStageOutlinesRecord(stageId: string): Promise<void> {
     await indexedDbStorageAdapter.deleteStageOutlinesRecord(stageId);
     queueStageSync(stageId, '删除大纲');
+  },
+
+  async saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+    await indexedDbStorageAdapter.saveLessonPackVersionRecord(record);
+    queueStageSync(record.stageId, '保存版本快照');
+  },
+
+  async getLessonPackVersionRecord(
+    stageId: string,
+    versionId: string,
+  ): Promise<LessonPackVersionRecord | undefined> {
+    const local = await indexedDbStorageAdapter.getLessonPackVersionRecord(stageId, versionId);
+    if (local) {
+      void refreshStageFromServer(stageId);
+      return local;
+    }
+    try {
+      const remote = await serverStorageClient.getLessonPackVersionRecord(stageId, versionId);
+      if (remote) {
+        await indexedDbStorageAdapter.saveLessonPackVersionRecord(remote);
+      }
+      return remote;
+    } catch (error) {
+      log.warn(`服务端版本读取失败: ${stageId}/${versionId}`, error);
+      return local;
+    }
+  },
+
+  async listLessonPackVersionRecordsByStageId(stageId: string): Promise<LessonPackVersionRecord[]> {
+    const local = await indexedDbStorageAdapter.listLessonPackVersionRecordsByStageId(stageId);
+    if (local.length > 0) {
+      void refreshStageFromServer(stageId);
+      return local;
+    }
+    try {
+      const remote = await serverStorageClient.listLessonPackVersionRecordsByStageId(stageId);
+      await indexedDbStorageAdapter.deleteLessonPackVersionsByStageId(stageId);
+      for (const record of remote) {
+        await indexedDbStorageAdapter.saveLessonPackVersionRecord(record);
+      }
+      return remote;
+    } catch (error) {
+      log.warn(`服务端版本列表读取失败: ${stageId}`, error);
+      return local;
+    }
+  },
+
+  async deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void> {
+    await indexedDbStorageAdapter.deleteLessonPackVersionRecord(stageId, versionId);
+    queueStageSync(stageId, '删除版本快照');
+  },
+
+  async deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+    await indexedDbStorageAdapter.deleteLessonPackVersionsByStageId(stageId);
+    queueStageSync(stageId, '清空版本快照');
   },
 
   async saveMediaFileRecord(record: MediaFileRecord): Promise<void> {

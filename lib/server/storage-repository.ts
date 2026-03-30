@@ -5,6 +5,7 @@ import type { ServerStorageRepository } from '@/lib/server/storage-repository-ty
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -107,6 +108,29 @@ export async function getStageOutlinesRecord(stageId: string): Promise<StageOutl
 
 export async function deleteStageOutlinesRecord(stageId: string): Promise<void> {
   await getRepository().deleteStageOutlinesRecord(stageId);
+}
+
+export async function saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+  await getRepository().saveLessonPackVersionRecord(record);
+}
+
+export async function getLessonPackVersionRecord(stageId: string, versionId: string) {
+  return getRepository().getLessonPackVersionRecord(stageId, versionId);
+}
+
+export async function listLessonPackVersionRecordsByStageId(stageId: string) {
+  return getRepository().listLessonPackVersionRecordsByStageId(stageId);
+}
+
+export async function deleteLessonPackVersionRecord(
+  stageId: string,
+  versionId: string,
+): Promise<void> {
+  await getRepository().deleteLessonPackVersionRecord(stageId, versionId);
+}
+
+export async function deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+  await getRepository().deleteLessonPackVersionsByStageId(stageId);
 }
 
 export async function saveMediaFileRecord(record: MediaFileRecord): Promise<void> {

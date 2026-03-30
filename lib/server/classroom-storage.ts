@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { NextRequest } from 'next/server';
 import type { Scene, Stage } from '@/lib/types/stage';
+import { ensureStageLessonPack } from '@/lib/utils/lesson-pack';
 
 export const CLASSROOMS_DIR = path.join(process.cwd(), 'data', 'classrooms');
 export const CLASSROOM_JOBS_DIR = path.join(process.cwd(), 'data', 'classroom-jobs');
@@ -49,7 +50,11 @@ export async function readClassroom(id: string): Promise<PersistedClassroomData 
   const filePath = path.join(CLASSROOMS_DIR, `${id}.json`);
   try {
     const content = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(content) as PersistedClassroomData;
+    const parsed = JSON.parse(content) as PersistedClassroomData;
+    return {
+      ...parsed,
+      stage: ensureStageLessonPack(parsed.stage),
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
@@ -68,7 +73,7 @@ export async function persistClassroom(
 ): Promise<PersistedClassroomData & { url: string }> {
   const classroomData: PersistedClassroomData = {
     id: data.id,
-    stage: data.stage,
+    stage: ensureStageLessonPack(data.stage),
     scenes: data.scenes,
     createdAt: new Date().toISOString(),
   };

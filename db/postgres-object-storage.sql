@@ -6,6 +6,13 @@ CREATE TABLE IF NOT EXISTS classrooms (
   style TEXT,
   current_scene_id TEXT,
   agent_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  lesson_pack_grade TEXT,
+  lesson_pack_subject TEXT,
+  lesson_pack_type TEXT,
+  lesson_pack_duration_minutes INTEGER,
+  lesson_pack_status TEXT NOT NULL DEFAULT 'draft',
+  export_status TEXT NOT NULL DEFAULT 'not_exported',
+  last_exported_at BIGINT,
   version BIGINT NOT NULL DEFAULT 1,
   sync_status TEXT NOT NULL DEFAULT 'synced',
   sync_error TEXT,
@@ -14,8 +21,18 @@ CREATE TABLE IF NOT EXISTS classrooms (
   raw_stage JSONB NOT NULL
 );
 
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_grade TEXT;
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_subject TEXT;
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_type TEXT;
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_duration_minutes INTEGER;
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS export_status TEXT NOT NULL DEFAULT 'not_exported';
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS last_exported_at BIGINT;
+
 CREATE INDEX IF NOT EXISTS idx_classrooms_updated_at ON classrooms (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_classrooms_sync_status ON classrooms (sync_status);
+CREATE INDEX IF NOT EXISTS idx_classrooms_lesson_pack_status ON classrooms (lesson_pack_status);
+CREATE INDEX IF NOT EXISTS idx_classrooms_lesson_pack_subject ON classrooms (lesson_pack_subject);
 
 CREATE TABLE IF NOT EXISTS scenes (
   id TEXT PRIMARY KEY,
@@ -69,6 +86,19 @@ CREATE TABLE IF NOT EXISTS stage_outlines (
   updated_at BIGINT NOT NULL,
   raw_outlines JSONB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS lesson_pack_versions (
+  version_id TEXT PRIMARY KEY,
+  stage_id TEXT NOT NULL REFERENCES classrooms(stage_id) ON DELETE CASCADE,
+  note TEXT,
+  source TEXT NOT NULL DEFAULT 'manual',
+  snapshot JSONB NOT NULL,
+  created_at BIGINT NOT NULL,
+  raw_version JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_pack_versions_stage_created
+  ON lesson_pack_versions (stage_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS media_files (
   id TEXT PRIMARY KEY,

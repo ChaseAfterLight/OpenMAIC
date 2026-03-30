@@ -12,6 +12,7 @@ import { safeStorageId } from '@/lib/server/storage-key-utils';
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -62,6 +63,14 @@ function outlinesFile(stageId: string): string {
 
 function mediaDir(stageId: string): string {
   return path.join(stageDir(stageId), 'media');
+}
+
+function lessonPackVersionsDir(stageId: string): string {
+  return path.join(stageDir(stageId), 'lesson-pack-versions');
+}
+
+function lessonPackVersionFile(stageId: string, versionId: string): string {
+  return path.join(lessonPackVersionsDir(stageId), `${safeStorageId(versionId)}.json`);
 }
 
 function mediaMetaFile(stageId: string, mediaId: string): string {
@@ -228,6 +237,40 @@ export function createFileStorageRepository(): ServerStorageRepository {
 
     async deleteStageOutlinesRecord(stageId: string): Promise<void> {
       await removePath(outlinesFile(stageId));
+    },
+
+    async saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+      await writeJson(
+        lessonPackVersionFile(record.stageId, record.id),
+        record as unknown as JsonValue,
+      );
+    },
+
+    async getLessonPackVersionRecord(
+      stageId: string,
+      versionId: string,
+    ): Promise<LessonPackVersionRecord | null> {
+      return readJsonFile<LessonPackVersionRecord>(lessonPackVersionFile(stageId, versionId));
+    },
+
+    async listLessonPackVersionRecordsByStageId(stageId: string): Promise<LessonPackVersionRecord[]> {
+      const dir = lessonPackVersionsDir(stageId);
+      const files = await readDirectory(dir);
+      const jsonFiles = files.filter((file) => file.endsWith('.json'));
+      const records = await Promise.all(
+        jsonFiles.map((file) => readJsonFile<LessonPackVersionRecord>(path.join(dir, file))),
+      );
+      return records
+        .filter((record): record is LessonPackVersionRecord => Boolean(record))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
+
+    async deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void> {
+      await removePath(lessonPackVersionFile(stageId, versionId));
+    },
+
+    async deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+      await removePath(lessonPackVersionsDir(stageId));
     },
 
     async saveMediaFileRecord(record: MediaFileRecord): Promise<void> {

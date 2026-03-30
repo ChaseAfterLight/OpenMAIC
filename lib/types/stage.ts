@@ -9,6 +9,20 @@ export type StageMode = 'autonomous' | 'playback';
 
 export type Whiteboard = Omit<Slide, 'theme' | 'turningMode' | 'sectionTag' | 'type'>;
 
+export type LessonPackStatus = 'draft' | 'in_progress' | 'ready' | 'archived';
+
+export type LessonPackVersionSource = 'manual' | 'restore';
+
+export interface LessonPackMetadata {
+  grade?: string;
+  subject?: string;
+  lessonType?: string;
+  durationMinutes?: number;
+  status: LessonPackStatus;
+  exportStatus?: 'not_exported' | 'exported';
+  lastExportedAt?: number;
+}
+
 /**
  * Stage - Represents the entire classroom/course
  */
@@ -18,6 +32,7 @@ export interface Stage {
   description?: string;
   createdAt: number;
   updatedAt: number;
+  lessonPack?: LessonPackMetadata;
   // Stage metadata
   language?: string;
   style?: string;

@@ -31,6 +31,7 @@ import type {
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -55,6 +56,13 @@ function toStageRowParams(record: StageRecord) {
     record.style ?? null,
     record.currentSceneId ?? null,
     toJsonb(record.agentIds ?? []),
+    record.lessonPack?.grade ?? null,
+    record.lessonPack?.subject ?? null,
+    record.lessonPack?.lessonType ?? null,
+    record.lessonPack?.durationMinutes ?? null,
+    record.lessonPack?.status ?? 'draft',
+    record.lessonPack?.exportStatus ?? 'not_exported',
+    record.lessonPack?.lastExportedAt ?? null,
     record.createdAt,
     record.updatedAt,
     toJsonb(record),
@@ -124,8 +132,11 @@ async function ensureClassroomRowExists(
     `
       INSERT INTO classrooms (
         stage_id, name, description, language, style, current_scene_id, agent_ids,
-        created_at, updated_at, raw_stage
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
+        lesson_pack_grade, lesson_pack_subject, lesson_pack_type, lesson_pack_duration_minutes,
+        lesson_pack_status, export_status, last_exported_at, created_at, updated_at, raw_stage
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb
+      )
       ON CONFLICT (stage_id) DO NOTHING
     `,
     [
@@ -136,6 +147,13 @@ async function ensureClassroomRowExists(
       null,
       null,
       toJsonb([]),
+      null,
+      null,
+      null,
+      null,
+      'draft',
+      'not_exported',
+      null,
       createdAt,
       updatedAt,
       toJsonb({
@@ -144,6 +162,10 @@ async function ensureClassroomRowExists(
         description: null,
         language: null,
         style: null,
+        lessonPack: {
+          status: 'draft',
+          exportStatus: 'not_exported',
+        },
         createdAt,
         updatedAt,
         agentIds: [],
@@ -408,8 +430,11 @@ export function createPostgresObjectStorageRepository(
         `
           INSERT INTO classrooms (
             stage_id, name, description, language, style, current_scene_id, agent_ids,
-            created_at, updated_at, raw_stage
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
+            lesson_pack_grade, lesson_pack_subject, lesson_pack_type, lesson_pack_duration_minutes,
+            lesson_pack_status, export_status, last_exported_at, created_at, updated_at, raw_stage
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb
+          )
           ON CONFLICT (stage_id) DO UPDATE SET
             name = EXCLUDED.name,
             description = EXCLUDED.description,
@@ -417,6 +442,13 @@ export function createPostgresObjectStorageRepository(
             style = EXCLUDED.style,
             current_scene_id = EXCLUDED.current_scene_id,
             agent_ids = EXCLUDED.agent_ids,
+            lesson_pack_grade = EXCLUDED.lesson_pack_grade,
+            lesson_pack_subject = EXCLUDED.lesson_pack_subject,
+            lesson_pack_type = EXCLUDED.lesson_pack_type,
+            lesson_pack_duration_minutes = EXCLUDED.lesson_pack_duration_minutes,
+            lesson_pack_status = EXCLUDED.lesson_pack_status,
+            export_status = EXCLUDED.export_status,
+            last_exported_at = EXCLUDED.last_exported_at,
             updated_at = EXCLUDED.updated_at,
             raw_stage = EXCLUDED.raw_stage,
             version = classrooms.version + 1,
@@ -618,6 +650,76 @@ export function createPostgresObjectStorageRepository(
       await ensureReady();
       await getStoragePgPool(config.databaseUrl).query(
         'DELETE FROM stage_outlines WHERE stage_id = $1',
+        [stageId],
+      );
+    },
+
+    async saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+      await ensureReady();
+      await ensureClassroomRowExists(config, record.stageId, record.createdAt, record.createdAt);
+      await getStoragePgPool(config.databaseUrl).query(
+        `
+          INSERT INTO lesson_pack_versions (
+            version_id, stage_id, note, source, snapshot, created_at, raw_version
+          ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)
+          ON CONFLICT (version_id) DO UPDATE SET
+            stage_id = EXCLUDED.stage_id,
+            note = EXCLUDED.note,
+            source = EXCLUDED.source,
+            snapshot = EXCLUDED.snapshot,
+            created_at = EXCLUDED.created_at,
+            raw_version = EXCLUDED.raw_version
+        `,
+        [
+          record.id,
+          record.stageId,
+          record.note ?? null,
+          record.source,
+          toJsonb(record.snapshot),
+          record.createdAt,
+          toJsonb(record),
+        ],
+      );
+    },
+
+    async getLessonPackVersionRecord(
+      stageId: string,
+      versionId: string,
+    ): Promise<LessonPackVersionRecord | null> {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'SELECT raw_version FROM lesson_pack_versions WHERE stage_id = $1 AND version_id = $2',
+        [stageId, versionId],
+      );
+      if (result.rowCount === 0) {
+        return null;
+      }
+      return fromJsonColumn<LessonPackVersionRecord>(result.rows[0].raw_version);
+    },
+
+    async listLessonPackVersionRecordsByStageId(
+      stageId: string,
+    ): Promise<LessonPackVersionRecord[]> {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'SELECT raw_version FROM lesson_pack_versions WHERE stage_id = $1 ORDER BY created_at DESC',
+        [stageId],
+      );
+      return result.rows.map((row) => fromJsonColumn<LessonPackVersionRecord>(row.raw_version));
+    },
+
+    async deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void> {
+      await ensureReady();
+      await getStoragePgPool(config.databaseUrl).query(
+        'DELETE FROM lesson_pack_versions WHERE stage_id = $1 AND version_id = $2',
+        [stageId, versionId],
+      );
+    },
+
+    async deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+      await ensureReady();
+      await getStoragePgPool(config.databaseUrl).query(
+        'DELETE FROM lesson_pack_versions WHERE stage_id = $1',
         [stageId],
       );
     },

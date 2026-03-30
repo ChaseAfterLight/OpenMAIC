@@ -5,6 +5,7 @@ import type { StorageAdapter } from '@/lib/storage/types';
 import type {
   ChatSessionRecord,
   ImageFileRecord,
+  LessonPackVersionRecord,
   MediaFileRecord,
   PlaybackStateRecord,
   SceneRecord,
@@ -43,12 +44,13 @@ async function withServerWriteCache(
 }
 
 async function cacheStageSnapshot(stageId: string): Promise<void> {
-  const [stage, scenes, chats, playback, outlines, media] = await Promise.all([
+  const [stage, scenes, chats, playback, outlines, versions, media] = await Promise.all([
     serverStorageClient.getStageRecord(stageId),
     serverStorageClient.listScenesByStageId(stageId),
     serverStorageClient.listChatSessionsByStageId(stageId),
     serverStorageClient.getPlaybackStateRecord(stageId),
     serverStorageClient.getStageOutlinesRecord(stageId),
+    serverStorageClient.listLessonPackVersionRecordsByStageId(stageId),
     serverStorageClient.listMediaFilesByStageId(stageId),
   ]);
 
@@ -66,6 +68,10 @@ async function cacheStageSnapshot(stageId: string): Promise<void> {
     await indexedDbStorageAdapter.saveStageOutlinesRecord(outlines);
   } else {
     await indexedDbStorageAdapter.deleteStageOutlinesRecord(stageId);
+  }
+  await indexedDbStorageAdapter.deleteLessonPackVersionsByStageId(stageId);
+  for (const record of versions) {
+    await indexedDbStorageAdapter.saveLessonPackVersionRecord(record);
   }
   await indexedDbStorageAdapter.deleteMediaFilesByStageId(stageId);
   for (const record of media) {
@@ -252,6 +258,62 @@ export const serverStorageAdapter: StorageAdapter = {
   async deleteStageOutlinesRecord(stageId: string): Promise<void> {
     await serverStorageClient.deleteStageOutlinesRecord(stageId);
     await indexedDbStorageAdapter.deleteStageOutlinesRecord(stageId);
+  },
+
+  async saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+    await withServerWriteCache(
+      `saveLessonPackVersionRecord:${record.stageId}:${record.id}`,
+      () => serverStorageClient.saveLessonPackVersionRecord(record),
+      () => indexedDbStorageAdapter.saveLessonPackVersionRecord(record),
+    );
+  },
+
+  async getLessonPackVersionRecord(
+    stageId: string,
+    versionId: string,
+  ): Promise<LessonPackVersionRecord | undefined> {
+    const local = await indexedDbStorageAdapter.getLessonPackVersionRecord(stageId, versionId);
+    return withServerReadFallback(
+      `getLessonPackVersionRecord:${stageId}:${versionId}`,
+      async () => {
+        const record = await serverStorageClient.getLessonPackVersionRecord(stageId, versionId);
+        if (record) {
+          await indexedDbStorageAdapter.saveLessonPackVersionRecord(record);
+          return record;
+        }
+        return local;
+      },
+      async () => local,
+    );
+  },
+
+  async listLessonPackVersionRecordsByStageId(stageId: string): Promise<LessonPackVersionRecord[]> {
+    const local = await indexedDbStorageAdapter.listLessonPackVersionRecordsByStageId(stageId);
+    return withServerReadFallback(
+      `listLessonPackVersionRecordsByStageId:${stageId}`,
+      async () => {
+        const records = await serverStorageClient.listLessonPackVersionRecordsByStageId(stageId);
+        if (records.length === 0 && local.length > 0) {
+          return local;
+        }
+        await indexedDbStorageAdapter.deleteLessonPackVersionsByStageId(stageId);
+        await Promise.all(
+          records.map((record) => indexedDbStorageAdapter.saveLessonPackVersionRecord(record)),
+        );
+        return records;
+      },
+      async () => local,
+    );
+  },
+
+  async deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void> {
+    await serverStorageClient.deleteLessonPackVersionRecord(stageId, versionId);
+    await indexedDbStorageAdapter.deleteLessonPackVersionRecord(stageId, versionId);
+  },
+
+  async deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+    await serverStorageClient.deleteLessonPackVersionsByStageId(stageId);
+    await indexedDbStorageAdapter.deleteLessonPackVersionsByStageId(stageId);
   },
 
   async saveMediaFileRecord(record: MediaFileRecord): Promise<void> {

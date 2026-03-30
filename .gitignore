@@ -19,7 +19,7 @@ CLAUDE.local.md
 /.codex
 # testing
 /coverage
-
+/.agent
 # Playwright
 /test-results/
 /playwright-report/

@@ -4,6 +4,8 @@ import {
   deleteChatSessionsByStageId,
   deleteImageFileRecord,
   deleteImageFileRecordsBefore,
+  deleteLessonPackVersionRecord,
+  deleteLessonPackVersionsByStageId,
   deleteMediaFilesByStageId,
   deletePlaybackStateRecord,
   deleteScenesByStageId,
@@ -12,6 +14,7 @@ import {
   ensureStorageRoots,
   getImageFileBlob,
   getImageFileRecordMetadata,
+  getLessonPackVersionRecord,
   getMediaFileBlob,
   getMediaPosterBlob,
   getPlaybackStateRecord,
@@ -19,12 +22,14 @@ import {
   getStageRecord,
   listChatSessionsByStageId,
   listImageFileRecordMetadata,
+  listLessonPackVersionRecordsByStageId,
   listMediaFilesByStageId,
   listScenesByStageId,
   listStageRecordsByUpdatedAtDesc,
   replaceChatSessionsByStageId,
   replaceScenesByStageId,
   saveImageFileRecord,
+  saveLessonPackVersionRecord,
   saveMediaFileRecord,
   savePlaybackStateRecord,
   saveStageOutlinesRecord,
@@ -87,6 +92,25 @@ async function handleJsonAction(body: StorageJsonAction) {
       return apiSuccess({ ok: true, record: (await getStageOutlinesRecord(body.stageId)) ?? null });
     case 'deleteStageOutlinesRecord':
       await deleteStageOutlinesRecord(body.stageId);
+      return apiSuccess({ ok: true });
+    case 'saveLessonPackVersionRecord':
+      await saveLessonPackVersionRecord(body.record);
+      return apiSuccess({ ok: true });
+    case 'getLessonPackVersionRecord':
+      return apiSuccess({
+        ok: true,
+        version: (await getLessonPackVersionRecord(body.stageId, body.versionId)) ?? null,
+      });
+    case 'listLessonPackVersionRecordsByStageId':
+      return apiSuccess({
+        ok: true,
+        versions: await listLessonPackVersionRecordsByStageId(body.stageId),
+      });
+    case 'deleteLessonPackVersionRecord':
+      await deleteLessonPackVersionRecord(body.stageId, body.versionId);
+      return apiSuccess({ ok: true });
+    case 'deleteLessonPackVersionsByStageId':
+      await deleteLessonPackVersionsByStageId(body.stageId);
       return apiSuccess({ ok: true });
     case 'listMediaFilesByStageId': {
       const media = await listMediaFilesByStageId(body.stageId);

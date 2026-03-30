@@ -1,5 +1,12 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Scene, SceneType, SceneContent, Whiteboard } from '@/lib/types/stage';
+import type {
+  LessonPackMetadata,
+  LessonPackVersionSource,
+  Scene,
+  SceneType,
+  SceneContent,
+  Whiteboard,
+} from '@/lib/types/stage';
 import type { Action } from '@/lib/types/action';
 import type {
   SessionType,
@@ -44,6 +51,7 @@ export interface StageRecord {
   description?: string;
   createdAt: number; // timestamp
   updatedAt: number; // timestamp
+  lessonPack?: LessonPackMetadata;
   language?: string;
   style?: string;
   currentSceneId?: string;
@@ -133,6 +141,24 @@ export interface StageOutlinesRecord {
 }
 
 /**
+ * LessonPackVersion table - Manual lesson pack snapshots for save/restore
+ */
+export interface LessonPackVersionRecord {
+  id: string; // Primary key
+  stageId: string; // FK -> stages.id
+  note?: string;
+  source: LessonPackVersionSource;
+  createdAt: number;
+  snapshot: {
+    stage: StageRecord;
+    scenes: SceneRecord[];
+    chats: ChatSessionRecord[];
+    playback?: PlaybackStateRecord & { sceneId?: string };
+    outlines?: StageOutlinesRecord;
+  };
+}
+
+/**
  * MediaFile table - AI-generated media files (images/videos)
  */
 export interface MediaFileRecord {
@@ -175,7 +201,7 @@ export function mediaFileKey(stageId: string, elementId: string): string {
 // ==================== Database Definition ====================
 
 const DATABASE_NAME = 'MAIC-Database';
-const _DATABASE_VERSION = 8;
+const _DATABASE_VERSION = 9;
 
 /**
  * MAIC Database Instance
@@ -190,6 +216,7 @@ class MAICDatabase extends Dexie {
   chatSessions!: EntityTable<ChatSessionRecord, 'id'>;
   playbackState!: EntityTable<PlaybackStateRecord, 'stageId'>;
   stageOutlines!: EntityTable<StageOutlinesRecord, 'stageId'>;
+  lessonPackVersions!: EntityTable<LessonPackVersionRecord, 'id'>;
   mediaFiles!: EntityTable<MediaFileRecord, 'id'>;
   generatedAgents!: EntityTable<GeneratedAgentRecord, 'id'>;
 
@@ -309,6 +336,21 @@ class MAICDatabase extends Dexie {
       mediaFiles: 'id, stageId, [stageId+type]',
       generatedAgents: 'id, stageId',
     });
+
+    // Version 9: Add lessonPackVersions table for manual snapshots
+    this.version(9).stores({
+      stages: 'id, updatedAt',
+      scenes: 'id, stageId, order, [stageId+order]',
+      audioFiles: 'id, createdAt',
+      imageFiles: 'id, createdAt',
+      snapshots: '++id',
+      chatSessions: 'id, stageId, [stageId+createdAt]',
+      playbackState: 'stageId',
+      stageOutlines: 'stageId',
+      lessonPackVersions: 'id, stageId, createdAt, [stageId+createdAt]',
+      mediaFiles: 'id, stageId, [stageId+type]',
+      generatedAgents: 'id, stageId',
+    });
   }
 }
 
@@ -403,6 +445,7 @@ export async function deleteStageWithRelatedData(stageId: string): Promise<void>
       db.chatSessions,
       db.playbackState,
       db.stageOutlines,
+      db.lessonPackVersions,
       db.mediaFiles,
       db.generatedAgents,
     ],
@@ -412,6 +455,7 @@ export async function deleteStageWithRelatedData(stageId: string): Promise<void>
       await db.chatSessions.where('stageId').equals(stageId).delete();
       await db.playbackState.delete(stageId);
       await db.stageOutlines.delete(stageId);
+      await db.lessonPackVersions.where('stageId').equals(stageId).delete();
       await db.mediaFiles.where('stageId').equals(stageId).delete();
       await db.generatedAgents.where('stageId').equals(stageId).delete();
     },
@@ -440,6 +484,7 @@ export async function getDatabaseStats() {
     chatSessions: await db.chatSessions.count(),
     playbackState: await db.playbackState.count(),
     stageOutlines: await db.stageOutlines.count(),
+    lessonPackVersions: await db.lessonPackVersions.count(),
     mediaFiles: await db.mediaFiles.count(),
     generatedAgents: await db.generatedAgents.count(),
   };

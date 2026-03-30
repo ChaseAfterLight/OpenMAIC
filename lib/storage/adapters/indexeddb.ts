@@ -2,6 +2,7 @@ import {
   db,
   type ChatSessionRecord,
   type ImageFileRecord,
+  type LessonPackVersionRecord,
   type MediaFileRecord,
   type PlaybackStateRecord,
   type SceneRecord,
@@ -96,6 +97,34 @@ export const indexedDbStorageAdapter: StorageAdapter = {
 
   async deleteStageOutlinesRecord(stageId: string): Promise<void> {
     await db.stageOutlines.delete(stageId);
+  },
+
+  async saveLessonPackVersionRecord(record: LessonPackVersionRecord): Promise<void> {
+    await db.lessonPackVersions.put(record);
+  },
+
+  async getLessonPackVersionRecord(
+    stageId: string,
+    versionId: string,
+  ): Promise<LessonPackVersionRecord | undefined> {
+    const record = await db.lessonPackVersions.get(versionId);
+    return record?.stageId === stageId ? record : undefined;
+  },
+
+  async listLessonPackVersionRecordsByStageId(stageId: string): Promise<LessonPackVersionRecord[]> {
+    const records = await db.lessonPackVersions.where('stageId').equals(stageId).toArray();
+    return records.sort((a, b) => b.createdAt - a.createdAt);
+  },
+
+  async deleteLessonPackVersionRecord(stageId: string, versionId: string): Promise<void> {
+    const record = await db.lessonPackVersions.get(versionId);
+    if (record?.stageId === stageId) {
+      await db.lessonPackVersions.delete(versionId);
+    }
+  },
+
+  async deleteLessonPackVersionsByStageId(stageId: string): Promise<void> {
+    await db.lessonPackVersions.where('stageId').equals(stageId).delete();
   },
 
   async saveMediaFileRecord(record: MediaFileRecord): Promise<void> {
