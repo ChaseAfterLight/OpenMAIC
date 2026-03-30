@@ -75,6 +75,7 @@ $env:NEXT_PUBLIC_STORAGE_DRIVER='server'; pnpm build; pnpm start
 - `docker compose up -d postgres minio`
 - PostgreSQL 默认连接串示例：`postgresql://openmaic:openmaic@127.0.0.1:5432/openmaic`
 - MinIO 控制台默认地址：`http://127.0.0.1:9001`
+- Windows 本机安装并配置自动启动时，可参考 [Windows 本机 PostgreSQL / MinIO 自动启动](./windows-local-services.md)
 - 推荐本地 `.env.local`：
 
 ```powershell
@@ -90,6 +91,14 @@ $env:OBJECT_STORAGE_FORCE_PATH_STYLE='true'
 $env:OBJECT_STORAGE_KEY_PREFIX='openmaic'
 pnpm dev
 ```
+
+## Windows 本机自动启动
+
+如果没有走 Docker，而是直接在 Windows 本机安装 PostgreSQL 与 MinIO，可以使用当前用户登录自启动方案。
+
+- PostgreSQL 启动脚本：[start-postgres.ps1](../../scripts/local/start-postgres.ps1)
+- MinIO 启动脚本：[start-minio.ps1](../../scripts/local/start-minio.ps1)
+- 详细说明见：[Windows 本机 PostgreSQL / MinIO 自动启动](./windows-local-services.md)
 
 ## 迁移与回退
 
