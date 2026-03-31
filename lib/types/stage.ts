@@ -18,6 +18,11 @@ export interface LessonPackMetadata {
   subject?: string;
   lessonType?: string;
   durationMinutes?: number;
+  textbookEdition?: string;
+  volume?: string;
+  unit?: string;
+  chapter?: string;
+  chapterId?: string;
   status: LessonPackStatus;
   exportStatus?: 'not_exported' | 'exported';
   lastExportedAt?: number;

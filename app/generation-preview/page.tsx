@@ -27,9 +27,9 @@ import type { Stage } from '@/lib/types/stage';
 import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
 import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
+import { resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
 import { getModuleById } from '@/lib/module-host/runtime';
 import {
-  resolveOptionLabel,
   type K12ModulePresets,
   type SupportedLocale,
 } from '@/lib/module-host/types';
@@ -51,20 +51,14 @@ function buildLessonPackMetadata(session: GenerationSessionState, locale: Suppor
       exportStatus: 'not_exported' as const,
     };
   }
-
-  const findLabel = (
-    options: K12ModulePresets['grades'] | K12ModulePresets['subjects'] | K12ModulePresets['lessonTypes'],
-    id: string,
-  ) => {
-    const option = options.find((item) => item.id === id);
-    return option ? resolveOptionLabel(option, locale) : undefined;
-  };
+  const resolved = resolveK12LessonPackMetadata({
+    input: session.requirements.k12,
+    presets,
+    locale,
+  });
 
   return {
-    grade: findLabel(presets.grades, session.requirements.k12.gradeId),
-    subject: findLabel(presets.subjects, session.requirements.k12.subjectId),
-    lessonType: findLabel(presets.lessonTypes, session.requirements.k12.lessonTypeId),
-    durationMinutes: session.requirements.k12.durationMinutes,
+    ...resolved,
     status: 'draft' as const,
     exportStatus: 'not_exported' as const,
   };

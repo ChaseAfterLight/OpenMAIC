@@ -38,6 +38,11 @@ export function normalizeLessonPackMetadata(
     subject: metadata?.subject?.trim() || undefined,
     lessonType: metadata?.lessonType?.trim() || undefined,
     durationMinutes,
+    textbookEdition: metadata?.textbookEdition?.trim() || undefined,
+    volume: metadata?.volume?.trim() || undefined,
+    unit: metadata?.unit?.trim() || undefined,
+    chapter: metadata?.chapter?.trim() || undefined,
+    chapterId: metadata?.chapterId?.trim() || undefined,
     status,
     exportStatus: metadata?.exportStatus === 'exported' ? 'exported' : 'not_exported',
     lastExportedAt:

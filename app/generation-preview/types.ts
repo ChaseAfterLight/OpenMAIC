@@ -1,4 +1,5 @@
 import { ScanLine, Search, Bot, FileText, LayoutPanelLeft, Clapperboard } from 'lucide-react';
+import type { K12TextbookResource } from '@/lib/module-host/types';
 import { useSettingsStore } from '@/lib/store/settings';
 import type {
   SceneOutline,
@@ -22,6 +23,7 @@ export interface GenerationSessionState {
   pdfFileName?: string;
   pdfProviderId?: string;
   pdfProviderConfig?: { apiKey?: string; baseUrl?: string };
+  selectedTextbookResources?: K12TextbookResource[];
   // Web search context
   researchContext?: string;
   researchSources?: Array<{ title: string; url: string }>;

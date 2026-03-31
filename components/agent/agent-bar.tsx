@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import * as RadixPopover from '@radix-ui/react-popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
@@ -22,7 +22,6 @@ import {
   Minus,
   Plus,
 } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
 import type { TTSProviderId } from '@/lib/audio/types';
 import type { ProviderWithVoices } from '@/lib/audio/voice-resolver';
@@ -460,7 +459,6 @@ export function AgentBar() {
 
   const [open, setOpen] = useState(false);
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   // Load browser native TTS voices
   useEffect(() => {
@@ -491,19 +489,6 @@ export function AgentBar() {
       : []),
   ];
   const showVoice = availableProviders.length > 0;
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (containerRef.current && containerRef.current.contains(target)) return;
-      // Don't close if clicking inside a Radix portal (Popover, Select, etc.)
-      if ((target as Element).closest?.('[data-radix-popper-content-wrapper]')) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
 
   const handleModeChange = (mode: 'preset' | 'auto') => {
     setAgentMode(mode);
@@ -651,49 +636,47 @@ export function AgentBar() {
   };
 
   return (
-    <div ref={containerRef} className="relative w-96">
-      <Tooltip>
-        <TooltipTrigger asChild>
+    <RadixPopover.Root open={open} onOpenChange={setOpen}>
+      <div className="relative w-96">
+        <RadixPopover.Trigger asChild>
           <button
+            type="button"
+            aria-expanded={open}
+            title={open ? t('agentBar.expandedTitle') : t('agentBar.configTooltip')}
             className={cn(
-              'group flex items-center gap-2 cursor-pointer rounded-full px-2.5 py-2 transition-all w-full',
-              'border border-border/50 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60',
+              'group flex w-full cursor-pointer items-center gap-2 rounded-full border border-border/50 px-2.5 py-2 transition-all',
+              'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground',
             )}
-            onClick={() => setOpen(!open)}
           >
-            <span className="text-xs text-muted-foreground/60 group-hover:text-muted-foreground transition-colors hidden sm:block font-medium flex-1 text-left truncate">
+            <span className="hidden flex-1 truncate text-left text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-muted-foreground sm:block">
               {open ? t('agentBar.expandedTitle') : t('agentBar.readyToLearn')}
             </span>
             {avatarRow}
             {open ? (
-              <ChevronUp className="size-3 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors" />
+              <ChevronUp className="size-3 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground/70" />
             ) : (
-              <ChevronDown className="size-3 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors" />
+              <ChevronDown className="size-3 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground/70" />
             )}
           </button>
-        </TooltipTrigger>
-        {!open && (
-          <TooltipContent side="bottom" sideOffset={4}>
-            {t('agentBar.configTooltip')}
-          </TooltipContent>
-        )}
-      </Tooltip>
+        </RadixPopover.Trigger>
+      </div>
 
-      <AnimatePresence>
+      <RadixPopover.Portal>
         {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -4, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.97 }}
-            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
-            className="absolute right-0 top-full mt-1 z-50 w-96"
+          <RadixPopover.Content
+            side="bottom"
+            align="end"
+            sideOffset={8}
+            collisionPadding={12}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            className="z-50 w-96 outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2"
           >
-            <div className="rounded-2xl bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm ring-1 ring-black/[0.04] dark:ring-white/[0.06] shadow-[0_1px_8px_-2px_rgba(0,0,0,0.06)] dark:shadow-[0_1px_8px_-2px_rgba(0,0,0,0.3)] px-2 py-1.5">
+            <div className="rounded-2xl bg-white/95 px-2 py-1.5 shadow-[0_1px_8px_-2px_rgba(0,0,0,0.06)] ring-1 ring-black/[0.04] backdrop-blur-sm dark:bg-slate-800/95 dark:ring-white/[0.06] dark:shadow-[0_1px_8px_-2px_rgba(0,0,0,0.3)]">
               {/* Teacher — always visible */}
               {teacherAgent && (
-                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-primary/5 mb-2">
+                <div className="mb-2 flex items-center gap-2 rounded-lg bg-primary/5 px-2.5 py-1.5">
                   <div
-                    className="size-7 rounded-full overflow-hidden shrink-0 ring-1 ring-border/40"
+                    className="size-7 shrink-0 overflow-hidden rounded-full ring-1 ring-border/40"
                     style={{ boxShadow: `0 0 0 2px ${teacherAgent.color}30` }}
                   >
                     <img
@@ -702,7 +685,7 @@ export function AgentBar() {
                       className="size-full object-cover"
                     />
                   </div>
-                  <span className="text-[13px] font-medium truncate min-w-0 flex-1">
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                     {getAgentName(teacherAgent)}
                   </span>
                   {showVoice && (
@@ -715,13 +698,13 @@ export function AgentBar() {
               )}
 
               {/* Mode tabs */}
-              <div className="flex rounded-lg border bg-muted/30 p-0.5 mb-2">
+              <div className="mb-2 flex rounded-lg border bg-muted/30 p-0.5">
                 <button
                   onClick={() => handleModeChange('preset')}
                   className={cn(
-                    'flex-1 py-1.5 text-xs font-medium rounded-md transition-all text-center',
+                    'flex-1 rounded-md py-1.5 text-center text-xs font-medium transition-all',
                     agentMode === 'preset'
-                      ? 'bg-background shadow-sm text-foreground'
+                      ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
@@ -730,9 +713,9 @@ export function AgentBar() {
                 <button
                   onClick={() => handleModeChange('auto')}
                   className={cn(
-                    'flex-1 py-1.5 text-xs font-medium rounded-md transition-all text-center flex items-center justify-center gap-1',
+                    'flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-center text-xs font-medium transition-all',
                     agentMode === 'auto'
-                      ? 'bg-background shadow-sm text-foreground'
+                      ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
@@ -748,14 +731,14 @@ export function AgentBar() {
                     .map((agent, idx) => renderAgentRow(agent, idx + 1, false))}
                 </div>
               ) : (
-                <div className="flex flex-col items-center pt-6 pb-3 gap-4">
+                <div className="flex flex-col items-center gap-4 pb-3 pt-6">
                   <div className="relative flex items-center justify-center">
-                    <div className="absolute size-10 rounded-full bg-violet-400/10 dark:bg-violet-400/15 animate-ping [animation-duration:3s]" />
-                    <div className="absolute size-12 rounded-full bg-violet-400/5 dark:bg-violet-400/10 animate-pulse [animation-duration:2.5s]" />
+                    <div className="absolute size-10 animate-ping rounded-full bg-violet-400/10 [animation-duration:3s] dark:bg-violet-400/15" />
+                    <div className="absolute size-12 animate-pulse rounded-full bg-violet-400/5 [animation-duration:2.5s] dark:bg-violet-400/10" />
                     <Shuffle className="relative size-5 text-violet-400 dark:text-violet-500" />
                   </div>
                   <div className="flex-1" />
-                  <div className="text-center space-y-1">
+                  <div className="space-y-1 text-center">
                     <p className="text-[11px] text-muted-foreground/60">
                       {t('settings.agentModeAutoDesc')}
                     </p>
@@ -767,12 +750,12 @@ export function AgentBar() {
               )}
 
               {/* Max turns — compact stepper */}
-              <div className="flex items-center gap-1.5 px-2 py-1 mt-1 border-t border-border/30">
-                <MessageSquare className="size-3 text-muted-foreground/40 shrink-0" />
-                <span className="text-[11px] text-muted-foreground/50 flex-1">
+              <div className="mt-1 flex items-center gap-1.5 border-t border-border/30 px-2 py-1">
+                <MessageSquare className="size-3 shrink-0 text-muted-foreground/40" />
+                <span className="flex-1 text-[11px] text-muted-foreground/50">
                   {t('settings.maxTurns')}
                 </span>
-                <div className="flex items-center rounded-full bg-muted/50 h-5 shrink-0">
+                <div className="flex h-5 shrink-0 items-center rounded-full bg-muted/50">
                   <button
                     type="button"
                     onClick={(e) => {
@@ -780,7 +763,7 @@ export function AgentBar() {
                       const v = Math.max(1, parseInt(maxTurns || '1') - 1);
                       setMaxTurns(String(v));
                     }}
-                    className="size-5 flex items-center justify-center text-muted-foreground/60 hover:text-foreground transition-colors rounded-full hover:bg-muted"
+                    className="flex size-5 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
                   >
                     <Minus className="size-2.5" />
                   </button>
@@ -801,7 +784,7 @@ export function AgentBar() {
                       if (!maxTurns || parseInt(maxTurns) < 1) setMaxTurns('1');
                     }}
                     onClick={(e) => e.stopPropagation()}
-                    className="w-5 h-5 text-[11px] font-medium tabular-nums text-center bg-transparent outline-none border-none"
+                    className="h-5 w-5 border-none bg-transparent text-center text-[11px] font-medium tabular-nums outline-none"
                   />
                   <button
                     type="button"
@@ -810,16 +793,16 @@ export function AgentBar() {
                       const v = Math.min(20, parseInt(maxTurns || '1') + 1);
                       setMaxTurns(String(v));
                     }}
-                    className="size-5 flex items-center justify-center text-muted-foreground/60 hover:text-foreground transition-colors rounded-full hover:bg-muted"
+                    className="flex size-5 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
                   >
                     <Plus className="size-2.5" />
                   </button>
                 </div>
               </div>
             </div>
-          </motion.div>
+          </RadixPopover.Content>
         )}
-      </AnimatePresence>
-    </div>
+      </RadixPopover.Portal>
+    </RadixPopover.Root>
   );
 }

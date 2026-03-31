@@ -9,11 +9,57 @@ export interface ModuleOption {
   label: LocalizedText;
 }
 
+export interface K12TextbookResource {
+  id: string;
+  title: string;
+  type: 'pdf' | 'docx' | 'image' | 'html' | 'other';
+  description?: string;
+  url?: string;
+}
+
+export interface K12TextbookChapter {
+  id: string;
+  title: string;
+  summary: string;
+  keywords: string[];
+  sourceDocuments: K12TextbookResource[];
+  suggestedLessonTypeIds?: string[];
+}
+
+export interface K12TextbookUnit {
+  id: string;
+  title: string;
+  chapters: K12TextbookChapter[];
+}
+
+export interface K12TextbookVolume {
+  id: string;
+  label: LocalizedText;
+  gradeId: string;
+  subjectId: string;
+  semester?: 'upper' | 'lower' | 'full-year';
+  units: K12TextbookUnit[];
+}
+
+export interface K12TextbookEdition {
+  id: string;
+  label: LocalizedText;
+  publisher?: string;
+  volumes: K12TextbookVolume[];
+}
+
 export interface K12StructuredInput {
   gradeId: string;
   subjectId: string;
   lessonTypeId: string;
   durationMinutes: number;
+  textbookEditionId?: string;
+  volumeId?: string;
+  unitId?: string;
+  chapterId?: string;
+  chapterSummary?: string;
+  chapterKeywords?: string[];
+  chapterResources?: K12TextbookResource[];
 }
 
 export interface K12ModulePresets {
@@ -21,6 +67,7 @@ export interface K12ModulePresets {
   subjects: ModuleOption[];
   lessonTypes: ModuleOption[];
   durations: number[];
+  textbookEditions: K12TextbookEdition[];
   defaults: K12StructuredInput;
 }
 

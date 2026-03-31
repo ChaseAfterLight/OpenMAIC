@@ -10,7 +10,6 @@ import {
   Moon,
   MoreHorizontal,
   Pencil,
-  Plus,
   Search,
   Settings,
   Sparkles,
@@ -23,10 +22,10 @@ import { toast } from 'sonner';
 import { AgentBar } from '@/components/agent/agent-bar';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { GenerationToolbar } from '@/components/generation/generation-toolbar';
+import { K12StructuredInputFields } from '@/components/k12/k12-structured-input';
 import { SettingsDialog } from '@/components/settings';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -58,9 +57,12 @@ import {
   getActiveModule,
 } from '@/lib/module-host/runtime';
 import {
+  buildK12RequirementText,
+  getDefaultK12StructuredInput,
+} from '@/lib/module-host/k12';
+import {
   resolveLocalizedList,
   resolveLocalizedText,
-  resolveOptionLabel,
   type K12ModulePresets,
   type K12StructuredInput,
   type SupportedLocale,
@@ -213,8 +215,7 @@ export function LessonPackWorkbenchClient() {
   const currentModelId = useSettingsStore((s) => s.modelId);
   const [form, setForm] = useState<FormState>(initialFormState);
   const [k12Form, setK12Form] = useState<K12StructuredInput>(() => {
-    const defaults = k12Presets?.defaults;
-    return defaults ?? { gradeId: 'grade-4', subjectId: 'math', lessonTypeId: 'new-lesson', durationMinutes: 40 };
+    return getDefaultK12StructuredInput(k12Presets);
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [classrooms, setClassrooms] = useState<StageListItem[]>([]);
@@ -229,6 +230,7 @@ export function LessonPackWorkbenchClient() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- Hydration from localStorage must happen in effect */
     try {
       const savedWebSearch = localStorage.getItem(WEB_SEARCH_STORAGE_KEY);
       const savedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -240,6 +242,7 @@ export function LessonPackWorkbenchClient() {
     } catch {
       // localStorage unavailable
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   const loadClassrooms = useCallback(async () => {
@@ -252,9 +255,11 @@ export function LessonPackWorkbenchClient() {
     setThumbnails(await getFirstSlideByStages(list.map((item) => item.id)));
   }, []);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Initial list hydration triggers state updates */
   useEffect(() => {
     void loadClassrooms();
   }, [loadClassrooms]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => subscribeHybridSyncState(() => void loadClassrooms()), [loadClassrooms]);
 
@@ -287,7 +292,15 @@ export function LessonPackWorkbenchClient() {
         const keyword = search.trim().toLowerCase();
         const matchesKeyword =
           keyword.length === 0 ||
-          [item.name, item.lessonPack.grade, item.lessonPack.subject, item.lessonPack.lessonType]
+          [
+            item.name,
+            item.lessonPack.grade,
+            item.lessonPack.subject,
+            item.lessonPack.lessonType,
+            item.lessonPack.textbookEdition,
+            item.lessonPack.unit,
+            item.lessonPack.chapter,
+          ]
             .filter(Boolean)
             .some((value) => value!.toLowerCase().includes(keyword));
         const matchesGrade = gradeFilter === 'all' || item.lessonPack.grade === gradeFilter;
@@ -311,35 +324,6 @@ export function LessonPackWorkbenchClient() {
     }
   };
 
-  const resolveK12Label = (
-    options: K12ModulePresets['grades'] | K12ModulePresets['subjects'] | K12ModulePresets['lessonTypes'],
-    id: string,
-  ) => {
-    const option = options.find((item) => item.id === id) ?? options[0];
-    return option ? resolveOptionLabel(option, activeLocale) : id;
-  };
-
-  const buildK12RequirementText = () => {
-    if (!k12Presets) return form.requirement.trim();
-    const gradeLabel = resolveK12Label(k12Presets.grades, k12Form.gradeId);
-    const subjectLabel = resolveK12Label(k12Presets.subjects, k12Form.subjectId);
-    const lessonTypeLabel = resolveK12Label(k12Presets.lessonTypes, k12Form.lessonTypeId);
-    const freeform = form.requirement.trim();
-    const fragments =
-      activeLocale === 'zh-CN'
-        ? [
-            `请为${gradeLabel}${subjectLabel}设计一节${k12Form.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
-            '输出要适合小学课堂使用，包含导入、讲解、例题、练习和总结。',
-            freeform ? `补充要求：${freeform}` : null,
-          ]
-        : [
-            `Design a ${k12Form.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson for ${gradeLabel} ${subjectLabel}.`,
-            'Include warm-up, explanation, worked examples, in-class practice, and wrap-up.',
-            freeform ? `Additional requirements: ${freeform}` : null,
-          ];
-    return fragments.filter(Boolean).join('\n');
-  };
-
   const handleGenerate = async () => {
     if (!currentModelId) {
       toast.error(activeLocale === 'zh-CN' ? '请先完成模型配置' : 'Please configure a model first');
@@ -356,7 +340,16 @@ export function LessonPackWorkbenchClient() {
     const requirements: UserRequirements = {
       moduleId: activeModule.id,
       k12: isK12Module ? k12Form : undefined,
-      requirement: isK12Module ? buildK12RequirementText() : form.requirement.trim(),
+      requirement:
+        isK12Module && k12Presets
+          ? buildK12RequirementText({
+              input: k12Form,
+              presets: k12Presets,
+              locale: activeLocale,
+              freeform: form.requirement,
+              supplementaryPdfName: form.pdfFile?.name,
+            })
+          : form.requirement.trim(),
       language: form.language,
       userNickname: userProfile.nickname || undefined,
       userBio: userProfile.bio || undefined,
@@ -391,6 +384,7 @@ export function LessonPackWorkbenchClient() {
         pdfFileName,
         pdfProviderId,
         pdfProviderConfig,
+        selectedTextbookResources: requirements.k12?.chapterResources,
         sceneOutlines: null,
         currentStep: 'generating' as const,
       }),
@@ -495,32 +489,12 @@ export function LessonPackWorkbenchClient() {
             <div className="flex flex-col gap-4 rounded-3xl bg-slate-50 p-4 dark:bg-slate-950/50">
               {/* K12 专属筛选器排成一排 */}
               {isK12Module && k12Presets && (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  <Select value={k12Form.gradeId} onValueChange={(value) => setK12Form((prev) => ({ ...prev, gradeId: value }))}>
-                    <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800"><SelectValue placeholder={copy.grade} /></SelectTrigger>
-                    <SelectContent>
-                      {k12Presets.grades.map((option) => <SelectItem key={option.id} value={option.id}>{resolveOptionLabel(option, activeLocale)}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={k12Form.subjectId} onValueChange={(value) => setK12Form((prev) => ({ ...prev, subjectId: value }))}>
-                    <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800"><SelectValue placeholder={copy.subject} /></SelectTrigger>
-                    <SelectContent>
-                      {k12Presets.subjects.map((option) => <SelectItem key={option.id} value={option.id}>{resolveOptionLabel(option, activeLocale)}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={k12Form.lessonTypeId} onValueChange={(value) => setK12Form((prev) => ({ ...prev, lessonTypeId: value }))}>
-                    <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800"><SelectValue placeholder="Lesson type" /></SelectTrigger>
-                    <SelectContent>
-                      {k12Presets.lessonTypes.map((option) => <SelectItem key={option.id} value={option.id}>{resolveOptionLabel(option, activeLocale)}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={String(k12Form.durationMinutes)} onValueChange={(value) => setK12Form((prev) => ({ ...prev, durationMinutes: Number(value) }))}>
-                    <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800"><SelectValue placeholder="Duration" /></SelectTrigger>
-                    <SelectContent>
-                      {k12Presets.durations.map((duration) => <SelectItem key={duration} value={String(duration)}>{duration} min</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <K12StructuredInputFields
+                  presets={k12Presets}
+                  value={k12Form}
+                  locale={activeLocale}
+                  onChange={setK12Form}
+                />
               )}
 
               {/* 工具栏与生成按钮并排 */}
@@ -727,7 +701,15 @@ export function LessonPackWorkbenchClient() {
                       <div className="mt-3 flex flex-wrap gap-2">
                         {classroom.lessonPack.lessonType ? <Badge variant="outline" className="rounded-md border-slate-200 text-xs font-normal text-slate-600 dark:border-slate-700 dark:text-slate-400">{classroom.lessonPack.lessonType}</Badge> : null}
                         {classroom.lessonPack.durationMinutes ? <Badge variant="outline" className="rounded-md border-slate-200 text-xs font-normal text-slate-600 dark:border-slate-700 dark:text-slate-400">{classroom.lessonPack.durationMinutes} min</Badge> : null}
+                        {classroom.lessonPack.chapter ? <Badge variant="outline" className="rounded-md border-indigo-200 text-xs font-normal text-indigo-700 dark:border-indigo-500/30 dark:text-indigo-300">{classroom.lessonPack.chapter}</Badge> : null}
                       </div>
+                      {classroom.lessonPack.textbookEdition || classroom.lessonPack.unit ? (
+                        <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                          {[classroom.lessonPack.textbookEdition, classroom.lessonPack.volume, classroom.lessonPack.unit]
+                            .filter(Boolean)
+                            .join(' / ')}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                 </article>

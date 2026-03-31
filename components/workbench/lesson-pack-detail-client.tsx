@@ -310,6 +310,7 @@ export function LessonPackDetailClient() {
                   {stage.lessonPack?.grade ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">{stage.lessonPack.grade}</Badge> : null}
                   {stage.lessonPack?.subject ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">{stage.lessonPack.subject}</Badge> : null}
                   {stage.lessonPack?.lessonType ? <Badge className="bg-white border-slate-200 text-slate-600 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-400" variant="outline">{stage.lessonPack.lessonType}</Badge> : null}
+                  {stage.lessonPack?.chapter ? <Badge className="border-indigo-200 bg-white text-indigo-700 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-indigo-300" variant="outline">{stage.lessonPack.chapter}</Badge> : null}
                 </div>
                 
                 <div>
@@ -426,6 +427,14 @@ export function LessonPackDetailClient() {
                       <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
                         <span className="text-sm font-medium text-slate-500 dark:text-slate-400">课型时长</span>
                         <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{stage.lessonPack?.lessonType || '—'} / {stage.lessonPack?.durationMinutes ?? '—'} min</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
+                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">教材章节</span>
+                        <span className="text-right text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {[stage.lessonPack?.textbookEdition, stage.lessonPack?.unit, stage.lessonPack?.chapter]
+                            .filter(Boolean)
+                            .join(' / ') || '—'}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
                         <span className="text-sm font-medium text-slate-500 dark:text-slate-400">内容统计</span>

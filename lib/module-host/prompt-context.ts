@@ -1,9 +1,9 @@
 import type { SceneOutline, UserRequirements } from '@/lib/types/generation';
+import { buildK12StructuredContext } from './k12';
 import { getModuleById } from './runtime';
 import type {
   K12ModulePresets,
   ModuleId,
-  ModuleOption,
   SupportedLocale,
 } from './types';
 
@@ -15,14 +15,6 @@ export function resolveRequirementModuleId(requirements: Pick<UserRequirements, 
   return requirements.moduleId ?? 'core';
 }
 
-function resolveOption(
-  options: ModuleOption[] | undefined,
-  id: string | undefined,
-): ModuleOption | undefined {
-  if (!options || !id) return undefined;
-  return options.find((option) => option.id === id);
-}
-
 export function buildOutlineModuleContext(
   requirements: Pick<UserRequirements, 'moduleId' | 'language' | 'k12'>,
 ): string {
@@ -32,34 +24,7 @@ export function buildOutlineModuleContext(
   if (moduleId !== 'k12') return '';
 
   const k12Presets = getModuleById('k12').presets as K12ModulePresets | undefined;
-  const grade = resolveOption(k12Presets?.grades, requirements.k12?.gradeId);
-  const subject = resolveOption(k12Presets?.subjects, requirements.k12?.subjectId);
-  const lessonType = resolveOption(k12Presets?.lessonTypes, requirements.k12?.lessonTypeId);
-  const durationMinutes = requirements.k12?.durationMinutes;
-  const structuredContext =
-    grade || subject || lessonType || durationMinutes
-      ? locale === 'zh-CN'
-        ? [
-            '',
-            '### 当前结构化备课参数',
-            grade ? `- 年级：${grade?.label['zh-CN']}` : null,
-            subject ? `- 学科：${subject?.label['zh-CN']}` : null,
-            lessonType ? `- 课型：${lessonType?.label['zh-CN']}` : null,
-            durationMinutes ? `- 课时：${durationMinutes} 分钟` : null,
-          ]
-            .filter(Boolean)
-            .join('\n')
-        : [
-            '',
-            '### Structured lesson settings',
-            grade ? `- Grade: ${grade?.label['en-US']}` : null,
-            subject ? `- Subject: ${subject?.label['en-US']}` : null,
-            lessonType ? `- Lesson type: ${lessonType?.label['en-US']}` : null,
-            durationMinutes ? `- Duration: ${durationMinutes} minutes` : null,
-          ]
-            .filter(Boolean)
-            .join('\n')
-      : '';
+  const structuredContext = buildK12StructuredContext(requirements.k12, k12Presets, locale);
 
   if (locale === 'zh-CN') {
     return [
@@ -71,6 +36,7 @@ export function buildOutlineModuleContext(
       '- 优先生成 slide 和 quiz 场景；只有在交互确实能帮助理解时才使用 interactive；除非用户明确要求，否则不要使用 pbl。',
       '- 语言要适龄、具体、可课堂口述，避免成人化、抽象化、研究型表达。',
       '- 适当加入导入、例题、随堂提问、巩固练习和课堂总结，让结果更像真实的小学课堂。',
+      '- 如果已经选了教材章节，应优先围绕章节摘要、关键词和教材资料组织课堂内容，而不是忽略教材来源。',
       '- 如果学科未说明，可优先按小学数学风格组织内容：概念讲解、例题示范、分步练习。',
       structuredContext,
       '',
@@ -87,6 +53,7 @@ export function buildOutlineModuleContext(
     '- Prefer slide and quiz scenes. Use interactive scenes only when interaction clearly improves understanding. Avoid pbl unless the user explicitly asks for project-based learning.',
     '- Keep the language age-appropriate, concrete, and classroom-friendly. Avoid abstract, research-heavy, or adult-oriented phrasing.',
     '- Include helpful classroom structure such as warm-up, worked examples, guided questioning, practice, and wrap-up when suitable.',
+    '- When a textbook chapter is selected, prioritize the chapter summary, keywords, and attached source materials rather than treating the request as a generic topic prompt.',
     '- If the subject is not specified, you may default toward elementary math structure: concept explanation, worked example, and guided practice.',
     structuredContext,
     '',

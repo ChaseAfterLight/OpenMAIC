@@ -2,6 +2,7 @@ import type { BusinessModule, K12ModulePresets } from '@/lib/module-host/types';
 import { elementaryUpperGradePreset } from './presets/grade/elementary-upper';
 import { newLessonTypePreset } from './presets/lesson-type/new-lesson';
 import { elementaryMathSubjectPreset } from './presets/subject/math';
+import { pepElementaryMathEdition } from './presets/textbook/pep-elementary-math';
 
 const k12Presets: K12ModulePresets = {
   grades: [
@@ -51,11 +52,16 @@ const k12Presets: K12ModulePresets = {
     },
   ],
   durations: [30, 40, 45],
+  textbookEditions: [pepElementaryMathEdition],
   defaults: {
     gradeId: 'grade-4',
     subjectId: 'math',
     lessonTypeId: 'new-lesson',
     durationMinutes: 40,
+    textbookEditionId: 'pep-elementary-math',
+    volumeId: 'pep-math-grade-4-upper',
+    unitId: 'g4u-unit-1',
+    chapterId: 'g4u-u1-c1',
   },
 };
 
@@ -89,14 +95,14 @@ export const k12ModuleManifest: BusinessModule = {
       'en-US': 'K12 Business Module',
     },
     slogan: {
-      'zh-CN': '把教材、课题和 PDF 变成适合小学课堂的备课包',
-      'en-US': 'Turn textbooks, lesson topics, and PDFs into K12-ready lesson packs',
+      'zh-CN': '从教材章节出发，快速生成适合小学课堂的备课包',
+      'en-US': 'Start from textbook chapters and turn them into K12-ready lesson packs',
     },
     requirementPlaceholder: {
       'zh-CN':
-        '补充教学目标、教材来源或班级情况，例如：\n「围绕小数的生活化例子设计导入」\n「加入 3 道随堂练习和 1 个课堂总结」\n「参考上传教材 PDF，生成可投屏的数学课」',
+        '优先选择教材章节，再补充教学目标、班级情况或自定义资料，例如：\n「围绕大数的认识设计生活化导入」\n「加入 3 道随堂练习和 1 个课堂总结」\n「参考我额外上传的 PDF，生成可投屏的数学课」',
       'en-US':
-        'Add teaching goals, lesson notes, or class context, e.g.\n"Use real-life decimal examples for the warm-up"\n"Include 3 in-class practice questions and a short wrap-up"\n"Use the uploaded textbook PDF to build a projector-ready lesson"',
+        'Choose a textbook chapter first, then add teaching goals, class context, or extra materials, e.g.\n"Use real-life examples for the warm-up"\n"Include 3 in-class practice questions and a short wrap-up"\n"Use my uploaded PDF as supplementary material"',
     },
     submitLabel: {
       'zh-CN': '生成备课包',
@@ -107,8 +113,8 @@ export const k12ModuleManifest: BusinessModule = {
       'en-US': 'OpenMAIC K12 Module Preview',
     },
     quickPrompts: {
-      'zh-CN': ['四年级数学：小数的意义', '三年级语文：《荷花》', '五年级英语：My Day'],
-      'en-US': ['Grade 4 math: decimals', 'Grade 3 Chinese: Lotus', 'Grade 5 English: My Day'],
+      'zh-CN': ['四年级数学：大数的认识', '三年级数学：秒的认识', '五年级数学：小数乘整数'],
+      'en-US': ['Grade 4 math: large numbers', 'Grade 3 math: understanding seconds', 'Grade 5 math: decimal times integer'],
     },
   },
   presets: {

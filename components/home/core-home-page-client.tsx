@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { SettingsDialog } from '@/components/settings';
 import { GenerationToolbar } from '@/components/generation/generation-toolbar';
 import { AgentBar } from '@/components/agent/agent-bar';
+import { K12StructuredInputFields } from '@/components/k12/k12-structured-input';
 import { useTheme } from '@/lib/hooks/use-theme';
 import { nanoid } from 'nanoid';
 import { storePdfBlob } from '@/lib/utils/image-storage';
@@ -47,24 +48,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDraftCache } from '@/lib/hooks/use-draft-cache';
 import { SpeechButton } from '@/components/audio/speech-button';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   getActiveModule,
 } from '@/lib/module-host/runtime';
 import { subscribeHybridSyncState } from '@/lib/storage/hybrid-sync';
 import {
-  resolveOptionLabel,
   resolveLocalizedList,
   resolveLocalizedText,
   type K12ModulePresets,
   type K12StructuredInput,
   type SupportedLocale,
 } from '@/lib/module-host/types';
+import {
+  buildK12RequirementText,
+  getDefaultK12StructuredInput,
+} from '@/lib/module-host/k12';
 
 const log = createLogger('Home');
 
@@ -102,15 +99,7 @@ function HomePage() {
   const quickPrompts = resolveLocalizedList(activeModule.home.quickPrompts, activeLocale);
   const [form, setForm] = useState<FormState>(initialFormState);
   const [k12Form, setK12Form] = useState<K12StructuredInput>(() => {
-    const defaults = k12Presets?.defaults;
-    return (
-      defaults ?? {
-        gradeId: 'grade-4',
-        subjectId: 'math',
-        lessonTypeId: 'new-lesson',
-        durationMinutes: 40,
-      }
-    );
+    return getDefaultK12StructuredInput(k12Presets);
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
@@ -273,41 +262,6 @@ function HomePage() {
     );
   };
 
-  const getK12OptionLabel = (
-    options: K12ModulePresets['grades'] | K12ModulePresets['subjects'] | K12ModulePresets['lessonTypes'],
-    id: string,
-  ) => {
-    const option = options.find((item) => item.id === id) ?? options[0];
-    return option ? resolveOptionLabel(option, activeLocale) : id;
-  };
-
-  const buildK12RequirementText = () => {
-    if (!k12Presets) return form.requirement.trim();
-
-    const gradeLabel = getK12OptionLabel(k12Presets.grades, k12Form.gradeId);
-    const subjectLabel = getK12OptionLabel(k12Presets.subjects, k12Form.subjectId);
-    const lessonTypeLabel = getK12OptionLabel(k12Presets.lessonTypes, k12Form.lessonTypeId);
-    const freeform = form.requirement.trim();
-
-    if (activeLocale === 'zh-CN') {
-      return [
-        `请为${gradeLabel}${subjectLabel}设计一节${k12Form.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
-        '输出应适合小学课堂使用，包含导入、讲解、例题、随堂提问、练习和总结。',
-        freeform ? `补充要求：${freeform}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-
-    return [
-      `Design a ${k12Form.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson for ${gradeLabel} ${subjectLabel}.`,
-      'The output should be ready for an elementary classroom and include warm-up, explanation, worked examples, in-class questions, practice, and wrap-up.',
-      freeform ? `Additional requirements: ${freeform}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n');
-  };
-
   const handleGenerate = async () => {
     // Validate setup before proceeding
     if (!currentModelId) {
@@ -332,7 +286,16 @@ function HomePage() {
       const requirements: UserRequirements = {
         moduleId: activeModule.id,
         k12: isK12Module ? k12Form : undefined,
-        requirement: isK12Module ? buildK12RequirementText() : form.requirement,
+        requirement:
+          isK12Module && k12Presets
+            ? buildK12RequirementText({
+                input: k12Form,
+                presets: k12Presets,
+                locale: activeLocale,
+                freeform: form.requirement,
+                supplementaryPdfName: form.pdfFile?.name,
+              })
+            : form.requirement,
         language: form.language,
         userNickname: userProfile.nickname || undefined,
         userBio: userProfile.bio || undefined,
@@ -369,6 +332,7 @@ function HomePage() {
         pdfFileName,
         pdfProviderId,
         pdfProviderConfig,
+        selectedTextbookResources: requirements.k12?.chapterResources,
         sceneOutlines: null,
         currentStep: 'generating' as const,
       };
@@ -628,71 +592,14 @@ function HomePage() {
             </div>
 
             {isK12Module && k12Presets && (
-              <div className="grid gap-2 px-4 pb-1 pt-1 md:grid-cols-4">
-                <Select
-                  value={k12Form.gradeId}
-                  onValueChange={(value) => setK12Form((prev) => ({ ...prev, gradeId: value }))}
-                >
-                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {k12Presets.grades.map((grade) => (
-                      <SelectItem key={grade.id} value={grade.id}>
-                        {resolveOptionLabel(grade, activeLocale)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={k12Form.subjectId}
-                  onValueChange={(value) => setK12Form((prev) => ({ ...prev, subjectId: value }))}
-                >
-                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {k12Presets.subjects.map((subject) => (
-                      <SelectItem key={subject.id} value={subject.id}>
-                        {resolveOptionLabel(subject, activeLocale)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={k12Form.lessonTypeId}
-                  onValueChange={(value) =>
-                    setK12Form((prev) => ({ ...prev, lessonTypeId: value }))
-                  }
-                >
-                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {k12Presets.lessonTypes.map((lessonType) => (
-                      <SelectItem key={lessonType.id} value={lessonType.id}>
-                        {resolveOptionLabel(lessonType, activeLocale)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={String(k12Form.durationMinutes)}
-                  onValueChange={(value) =>
-                    setK12Form((prev) => ({ ...prev, durationMinutes: Number(value) }))
-                  }
-                >
-                  <SelectTrigger className="h-9 w-full rounded-xl border-border/50 bg-background/60 text-xs shadow-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {k12Presets.durations.map((duration) => (
-                      <SelectItem key={duration} value={String(duration)}>
-                        {activeLocale === 'zh-CN' ? `${duration} 分钟` : `${duration} min`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="px-4 pb-1 pt-1">
+                <K12StructuredInputFields
+                  presets={k12Presets}
+                  value={k12Form}
+                  locale={activeLocale}
+                  onChange={setK12Form}
+                  compact
+                />
               </div>
             )}
 
