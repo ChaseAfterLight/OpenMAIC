@@ -76,8 +76,11 @@ export function K12StructuredInputFields({
   const text = copy[locale];
   const selection = getK12TextbookSelection(presets, value);
   const triggerClassName = compact
-    ? 'h-9 rounded-xl border-slate-200 bg-white text-xs shadow-none dark:border-slate-800 dark:bg-slate-900'
+    ? 'h-10 rounded-2xl border-slate-200 bg-white text-xs shadow-sm dark:border-slate-800 dark:bg-slate-900'
     : 'h-10 rounded-xl border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900';
+  const sectionWrapClassName = compact
+    ? 'space-y-3 rounded-[24px] border border-slate-200/70 bg-white/70 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/50'
+    : 'space-y-2';
 
   const update = (patch: Partial<K12StructuredInput>) => {
     onChange(syncK12StructuredInput({ ...value, ...patch }, presets));
@@ -85,44 +88,58 @@ export function K12StructuredInputFields({
 
   return (
     <div className={cn('flex flex-col gap-4', className)}>
-      <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-          {text.structured}
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Select
-            value={value.lessonTypeId}
-            onValueChange={(lessonTypeId) => update({ lessonTypeId })}
-          >
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.lessonType} />
-            </SelectTrigger>
-            <SelectContent>
-              {presets.lessonTypes.map((option) => (
-                <SelectItem key={option.id} value={option.id}>
-                  {resolveOptionLabel(option, locale)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className={sectionWrapClassName}>
+        <div className={cn('flex items-center justify-between', compact && 'px-0.5')}>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+            {text.structured}
+          </p>
+          {compact ? <span className="text-[11px] text-slate-400">2</span> : null}
+        </div>
 
-          <Select
-            value={String(value.durationMinutes)}
-            onValueChange={(durationMinutes) =>
-              update({ durationMinutes: Number(durationMinutes) })
-            }
-          >
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.duration} />
-            </SelectTrigger>
-            <SelectContent>
-              {presets.durations.map((duration) => (
-                <SelectItem key={duration} value={String(duration)}>
-                  {duration} {text.durationUnit}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+              {text.lessonType}
+            </p>
+            <Select
+              value={value.lessonTypeId}
+              onValueChange={(lessonTypeId) => update({ lessonTypeId })}
+            >
+              <SelectTrigger className={cn(triggerClassName, 'w-full min-w-0 justify-between')}>
+                <SelectValue placeholder={text.lessonType} />
+              </SelectTrigger>
+              <SelectContent>
+                {presets.lessonTypes.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {resolveOptionLabel(option, locale)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+              {text.duration}
+            </p>
+            <Select
+              value={String(value.durationMinutes)}
+              onValueChange={(durationMinutes) =>
+                update({ durationMinutes: Number(durationMinutes) })
+              }
+            >
+              <SelectTrigger className={cn(triggerClassName, 'w-full min-w-0 justify-between')}>
+                <SelectValue placeholder={text.duration} />
+              </SelectTrigger>
+              <SelectContent>
+                {presets.durations.map((duration) => (
+                  <SelectItem key={duration} value={String(duration)}>
+                    {duration} {text.durationUnit}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 

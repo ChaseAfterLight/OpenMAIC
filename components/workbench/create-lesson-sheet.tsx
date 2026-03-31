@@ -251,7 +251,7 @@ export function CreateLessonSheet({
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
-          className="flex w-full flex-col gap-0 border-l-0 bg-white/95 p-0 shadow-[0_30px_100px_rgba(15,23,42,0.14)] backdrop-blur-xl dark:bg-slate-950/95 sm:max-w-[560px]"
+          className="flex w-full flex-col gap-0 border-l-0 bg-white/95 p-0 shadow-[0_30px_100px_rgba(15,23,42,0.14)] backdrop-blur-xl dark:bg-slate-950/95 sm:max-w-[760px] lg:max-w-[960px] xl:max-w-[1120px]"
           side="right"
         >
           <SheetHeader className="px-6 pb-5 pt-6 text-left">
@@ -484,6 +484,9 @@ export function CreateLessonSheet({
       <TextbookLibraryModal
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
+        presets={k12Presets}
+        value={k12Form}
+        locale={activeLocale}
         onSelect={(textbook, chapterPath, chapterTitle) => {
           setSelectedTextbook(textbook);
           setSelectedChapterTitle(chapterTitle || chapterPath.join(' · '));

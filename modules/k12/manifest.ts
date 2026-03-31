@@ -100,9 +100,9 @@ export const k12ModuleManifest: BusinessModule = {
     },
     requirementPlaceholder: {
       'zh-CN':
-        '优先选择教材章节，再补充教学目标、班级情况或自定义资料，例如：\n「围绕大数的认识设计生活化导入」\n「加入 3 道随堂练习和 1 个课堂总结」\n「参考我额外上传的 PDF，生成可投屏的数学课」',
+        '在上方先选好教材章节，再在这里补充老师的自定义要求，例如课堂风格、语气、练习数量、互动方式或作业安排。',
       'en-US':
-        'Choose a textbook chapter first, then add teaching goals, class context, or extra materials, e.g.\n"Use real-life examples for the warm-up"\n"Include 3 in-class practice questions and a short wrap-up"\n"Use my uploaded PDF as supplementary material"',
+        'Pick the textbook chapter above, then add teacher-specific instructions here, such as tone, style, practice count, interaction pattern, or homework.',
     },
     submitLabel: {
       'zh-CN': '生成备课包',
@@ -113,8 +113,18 @@ export const k12ModuleManifest: BusinessModule = {
       'en-US': 'OpenMAIC K12 Module Preview',
     },
     quickPrompts: {
-      'zh-CN': ['四年级数学：大数的认识', '三年级数学：秒的认识', '五年级数学：小数乘整数'],
-      'en-US': ['Grade 4 math: large numbers', 'Grade 3 math: understanding seconds', 'Grade 5 math: decimal times integer'],
+      'zh-CN': [
+        '课堂风格轻松一点，多用生活例子',
+        '加入 3 个分层练习，基础题到提升题都要有',
+        '语气亲切自然，适合小学课堂',
+        '请突出互动提问和板书提示',
+      ],
+      'en-US': [
+        'Keep the lesson light and friendly with real-life examples',
+        'Include 3 differentiated practice items, from basic to advanced',
+        'Use a warm, conversational tone for elementary students',
+        'Emphasize interaction prompts and board cues',
+      ],
     },
   },
   presets: {

@@ -3,7 +3,7 @@ import type { K12TextbookEdition } from '@/lib/module-host/types';
 export const pepElementaryMathEdition: K12TextbookEdition = {
   id: 'pep-elementary-math',
   label: {
-    'zh-CN': '人教版小学数学',
+    'zh-CN': '人教版',
     'en-US': 'PEP Elementary Math',
   },
   publisher: '人民教育出版社',
