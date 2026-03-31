@@ -123,9 +123,6 @@ export function buildK12RequirementText(args: {
   const { input, presets, locale, supplementaryPdfName } = args;
   const freeform = args.freeform.trim();
   const selection = getK12TextbookSelection(presets, input);
-  const gradeLabel = getK12OptionLabel(presets?.grades, input.gradeId, locale) ?? input.gradeId;
-  const subjectLabel =
-    getK12OptionLabel(presets?.subjects, input.subjectId, locale) ?? input.subjectId;
   const lessonTypeLabel =
     getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale) ?? input.lessonTypeId;
   const editionLabel = selection.edition
@@ -139,7 +136,7 @@ export function buildK12RequirementText(args: {
 
   if (locale === 'zh-CN') {
     return [
-      `请为${gradeLabel}${subjectLabel}设计一节${input.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
+      `请基于当前关联教材章节设计一节${input.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
       selection.chapter
         ? `优先基于${editionLabel ?? '教材'}${volumeLabel ? ` ${volumeLabel}` : ''}中“${selection.unit?.title ?? '当前单元'}”的“${selection.chapter.title}”组织内容。`
         : '如果教材章节信息不完整，请结合老师补充要求组织内容。',
@@ -157,7 +154,7 @@ export function buildK12RequirementText(args: {
   }
 
   return [
-    `Design a ${input.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson for ${gradeLabel} ${subjectLabel}.`,
+    `Design a ${input.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson based on the linked textbook chapter.`,
     selection.chapter
       ? `Prioritize the chapter "${selection.chapter.title}" from ${editionLabel ?? 'the selected textbook'}${volumeLabel ? ` (${volumeLabel})` : ''}${selection.unit?.title ? `, unit "${selection.unit.title}"` : ''}.`
       : 'If textbook chapter data is incomplete, rely on the teacher notes and any uploaded supporting materials.',

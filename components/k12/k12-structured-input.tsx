@@ -8,10 +8,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import {
-  getK12TextbookSelection,
-  syncK12StructuredInput,
-} from '@/lib/module-host/k12';
+import { getK12TextbookSelection, syncK12StructuredInput } from '@/lib/module-host/k12';
 import {
   resolveLocalizedText,
   resolveOptionLabel,
@@ -27,15 +24,13 @@ interface K12StructuredInputProps {
   onChange: (next: K12StructuredInput) => void;
   compact?: boolean;
   className?: string;
+  showTextbookSection?: boolean;
 }
 
 const copy = {
   'zh-CN': {
     structured: '基础参数',
-    textbook: '教材章节优先',
-    textbookHint: '常规备课建议先选教材章节；找不到时仍可用自由描述和补充 PDF 继续生成。',
-    grade: '年级',
-    subject: '学科',
+    textbook: '教材章节',
     lessonType: '课型',
     duration: '时长',
     edition: '教材版本',
@@ -51,11 +46,7 @@ const copy = {
   },
   'en-US': {
     structured: 'Lesson setup',
-    textbook: 'Textbook chapter first',
-    textbookHint:
-      'For standard K12 lesson planning, start with a textbook chapter. If the chapter is missing, you can still continue with notes and supplementary PDFs.',
-    grade: 'Grade',
-    subject: 'Subject',
+    textbook: 'Textbook chapter',
     lessonType: 'Lesson type',
     duration: 'Duration',
     edition: 'Edition',
@@ -80,6 +71,7 @@ export function K12StructuredInputFields({
   onChange,
   compact = false,
   className,
+  showTextbookSection = true,
 }: K12StructuredInputProps) {
   const text = copy[locale];
   const selection = getK12TextbookSelection(presets, value);
@@ -97,33 +89,7 @@ export function K12StructuredInputFields({
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
           {text.structured}
         </p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Select value={value.gradeId} onValueChange={(gradeId) => update({ gradeId })}>
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.grade} />
-            </SelectTrigger>
-            <SelectContent>
-              {presets.grades.map((option) => (
-                <SelectItem key={option.id} value={option.id}>
-                  {resolveOptionLabel(option, locale)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={value.subjectId} onValueChange={(subjectId) => update({ subjectId })}>
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.subject} />
-            </SelectTrigger>
-            <SelectContent>
-              {presets.subjects.map((option) => (
-                <SelectItem key={option.id} value={option.id}>
-                  {resolveOptionLabel(option, locale)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Select
             value={value.lessonTypeId}
             onValueChange={(lessonTypeId) => update({ lessonTypeId })}
@@ -142,7 +108,9 @@ export function K12StructuredInputFields({
 
           <Select
             value={String(value.durationMinutes)}
-            onValueChange={(durationMinutes) => update({ durationMinutes: Number(durationMinutes) })}
+            onValueChange={(durationMinutes) =>
+              update({ durationMinutes: Number(durationMinutes) })
+            }
           >
             <SelectTrigger className={triggerClassName}>
               <SelectValue placeholder={text.duration} />
@@ -158,126 +126,125 @@ export function K12StructuredInputFields({
         </div>
       </div>
 
-      <div className="space-y-3">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-            {text.textbook}
-          </p>
-          <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-            {text.textbookHint}
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <Select
-            value={selection.edition?.id}
-            onValueChange={(textbookEditionId) => update({ textbookEditionId })}
-            disabled={selection.editions.length === 0}
-          >
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.edition} />
-            </SelectTrigger>
-            <SelectContent>
-              {selection.editions.map((edition) => (
-                <SelectItem key={edition.id} value={edition.id}>
-                  {resolveLocalizedText(edition.label, locale)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={selection.volume?.id}
-            onValueChange={(volumeId) => update({ volumeId })}
-            disabled={selection.volumes.length === 0}
-          >
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.volume} />
-            </SelectTrigger>
-            <SelectContent>
-              {selection.volumes.map((volume) => (
-                <SelectItem key={volume.id} value={volume.id}>
-                  {resolveLocalizedText(volume.label, locale)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={selection.unit?.id}
-            onValueChange={(unitId) => update({ unitId })}
-            disabled={selection.units.length === 0}
-          >
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.unit} />
-            </SelectTrigger>
-            <SelectContent>
-              {selection.units.map((unit) => (
-                <SelectItem key={unit.id} value={unit.id}>
-                  {unit.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={selection.chapter?.id}
-            onValueChange={(chapterId) => update({ chapterId })}
-            disabled={selection.chapters.length === 0}
-          >
-            <SelectTrigger className={triggerClassName}>
-              <SelectValue placeholder={text.chapter} />
-            </SelectTrigger>
-            <SelectContent>
-              {selection.chapters.map((chapter) => (
-                <SelectItem key={chapter.id} value={chapter.id}>
-                  {chapter.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 bg-white/70 p-4 text-left dark:border-slate-800 dark:bg-slate-950/60">
-          {selection.editions.length === 0 ? (
-            <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-              {text.noEdition}
+      {showTextbookSection ? (
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+              {text.textbook}
             </p>
-          ) : selection.chapter ? (
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  {selection.unit?.title} / {selection.chapter.title}
-                </p>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                  <span className="font-medium text-slate-800 dark:text-slate-200">
-                    {text.chapterSummary}:
-                  </span>{' '}
-                  {selection.chapter.summary}
-                </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <Select
+              value={selection.edition?.id}
+              onValueChange={(textbookEditionId) => update({ textbookEditionId })}
+              disabled={selection.editions.length === 0}
+            >
+              <SelectTrigger className={triggerClassName}>
+                <SelectValue placeholder={text.edition} />
+              </SelectTrigger>
+              <SelectContent>
+                {selection.editions.map((edition) => (
+                  <SelectItem key={edition.id} value={edition.id}>
+                    {resolveLocalizedText(edition.label, locale)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={selection.volume?.id}
+              onValueChange={(volumeId) => update({ volumeId })}
+              disabled={selection.volumes.length === 0}
+            >
+              <SelectTrigger className={triggerClassName}>
+                <SelectValue placeholder={text.volume} />
+              </SelectTrigger>
+              <SelectContent>
+                {selection.volumes.map((volume) => (
+                  <SelectItem key={volume.id} value={volume.id}>
+                    {resolveLocalizedText(volume.label, locale)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={selection.unit?.id}
+              onValueChange={(unitId) => update({ unitId })}
+              disabled={selection.units.length === 0}
+            >
+              <SelectTrigger className={triggerClassName}>
+                <SelectValue placeholder={text.unit} />
+              </SelectTrigger>
+              <SelectContent>
+                {selection.units.map((unit) => (
+                  <SelectItem key={unit.id} value={unit.id}>
+                    {unit.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={selection.chapter?.id}
+              onValueChange={(chapterId) => update({ chapterId })}
+              disabled={selection.chapters.length === 0}
+            >
+              <SelectTrigger className={triggerClassName}>
+                <SelectValue placeholder={text.chapter} />
+              </SelectTrigger>
+              <SelectContent>
+                {selection.chapters.map((chapter) => (
+                  <SelectItem key={chapter.id} value={chapter.id}>
+                    {chapter.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/80 bg-white/70 p-4 text-left dark:border-slate-800 dark:bg-slate-950/60">
+            {selection.editions.length === 0 ? (
+              <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                {text.noEdition}
+              </p>
+            ) : selection.chapter ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {selection.unit?.title} / {selection.chapter.title}
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {text.chapterSummary}:
+                    </span>{' '}
+                    {selection.chapter.summary}
+                  </p>
+                </div>
+                {selection.chapter.keywords.length > 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    <span className="font-medium">{text.chapterKeywords}:</span>{' '}
+                    {selection.chapter.keywords.join(locale === 'zh-CN' ? '、' : ', ')}
+                  </p>
+                ) : null}
+                {selection.chapter.sourceDocuments.length > 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    <span className="font-medium">{text.chapterResources}:</span>{' '}
+                    {selection.chapter.sourceDocuments
+                      .map((resource) => resource.title)
+                      .join(locale === 'zh-CN' ? '；' : '; ')}
+                  </p>
+                ) : null}
               </div>
-              {selection.chapter.keywords.length > 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  <span className="font-medium">{text.chapterKeywords}:</span>{' '}
-                  {selection.chapter.keywords.join(locale === 'zh-CN' ? '、' : ', ')}
-                </p>
-              ) : null}
-              {selection.chapter.sourceDocuments.length > 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  <span className="font-medium">{text.chapterResources}:</span>{' '}
-                  {selection.chapter.sourceDocuments
-                    .map((resource) => resource.title)
-                    .join(locale === 'zh-CN' ? '；' : '; ')}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-              {text.noChapter}
-            </p>
-          )}
+            ) : (
+              <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                {text.noChapter}
+              </p>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
