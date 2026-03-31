@@ -27,7 +27,7 @@ import type { Stage } from '@/lib/types/stage';
 import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
 import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
-import { resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
+import { buildK12LessonPackTitle, resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
 import { getModuleById } from '@/lib/module-host/runtime';
 import {
   type K12ModulePresets,
@@ -396,13 +396,20 @@ function GenerationPreviewContent() {
 
       // Create stage client-side (needed for agent generation stageId)
       const stageId = nanoid(10);
+      const k12Module = getModuleById('k12');
+      const k12Presets = k12Module.presets as K12ModulePresets | undefined;
       const lessonPack = buildLessonPackMetadata(
         currentSession,
         (currentSession.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale,
       );
       const stage: Stage = {
         id: stageId,
-        name: extractTopicFromRequirement(currentSession.requirements.requirement),
+        name: buildK12LessonPackTitle({
+          input: currentSession.requirements.k12,
+          presets: k12Presets,
+          locale: (currentSession.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale,
+          requirement: currentSession.requirements.requirement,
+        }),
         description: '',
         language: currentSession.requirements.language || 'zh-CN',
         style: 'professional',
@@ -833,14 +840,6 @@ function GenerationPreviewContent() {
       sessionStorage.removeItem('generationSession');
       setError(err instanceof Error ? err.message : String(err));
     }
-  };
-
-  const extractTopicFromRequirement = (requirement: string): string => {
-    const trimmed = requirement.trim();
-    if (trimmed.length <= 500) {
-      return trimmed;
-    }
-    return trimmed.substring(0, 500).trim() + '...';
   };
 
   const goBackToHome = () => {

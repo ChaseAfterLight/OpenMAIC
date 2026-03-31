@@ -23,6 +23,24 @@ function resolveOption<T extends ModuleOption>(options: T[] | undefined, id: str
   return options.find((option) => option.id === id);
 }
 
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function truncateText(text: string, maxLength: number): string {
+  const normalized = collapseWhitespace(text);
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function firstSentence(text: string): string {
+  return collapseWhitespace(text)
+    .split(/[。！？.!?\n]/)
+    .map((part) => part.trim())
+    .find(Boolean)
+    ?? '';
+}
+
 export function getK12OptionLabel(
   options: ModuleOption[] | undefined,
   id: string | undefined,
@@ -231,6 +249,39 @@ export function buildK12StructuredContext(
         ];
 
   return lines.filter(Boolean).join('\n');
+}
+
+export function buildK12LessonPackTitle(args: {
+  input: K12StructuredInput | undefined;
+  presets: K12ModulePresets | undefined;
+  locale: SupportedLocale;
+  requirement?: string;
+}): string {
+  const { input, presets, locale, requirement } = args;
+  const fallbackRequirement = firstSentence(requirement || '');
+
+  if (!input) {
+    return truncateText(fallbackRequirement || '未命名备课包', 40);
+  }
+
+  const selection = getK12TextbookSelection(presets, input);
+  const lessonTypeLabel =
+    getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale) ?? input.lessonTypeId;
+  const chapterTitle = selection.chapter?.title ? collapseWhitespace(selection.chapter.title) : '';
+  const unitTitle = selection.unit?.title ? collapseWhitespace(selection.unit.title) : '';
+  const chapterSummary = input.chapterSummary ? collapseWhitespace(input.chapterSummary) : '';
+  const mainTopic = chapterTitle || chapterSummary || unitTitle;
+
+  if (mainTopic) {
+    const prefix = lessonTypeLabel ? `${lessonTypeLabel} · ` : '';
+    return truncateText(`${prefix}${mainTopic}`, 48);
+  }
+
+  const gradeLabel = getK12OptionLabel(presets?.grades, input.gradeId, locale);
+  const subjectLabel = getK12OptionLabel(presets?.subjects, input.subjectId, locale);
+  const fallbackParts = [gradeLabel, subjectLabel, lessonTypeLabel, fallbackRequirement].filter(Boolean);
+
+  return truncateText(fallbackParts.join(' · '), 48) || '未命名备课包';
 }
 
 export function resolveK12LessonPackMetadata(args: {
