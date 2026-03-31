@@ -147,6 +147,17 @@ pnpm dev
 
 打开 **http://localhost:3000** 开始学习！
 
+### 认证与角色（可选）
+
+默认支持系统账号角色：`admin`、`teacher`、`student`。
+
+- 首次启动且无管理员时，访问 `/setup/admin` 初始化首个管理员
+- 登录入口：`/auth/login`
+- 注册入口：`/auth/register`（由 `AUTH_ALLOW_PUBLIC_REGISTRATION` 控制）
+- 管理员可在 `/admin/users` 调整用户角色
+
+说明：系统账号角色与课堂中的 AI 角色（teacher/assistant/student）是两套独立概念。
+
 ### 4. 生产环境构建
 
 ```bash

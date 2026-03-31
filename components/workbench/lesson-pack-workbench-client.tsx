@@ -52,6 +52,7 @@ import { getActiveModule } from '@/lib/module-host/runtime';
 import { resolveLocalizedText, type SupportedLocale } from '@/lib/module-host/types';
 import { subscribeHybridSyncState } from '@/lib/storage/hybrid-sync';
 import type { Slide } from '@/lib/types/slides';
+import { useAuthSessionStore } from '@/lib/store/auth-session';
 import {
   buildTextbookChapterTree,
   matchesTextbookChapterPath,
@@ -112,6 +113,8 @@ const workbenchCopy = {
     quickPrompts: '快捷建议',
     createHint: '输入需求并生成后，将自动进入课堂编辑器。结束后也可在工作台继续管理。',
     myLibrary: '我的备课库',
+    adminEntry: '管理后台',
+    logout: '退出登录',
   },
   'en-US': {
     title: 'Teacher Workbench',
@@ -157,6 +160,8 @@ const workbenchCopy = {
     createHint:
       'After generation, you will automatically enter the classroom editor. You can always manage it later in the workbench.',
     myLibrary: 'My Library',
+    adminEntry: 'Admin',
+    logout: 'Logout',
   },
 } as const;
 
@@ -185,6 +190,7 @@ export function LessonPackWorkbenchClient() {
   const copy = workbenchCopy[activeLocale];
   const activeModule = getActiveModule();
   const moduleBadge = resolveLocalizedText(activeModule.home.badge, activeLocale);
+  const authUser = useAuthSessionStore((s) => s.user);
 
   // 控制新建抽屉的状态
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
@@ -272,6 +278,11 @@ export function LessonPackWorkbenchClient() {
     await loadClassrooms();
   };
 
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    router.replace('/auth/login');
+  };
+
   return (
     <div className="min-h-[100dvh] bg-slate-50 font-sans selection:bg-indigo-500/30 dark:bg-slate-950">
       {/* 极简顶部导航 */}
@@ -292,6 +303,14 @@ export function LessonPackWorkbenchClient() {
         </div>
 
         <div className="flex items-center gap-4">
+          {authUser?.role === 'admin' ? (
+            <Button variant="outline" size="sm" onClick={() => router.push('/admin/users')}>
+              {copy.adminEntry}
+            </Button>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={() => void handleLogout()}>
+            {copy.logout}
+          </Button>
           <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <Button
               variant="ghost"

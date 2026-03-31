@@ -69,6 +69,7 @@ function GenerationPreviewContent() {
   const { t } = useI18n();
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   const [session, setSession] = useState<GenerationSessionState | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -78,6 +79,30 @@ function GenerationPreviewContent() {
   const [statusMessage, setStatusMessage] = useState('');
   const [streamingOutlines, setStreamingOutlines] = useState<SceneOutline[] | null>(null);
   const [truncationWarnings, setTruncationWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data.authenticated) {
+          router.replace(data.adminExists ? '/auth/login' : '/setup/admin');
+          return;
+        }
+        setAuthReady(true);
+      } catch {
+        if (!cancelled) {
+          router.replace('/auth/login');
+        }
+      }
+    }
+    void checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
   const [webSearchSources, setWebSearchSources] = useState<Array<{ title: string; url: string }>>(
     [],
   );
@@ -882,6 +907,14 @@ function GenerationPreviewContent() {
     activeSteps.length > 0
       ? activeSteps[Math.min(currentStepIndex, activeSteps.length - 1)]
       : ALL_STEPS[0];
+
+  if (!authReady) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">{t('auth.checkingSession')}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex flex-col items-center justify-center p-4 relative overflow-hidden text-center">

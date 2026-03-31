@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS classrooms (
   stage_id TEXT PRIMARY KEY,
+  owner_user_id TEXT,
   name TEXT NOT NULL,
   description TEXT,
   language TEXT,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS classrooms (
   raw_stage JSONB NOT NULL
 );
 
+ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
 ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_grade TEXT;
 ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_subject TEXT;
 ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS lesson_pack_type TEXT;
@@ -33,6 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_classrooms_updated_at ON classrooms (updated_at D
 CREATE INDEX IF NOT EXISTS idx_classrooms_sync_status ON classrooms (sync_status);
 CREATE INDEX IF NOT EXISTS idx_classrooms_lesson_pack_status ON classrooms (lesson_pack_status);
 CREATE INDEX IF NOT EXISTS idx_classrooms_lesson_pack_subject ON classrooms (lesson_pack_subject);
+CREATE INDEX IF NOT EXISTS idx_classrooms_owner_user_id ON classrooms (owner_user_id);
 
 CREATE TABLE IF NOT EXISTS scenes (
   id TEXT PRIMARY KEY,
@@ -143,3 +146,26 @@ CREATE TABLE IF NOT EXISTS image_files (
 
 CREATE INDEX IF NOT EXISTS idx_image_files_created_at ON image_files (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_image_files_storage_status ON image_files (storage_status);
+
+CREATE TABLE IF NOT EXISTS auth_users (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL,
+  display_name TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_users_role ON auth_users (role);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  expires_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  last_seen_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions (expires_at);

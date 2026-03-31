@@ -55,6 +55,7 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
     // Save to stages table
     await storage.saveStageRecord({
       id: stageId,
+      ownerUserId: stage.ownerUserId,
       name: stage.name || 'Untitled Stage',
       description: stage.description,
       createdAt: stage.createdAt || now,

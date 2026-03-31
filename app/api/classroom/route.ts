@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server';
 import { randomUUID } from 'crypto';
 import { apiSuccess, apiError, API_ERROR_CODES } from '@/lib/server/api-response';
+import { requireApiRole, requireApiUser } from '@/lib/server/auth-guards';
 import {
   buildRequestOrigin,
   isValidClassroomId,
@@ -9,6 +10,11 @@ import {
 } from '@/lib/server/classroom-storage';
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiRole(request, ['admin', 'teacher']);
+  if ('response' in auth) {
+    return auth.response;
+  }
+
   try {
     const body = await request.json();
     const { stage, scenes } = body;
@@ -24,7 +30,10 @@ export async function POST(request: NextRequest) {
     const id = stage.id || randomUUID();
     const baseUrl = buildRequestOrigin(request);
 
-    const persisted = await persistClassroom({ id, stage: { ...stage, id }, scenes }, baseUrl);
+    const persisted = await persistClassroom(
+      { id, ownerUserId: auth.user.id, stage: { ...stage, id }, scenes },
+      baseUrl,
+    );
 
     return apiSuccess({ id: persisted.id, url: persisted.url }, 201);
   } catch (error) {
@@ -38,6 +47,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = await requireApiUser(request);
+  if ('response' in auth) {
+    return auth.response;
+  }
+
   try {
     const id = request.nextUrl.searchParams.get('id');
 
@@ -56,6 +70,13 @@ export async function GET(request: NextRequest) {
     const classroom = await readClassroom(id);
     if (!classroom) {
       return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Classroom not found');
+    }
+    if (
+      auth.user.role !== 'admin' &&
+      classroom.ownerUserId &&
+      classroom.ownerUserId !== auth.user.id
+    ) {
+      return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden classroom access');
     }
 
     return apiSuccess({ classroom });

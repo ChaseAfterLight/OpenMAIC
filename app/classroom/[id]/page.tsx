@@ -12,6 +12,7 @@ import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
+import { useI18n } from '@/lib/hooks/use-i18n';
 
 const log = createLogger('Classroom');
 
@@ -20,6 +21,8 @@ export default function ClassroomDetailPage() {
   const classroomId = params?.id as string;
 
   const { loadFromStorage } = useStageStore();
+  const { t } = useI18n();
+  const [authReady, setAuthReady] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +34,30 @@ export default function ClassroomDetailPage() {
       log.info('[Classroom] All scenes generated');
     },
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data.authenticated) {
+          window.location.href = data.adminExists ? '/auth/login' : '/setup/admin';
+          return;
+        }
+        setAuthReady(true);
+      } catch {
+        if (!cancelled) {
+          window.location.href = '/auth/login';
+        }
+      }
+    }
+    void checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadClassroom = useCallback(async () => {
     try {
@@ -96,6 +123,7 @@ export default function ClassroomDetailPage() {
   }, [classroomId, loadFromStorage]);
 
   useEffect(() => {
+    if (!authReady) return;
     // Reset loading state on course switch to unmount Stage during transition,
     // preventing stale data from syncing back to the new course
     setLoading(true);
@@ -118,10 +146,11 @@ export default function ClassroomDetailPage() {
     return () => {
       stop();
     };
-  }, [classroomId, loadClassroom, stop]);
+  }, [authReady, classroomId, loadClassroom, stop]);
 
   // Auto-resume generation for pending outlines
   useEffect(() => {
+    if (!authReady) return;
     if (loading || error || generationStartedRef.current) return;
 
     const state = useStageStore.getState();
@@ -166,16 +195,22 @@ export default function ClassroomDetailPage() {
         log.warn('[Classroom] Media generation resume error:', err);
       });
     }
-  }, [loading, error, generateRemaining]);
+  }, [authReady, loading, error, generateRemaining]);
 
   return (
     <ThemeProvider>
       <MediaStageProvider value={classroomId}>
         <div className="h-screen flex flex-col overflow-hidden">
-          {loading ? (
+          {!authReady ? (
             <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
               <div className="text-center text-muted-foreground">
-                <p>Loading classroom...</p>
+                <p>{t('auth.checkingSession')}</p>
+              </div>
+            </div>
+          ) : loading ? (
+            <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+              <div className="text-center text-muted-foreground">
+                <p>{t('common.loading')}</p>
               </div>
             </div>
           ) : error ? (

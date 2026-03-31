@@ -147,6 +147,17 @@ pnpm dev
 
 Open **http://localhost:3000** and start learning!
 
+### Authentication & Roles (Optional)
+
+The app supports system-level roles: `admin`, `teacher`, and `student`.
+
+- If no admin exists, initialize the first admin at `/setup/admin`
+- Sign in at `/auth/login`
+- Register at `/auth/register` (controlled by `AUTH_ALLOW_PUBLIC_REGISTRATION`)
+- Admins can manage role assignments at `/admin/users`
+
+Note: system account roles are independent from classroom AI agent roles.
+
 ### 4. Build for Production
 
 ```bash

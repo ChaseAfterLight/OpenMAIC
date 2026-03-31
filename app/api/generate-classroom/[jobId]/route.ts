@@ -5,10 +5,16 @@ import {
   readClassroomGenerationJob,
 } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
+import { requireApiRole } from '@/lib/server/auth-guards';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest, context: { params: Promise<{ jobId: string }> }) {
+  const auth = await requireApiRole(req, ['admin', 'teacher']);
+  if ('response' in auth) {
+    return auth.response;
+  }
+
   try {
     const { jobId } = await context.params;
 

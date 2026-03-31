@@ -47,6 +47,7 @@ export interface Snapshot {
  */
 export interface StageRecord {
   id: string; // Primary key
+  ownerUserId?: string;
   name: string;
   description?: string;
   createdAt: number; // timestamp

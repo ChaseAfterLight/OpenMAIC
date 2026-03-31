@@ -33,6 +33,7 @@ export interface LessonPackMetadata {
  */
 export interface Stage {
   id: string;
+  ownerUserId?: string;
   name: string;
   description?: string;
   createdAt: number;

@@ -50,6 +50,7 @@ function hashBuffer(buffer: Buffer): string {
 function toStageRowParams(record: StageRecord) {
   return [
     record.id,
+    record.ownerUserId ?? null,
     record.name,
     record.description ?? null,
     record.language ?? null,
@@ -131,16 +132,17 @@ async function ensureClassroomRowExists(
   await getStoragePgPool(config.databaseUrl).query(
     `
       INSERT INTO classrooms (
-        stage_id, name, description, language, style, current_scene_id, agent_ids,
+        stage_id, owner_user_id, name, description, language, style, current_scene_id, agent_ids,
         lesson_pack_grade, lesson_pack_subject, lesson_pack_type, lesson_pack_duration_minutes,
         lesson_pack_status, export_status, last_exported_at, created_at, updated_at, raw_stage
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb
+        $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb
       )
       ON CONFLICT (stage_id) DO NOTHING
     `,
     [
       stageId,
+      null,
       'Untitled Stage',
       null,
       null,
@@ -158,6 +160,7 @@ async function ensureClassroomRowExists(
       updatedAt,
       toJsonb({
         id: stageId,
+        ownerUserId: null,
         name: 'Untitled Stage',
         description: null,
         language: null,
@@ -434,13 +437,14 @@ export function createPostgresObjectStorageRepository(
       await getStoragePgPool(config.databaseUrl).query(
         `
           INSERT INTO classrooms (
-            stage_id, name, description, language, style, current_scene_id, agent_ids,
+            stage_id, owner_user_id, name, description, language, style, current_scene_id, agent_ids,
             lesson_pack_grade, lesson_pack_subject, lesson_pack_type, lesson_pack_duration_minutes,
             lesson_pack_status, export_status, last_exported_at, created_at, updated_at, raw_stage
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb
+            $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb
           )
           ON CONFLICT (stage_id) DO UPDATE SET
+            owner_user_id = EXCLUDED.owner_user_id,
             name = EXCLUDED.name,
             description = EXCLUDED.description,
             language = EXCLUDED.language,
