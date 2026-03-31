@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { Loader2, Sparkles, AlertCircle, Mail, Lock, User } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { useI18n } from '@/lib/hooks/use-i18n';
 
 // 动画预设（与登录页保持一致，确保路由切换时的视觉连贯性）
-const containerVariants = {
+const containerVariants: Variants = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
@@ -19,7 +19,7 @@ const containerVariants = {
   },
 };
 
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { y: 20, opacity: 0 },
   visible: { 
     y: 0, 
@@ -57,7 +57,7 @@ export default function RegisterPage() {
         } else {
           setIsCheckingAuth(false);
         }
-      } catch (e) {
+      } catch {
         setIsCheckingAuth(false);
       }
     }

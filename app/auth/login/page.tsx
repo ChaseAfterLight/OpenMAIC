@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion'; // 导入 framer-motion 核心组件
+import { motion, AnimatePresence, type Variants } from 'framer-motion'; // 导入 framer-motion 核心组件
 import { Loader2, Sparkles, AlertCircle, Mail, Lock, Check } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { useI18n } from '@/lib/hooks/use-i18n';
 
 // 🚀 定义动画预设 (基于 framer-motion)
-const containerVariants = {
+const containerVariants: Variants = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
@@ -19,7 +19,7 @@ const containerVariants = {
   },
 };
 
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { y: 20, opacity: 0 },
   visible: { 
     y: 0, 
@@ -59,7 +59,7 @@ export default function LoginPage() {
         } else {
           setIsCheckingAuth(false);
         }
-      } catch (e) {
+      } catch {
         setIsCheckingAuth(false);
       }
     }
