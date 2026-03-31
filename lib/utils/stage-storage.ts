@@ -16,7 +16,8 @@ import type { HybridSyncRecord } from '@/lib/storage/hybrid-sync';
 import { getHybridSyncState } from '@/lib/storage/hybrid-sync';
 import { buildLessonPackVersionRecord, ensureStageLessonPack } from '@/lib/utils/lesson-pack';
 import type { LessonPackVersionSource } from '@/lib/types/stage';
-import type { LessonPackVersionRecord } from '@/lib/utils/database';
+import { mediaFileKey, type LessonPackVersionRecord } from '@/lib/utils/database';
+import { nanoid } from 'nanoid';
 
 const log = createLogger('StageStorage');
 
@@ -363,4 +364,126 @@ export async function restoreLessonPackVersion(
   }
 
   return record;
+}
+
+export async function renameStage(stageId: string, name: string): Promise<void> {
+  const storage = getStorageAdapter();
+  const stage = await storage.getStageRecord(stageId);
+
+  if (!stage) {
+    throw new Error(`Stage not found: ${stageId}`);
+  }
+
+  await storage.saveStageRecord(
+    ensureStageLessonPack({
+      ...stage,
+      name: name.trim() || stage.name,
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+export async function markLessonPackExported(stageId: string): Promise<void> {
+  const storage = getStorageAdapter();
+  const stage = await storage.getStageRecord(stageId);
+
+  if (!stage) {
+    throw new Error(`Stage not found: ${stageId}`);
+  }
+
+  const now = Date.now();
+  await storage.saveStageRecord(
+    ensureStageLessonPack({
+      ...stage,
+      updatedAt: now,
+      lessonPack: {
+        ...stage.lessonPack,
+        status: stage.lessonPack?.status ?? 'draft',
+        exportStatus: 'exported',
+        lastExportedAt: now,
+      },
+    }),
+  );
+}
+
+export async function duplicateStage(stageId: string): Promise<Stage> {
+  const storage = getStorageAdapter();
+  const [stage, scenes, chats, outlines, mediaFiles] = await Promise.all([
+    storage.getStageRecord(stageId),
+    storage.listScenesByStageId(stageId),
+    storage.listChatSessionsByStageId(stageId),
+    storage.getStageOutlinesRecord(stageId),
+    storage.listMediaFilesByStageId(stageId),
+  ]);
+
+  if (!stage) {
+    throw new Error(`Stage not found: ${stageId}`);
+  }
+
+  const now = Date.now();
+  const newStageId = nanoid(10);
+  const duplicatedStage = ensureStageLessonPack({
+    ...stage,
+    id: newStageId,
+    name: `${stage.name} Copy`,
+    currentSceneId: scenes[0]?.id,
+    createdAt: now,
+    updatedAt: now,
+    lessonPack: {
+      ...stage.lessonPack,
+      status: 'draft',
+      exportStatus: 'not_exported',
+      lastExportedAt: undefined,
+    },
+  });
+
+  const duplicatedScenes = scenes.map((scene) => ({
+    ...scene,
+    stageId: newStageId,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  const duplicatedChats = chats.map((chat) => ({
+    ...chat,
+    id: nanoid(12),
+    stageId: newStageId,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  const duplicatedOutlines = outlines
+    ? {
+        ...outlines,
+        stageId: newStageId,
+        createdAt: now,
+        updatedAt: now,
+      }
+    : undefined;
+
+  const duplicatedMedia = mediaFiles.map((record) => {
+    const elementId = record.id.includes(':') ? record.id.split(':').slice(1).join(':') : record.id;
+    return {
+      ...record,
+      id: mediaFileKey(newStageId, elementId),
+      stageId: newStageId,
+      createdAt: now,
+      ossKey: undefined,
+      posterOssKey: undefined,
+    };
+  });
+
+  await storage.saveStageRecord(duplicatedStage);
+  await storage.replaceScenesByStageId(newStageId, duplicatedScenes);
+  await storage.replaceChatSessionsByStageId(newStageId, duplicatedChats);
+
+  if (duplicatedOutlines) {
+    await storage.saveStageOutlinesRecord(duplicatedOutlines);
+  }
+
+  for (const mediaRecord of duplicatedMedia) {
+    await storage.saveMediaFileRecord(mediaRecord);
+  }
+
+  return duplicatedStage;
 }

@@ -1,0 +1,9 @@
+{
+  "results": [
+    "FAIL: 打开 K12 工作台首页 -> expect(locator).toBeVisible() failed\n\nLocator: getByRole('heading', { name: '教师备课工作台' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 5000ms\n  - waiting for getByRole('heading', { name: '教师备课工作台' })\n"
+  ],
+  "consoleErrors": [],
+  "requestFailures": [],
+  "pageErrors": [],
+  "outDir": "D:\\project\\OpenMAIC\\tmp\\manual-qa"
+}

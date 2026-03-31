@@ -27,10 +27,48 @@ import type { Stage } from '@/lib/types/stage';
 import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
 import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
+import { getModuleById } from '@/lib/module-host/runtime';
+import {
+  resolveOptionLabel,
+  type K12ModulePresets,
+  type SupportedLocale,
+} from '@/lib/module-host/types';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
 import { StepVisualizer } from './components/visualizers';
 
 const log = createLogger('GenerationPreview');
+
+function buildLessonPackMetadata(session: GenerationSessionState, locale: SupportedLocale) {
+  if (session.requirements.moduleId !== 'k12' || !session.requirements.k12) {
+    return undefined;
+  }
+
+  const presets = getModuleById('k12').presets as K12ModulePresets | undefined;
+  if (!presets) {
+    return {
+      durationMinutes: session.requirements.k12.durationMinutes,
+      status: 'draft' as const,
+      exportStatus: 'not_exported' as const,
+    };
+  }
+
+  const findLabel = (
+    options: K12ModulePresets['grades'] | K12ModulePresets['subjects'] | K12ModulePresets['lessonTypes'],
+    id: string,
+  ) => {
+    const option = options.find((item) => item.id === id);
+    return option ? resolveOptionLabel(option, locale) : undefined;
+  };
+
+  return {
+    grade: findLabel(presets.grades, session.requirements.k12.gradeId),
+    subject: findLabel(presets.subjects, session.requirements.k12.subjectId),
+    lessonType: findLabel(presets.lessonTypes, session.requirements.k12.lessonTypeId),
+    durationMinutes: session.requirements.k12.durationMinutes,
+    status: 'draft' as const,
+    exportStatus: 'not_exported' as const,
+  };
+}
 
 function GenerationPreviewContent() {
   const router = useRouter();
@@ -364,6 +402,10 @@ function GenerationPreviewContent() {
 
       // Create stage client-side (needed for agent generation stageId)
       const stageId = nanoid(10);
+      const lessonPack = buildLessonPackMetadata(
+        currentSession,
+        (currentSession.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale,
+      );
       const stage: Stage = {
         id: stageId,
         name: extractTopicFromRequirement(currentSession.requirements.requirement),
@@ -372,6 +414,7 @@ function GenerationPreviewContent() {
         style: 'professional',
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        lessonPack,
       };
 
       if (settings.agentMode === 'auto') {

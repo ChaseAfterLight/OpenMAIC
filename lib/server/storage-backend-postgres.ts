@@ -400,7 +400,12 @@ export function createPostgresObjectStorageRepository(
         );
       })();
     }
-    await initPromise;
+    try {
+      await initPromise;
+    } catch (error) {
+      initPromise = null;
+      throw error;
+    }
   }
 
   async function deleteMediaObjectKeys(keys: string[]): Promise<void> {

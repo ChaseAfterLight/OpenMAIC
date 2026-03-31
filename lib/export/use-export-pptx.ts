@@ -24,6 +24,7 @@ import { type SvgPoints, toPoints, getSvgPathRange } from '@/lib/export/svg-path
 import { svg2Base64 } from '@/lib/export/svg2base64';
 import { latexToOmml } from '@/lib/export/latex-to-omml';
 import { createLogger } from '@/lib/logger';
+import { markLessonPackExported } from '@/lib/utils/stage-storage';
 
 const log = createLogger('ExportPPTX');
 
@@ -1116,6 +1117,9 @@ export function useExportPPTX() {
         ratioPx2Pt,
       );
       saveAs(blob, `${fileName}.pptx`);
+      if (stage?.id) {
+        await markLessonPackExported(stage.id);
+      }
       toast.success(t('export.exportSuccess'));
     });
   }, [
@@ -1162,6 +1166,9 @@ export function useExportPPTX() {
       // 3. Download ZIP
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       saveAs(zipBlob, `${fileName}.zip`);
+      if (stage?.id) {
+        await markLessonPackExported(stage.id);
+      }
       toast.success(t('export.exportSuccess'));
     });
   }, [
