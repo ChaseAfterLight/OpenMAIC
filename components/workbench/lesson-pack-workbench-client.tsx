@@ -313,7 +313,7 @@ export function LessonPackWorkbenchClient() {
 
         <div className="flex items-center gap-4">
           {authUser?.role === 'admin' ? (
-            <Button variant="outline" size="sm" onClick={() => router.push('/admin/users')}>
+            <Button variant="outline" size="sm" onClick={() => router.push('/admin/textbooks')}>
               {copy.adminEntry}
             </Button>
           ) : null}

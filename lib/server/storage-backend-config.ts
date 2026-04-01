@@ -62,7 +62,10 @@ export function getServerStorageConfig(): ServerStorageRuntimeConfig {
     return cachedConfig;
   }
 
-  const storageRoot = path.join(process.cwd(), 'data', 'storage');
+  const storageRoot =
+    readEnv('SERVER_STORAGE_ROOT') ??
+    readEnv('STORAGE_ROOT') ??
+    path.join(process.cwd(), 'data', 'storage');
   const backend = resolveBackend();
 
   if (backend === 'file') {

@@ -56,6 +56,17 @@ export function getDefaultK12StructuredInput(
   return syncK12StructuredInput(presets?.defaults ?? FALLBACK_K12_INPUT, presets);
 }
 
+export function buildK12PresetsWithCatalog(
+  presets: K12ModulePresets | undefined,
+  textbookEditions: K12TextbookEdition[],
+): K12ModulePresets | undefined {
+  if (!presets) return undefined;
+  return {
+    ...presets,
+    textbookEditions,
+  };
+}
+
 export function getMatchingTextbookEditions(
   presets: K12ModulePresets | undefined,
   input: Pick<K12StructuredInput, 'gradeId' | 'subjectId'>,
