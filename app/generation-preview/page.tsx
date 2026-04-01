@@ -797,7 +797,7 @@ function GenerationPreviewContent() {
                 text: action.text,
                 audioId,
                 ttsProviderId: settings.ttsProviderId,
-                ttsModelId: settings.ttsModelId,
+                ttsModelId: ttsProviderConfig?.modelId,
                 ttsVoice: settings.ttsVoice,
                 ttsSpeed: settings.ttsSpeed,
                 ttsApiKey: ttsProviderConfig?.apiKey || undefined,
