@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Search, RefreshCw, Users, ShieldAlert, UserX } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Search, RefreshCw, Users, ShieldAlert, UserX, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -21,7 +22,7 @@ const getInitials = (name?: string | null) => {
 };
 
 // 2. 角色彩色标签
-const RoleBadge = ({ role }: { role: SystemRole }) => {
+const RoleBadge = ({ role, label }: { role: SystemRole; label: string }) => {
   const styles = {
     admin: 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20',
     teacher: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20',
@@ -37,17 +38,23 @@ const RoleBadge = ({ role }: { role: SystemRole }) => {
   return (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[role]}`}>
       {icons[role]}
-      <span className="capitalize">{role}</span>
+      <span>{label}</span>
     </span>
   );
 };
 
 export function AdminUsersClient() {
   const { t } = useI18n();
+  const router = useRouter();
 
   const [users, setUsers] = useState<AuthPublicUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const roleLabels: Record<SystemRole, string> = {
+    admin: t('auth.roleAdmin'),
+    teacher: t('auth.roleTeacher'),
+    student: t('auth.roleStudent'),
+  };
 
   // 1. 独立的数据加载逻辑
   const loadUsers = useCallback(async () => {
@@ -84,14 +91,14 @@ export function AdminUsersClient() {
       
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || t('settings.saveFailed'));
+        throw new Error(data.error || t('auth.roleUpdateFailed'));
       }
       
-      toast.success(t('settings.saveSuccess') || 'Role updated successfully');
+      toast.success(t('auth.roleUpdated'));
     } catch (e) {
       // 回滚状态
       setUsers(previousUsers);
-      toast.error(e instanceof Error ? e.message : 'Unknown error occurred.');
+      toast.error(e instanceof Error ? e.message : t('auth.roleUpdateFailed'));
     }
   }
 
@@ -111,13 +118,24 @@ export function AdminUsersClient() {
         
         {/* Header Section */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-              {t('auth.userManagement')}
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Manage team members, update permissions, and control system access.
-            </p>
+          <div className="flex items-start gap-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push('/')}
+              className="shrink-0 rounded-full border-slate-200 bg-white/90 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/80 dark:hover:bg-slate-900"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              {t('generation.backToHome')}
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                {t('auth.userManagement')}
+              </h1>
+              <p className="mt-1 text-muted-foreground">
+                {t('auth.userManagementDesc')}
+              </p>
+            </div>
           </div>
         </div>
 
@@ -129,7 +147,7 @@ export function AdminUsersClient() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
                   type="search"
-                  placeholder="Search by name or email..."
+                  placeholder={t('auth.searchUsersPlaceholder')}
                   className="w-full pl-9 bg-white dark:bg-slate-950 transition-all focus-visible:ring-2"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -143,7 +161,7 @@ export function AdminUsersClient() {
                 disabled={loading}
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
+                {t('auth.refresh')}
               </Button>
             </div>
           </CardHeader>
@@ -153,9 +171,9 @@ export function AdminUsersClient() {
               <table className="w-full text-sm text-left">
                 <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400">
                   <tr>
-                    <th scope="col" className="px-6 py-4 font-medium">User Profile</th>
-                    <th scope="col" className="px-6 py-4 font-medium">System Role</th>
-                    <th scope="col" className="px-6 py-4 font-medium text-right">Actions</th>
+                    <th scope="col" className="px-6 py-4 font-medium">{t('auth.userProfile')}</th>
+                    <th scope="col" className="px-6 py-4 font-medium">{t('auth.systemRole')}</th>
+                    <th scope="col" className="px-6 py-4 font-medium text-right">{t('auth.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -187,14 +205,14 @@ export function AdminUsersClient() {
                     <tr>
                       <td colSpan={3} className="px-6 py-16 text-center">
                         <div className="flex flex-col items-center justify-center space-y-3 text-slate-500 dark:text-slate-400">
-                          <div className="h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-2">
+                          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
                             <UserX className="h-6 w-6 text-slate-400" />
                           </div>
                           <p className="text-base font-medium text-slate-900 dark:text-slate-100">
-                            {searchQuery ? 'No users found' : t('auth.noUsers')}
+                            {searchQuery ? t('auth.noUsersFound') : t('auth.noUsers')}
                           </p>
                           <p className="text-sm">
-                            {searchQuery ? `We couldn't find anyone matching "${searchQuery}".` : 'Get started by inviting some users to your system.'}
+                            {searchQuery ? t('auth.noUsersMatch') : t('auth.inviteUsersHint')}
                           </p>
                         </div>
                       </td>
@@ -217,7 +235,7 @@ export function AdminUsersClient() {
                             {/* Info */}
                             <div className="flex flex-col">
                               <span className="font-medium text-slate-900 dark:text-slate-100">
-                                {user.displayName || <span className="text-slate-400 italic">No Name</span>}
+                                {user.displayName || <span className="text-slate-400 italic">{t('auth.noName')}</span>}
                               </span>
                               <span className="text-sm text-slate-500 dark:text-slate-400">
                                 {user.email}
@@ -227,7 +245,7 @@ export function AdminUsersClient() {
                         </td>
                         
                         <td className="px-6 py-4">
-                          <RoleBadge role={user.role} />
+                          <RoleBadge role={user.role} label={roleLabels[user.role]} />
                         </td>
                         
                         <td className="px-6 py-4">
@@ -242,7 +260,7 @@ export function AdminUsersClient() {
                               <SelectContent>
                                 {ROLES.map((role) => (
                                   <SelectItem key={role} value={role} className="capitalize">
-                                    {role}
+                                    {roleLabels[role]}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
