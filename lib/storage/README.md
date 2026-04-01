@@ -36,7 +36,7 @@ $env:NEXT_PUBLIC_STORAGE_DRIVER='server'; pnpm build; pnpm start
 ## 说明
 
 - `indexeddb`：完全使用浏览器本地 IndexedDB。
-- `server`：通过 `/api/storage` 读写服务端仓库，并在本地保留缓存用于恢复与回退。
+- `server`：通过 `/api/storage` 直接读写服务端仓库，不使用 IndexedDB 本地缓存。
 - `hybrid`：先写本地，再异步同步到服务端；读取时优先本地，并在后台尝试与服务端对齐。
 
 ## 服务端落地

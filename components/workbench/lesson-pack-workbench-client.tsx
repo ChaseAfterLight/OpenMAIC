@@ -204,6 +204,7 @@ export function LessonPackWorkbenchClient() {
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent');
   const [renameTarget, setRenameTarget] = useState<StageListItem | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [isHydrated, setIsHydrated] = useState(false);
 
   const loadClassrooms = useCallback(async () => {
     const list = await listStages();
@@ -222,6 +223,14 @@ export function LessonPackWorkbenchClient() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => subscribeHybridSyncState(() => void loadClassrooms()), [loadClassrooms]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsHydrated(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const chapterTreeData = useMemo(
     () => buildTextbookChapterTree(classrooms.map((item) => item.lessonPack)),
@@ -380,44 +389,55 @@ export function LessonPackWorkbenchClient() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <TextbookChapterSelector
-              treeData={chapterTreeData}
-              value={chapterPath}
-              onChange={setChapterPath}
-              placeholder={copy.textbookPlaceholder}
-              confirmLabel={copy.textbookConfirm}
-              clearLabel={copy.textbookClear}
-              helperText={copy.textbookHint}
-              emptyLabel={copy.textbookEmpty}
-              className="sm:w-[320px]"
-            />
+            {isHydrated ? (
+              <>
+                <TextbookChapterSelector
+                  treeData={chapterTreeData}
+                  value={chapterPath}
+                  onChange={setChapterPath}
+                  placeholder={copy.textbookPlaceholder}
+                  confirmLabel={copy.textbookConfirm}
+                  clearLabel={copy.textbookClear}
+                  helperText={copy.textbookHint}
+                  emptyLabel={copy.textbookEmpty}
+                  className="sm:w-[320px]"
+                />
 
-            <div className="hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
+                <div className="hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
 
-            {/* 状态与排序作为次要筛选 */}
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-10 w-[110px] rounded-xl border-transparent bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800">
-                <SelectValue placeholder={copy.status} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{copy.all}状态</SelectItem>
-                <SelectItem value="draft">{copy.draft}</SelectItem>
-                <SelectItem value="in_progress">{copy.inProgress}</SelectItem>
-                <SelectItem value="ready">{copy.ready}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={sortBy}
-              onValueChange={(value) => setSortBy(value as 'recent' | 'oldest')}
-            >
-              <SelectTrigger className="h-10 w-[110px] rounded-xl border-transparent bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800">
-                <SelectValue placeholder={copy.sort} />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value="recent">{copy.recent}</SelectItem>
-                <SelectItem value="oldest">{copy.oldest}</SelectItem>
-              </SelectContent>
-            </Select>
+                {/* 状态与排序作为次要筛选 */}
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="h-10 w-[110px] rounded-xl border-transparent bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800">
+                    <SelectValue placeholder={copy.status} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{copy.all}状态</SelectItem>
+                    <SelectItem value="draft">{copy.draft}</SelectItem>
+                    <SelectItem value="in_progress">{copy.inProgress}</SelectItem>
+                    <SelectItem value="ready">{copy.ready}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={sortBy}
+                  onValueChange={(value) => setSortBy(value as 'recent' | 'oldest')}
+                >
+                  <SelectTrigger className="h-10 w-[110px] rounded-xl border-transparent bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800">
+                    <SelectValue placeholder={copy.sort} />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="recent">{copy.recent}</SelectItem>
+                    <SelectItem value="oldest">{copy.oldest}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            ) : (
+              <>
+                <div className="h-10 w-full rounded-xl border border-slate-200 bg-white/60 sm:w-[320px] dark:border-slate-800 dark:bg-slate-950/60" />
+                <div className="hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
+                <div className="h-10 w-[110px] rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-950/60" />
+                <div className="h-10 w-[110px] rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-950/60" />
+              </>
+            )}
           </div>
         </div>
 

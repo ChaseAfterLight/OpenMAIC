@@ -72,6 +72,7 @@ function HomePage() {
   const { t, locale, setLocale } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
+  const [authReady, setAuthReady] = useState(false);
   const [form, setForm] = useState<FormState>(initialFormState);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
@@ -133,6 +134,37 @@ function HomePage() {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (!data.authenticated) {
+          router.replace(data.adminExists ? '/auth/login' : '/setup/admin');
+          return;
+        }
+        if (data.user?.role !== 'admin' && data.user?.role !== 'teacher') {
+          router.replace('/forbidden');
+          return;
+        }
+
+        setAuthReady(true);
+      } catch {
+        if (!cancelled) {
+          router.replace('/auth/login');
+        }
+      }
+    }
+
+    void checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
   // Close dropdowns when clicking outside
   useEffect(() => {
     if (!languageOpen && !themeOpen) return;
@@ -161,6 +193,8 @@ function HomePage() {
   };
 
   useEffect(() => {
+    if (!authReady) return;
+
     // Clear stale media store to prevent cross-course thumbnail contamination.
     // The store may hold tasks from a previously visited classroom whose elementIds
     // (gen_img_1, etc.) collide with other courses' placeholders.
@@ -169,7 +203,17 @@ function HomePage() {
 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Store hydration on mount
     loadClassrooms();
-  }, []);
+  }, [authReady]);
+
+  if (!authReady) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center bg-white dark:bg-slate-950">
+        <div className="text-center text-muted-foreground">
+          <p>{t('auth.checkingSession')}</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();

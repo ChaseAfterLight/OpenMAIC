@@ -91,6 +91,10 @@ function GenerationPreviewContent() {
           router.replace(data.adminExists ? '/auth/login' : '/setup/admin');
           return;
         }
+        if (data.user?.role !== 'admin' && data.user?.role !== 'teacher') {
+          router.replace('/forbidden');
+          return;
+        }
         setAuthReady(true);
       } catch {
         if (!cancelled) {
@@ -125,6 +129,8 @@ function GenerationPreviewContent() {
 
   // Load session from sessionStorage
   useEffect(() => {
+    if (!authReady) return;
+
     cleanupOldImages(24).catch((e) => log.error(e));
 
     const saved = sessionStorage.getItem('generationSession');
@@ -137,7 +143,7 @@ function GenerationPreviewContent() {
       }
     }
     setSessionLoaded(true);
-  }, []);
+  }, [authReady]);
 
   // Abort all in-flight requests on unmount
   useEffect(() => {

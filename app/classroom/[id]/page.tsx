@@ -46,6 +46,10 @@ export default function ClassroomDetailPage() {
           window.location.href = data.adminExists ? '/auth/login' : '/setup/admin';
           return;
         }
+        if (data.user?.role !== 'admin' && data.user?.role !== 'teacher') {
+          window.location.href = '/forbidden';
+          return;
+        }
         setAuthReady(true);
       } catch {
         if (!cancelled) {
