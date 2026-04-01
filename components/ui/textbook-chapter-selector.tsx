@@ -106,46 +106,40 @@ export function TextbookChapterSelector({
       }}
     >
       <PopoverTrigger asChild>
-        <Button
-          asChild
-          variant="outline"
+        <div
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={contentId}
+          aria-label={displayText || placeholder}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setOpen(true);
+            }
+          }}
           className={cn(
-            'h-10 w-full justify-between rounded-xl border-slate-200 bg-white/80 pl-3 pr-2 font-normal text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/80 dark:text-slate-200 dark:hover:bg-slate-900 sm:w-[320px]',
+            'inline-flex h-10 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/80 pl-3 pr-2 text-sm font-normal text-slate-700 shadow-sm outline-none transition-colors hover:bg-slate-50 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] dark:border-slate-800 dark:bg-slate-950/80 dark:text-slate-200 dark:hover:bg-slate-900 sm:w-[320px]',
             !displayText && 'text-slate-500 dark:text-slate-400',
             className,
           )}
         >
-          <div
-            role="combobox"
-            aria-expanded={open}
-            aria-controls={contentId}
-            aria-label={displayText || placeholder}
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                setOpen(true);
-              }
-            }}
-            className="flex min-w-0 items-center justify-between gap-3"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <BookOpen className="size-4 shrink-0 text-indigo-500" />
-              <span className="truncate">{displayText || placeholder}</span>
-            </div>
-
-            {value.length > 0 ? (
-              <button
-                type="button"
-                aria-label={clearLabel}
-                onClick={handleClear}
-                className="ml-2 flex size-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200"
-              >
-                <X className="size-3" />
-              </button>
-            ) : null}
+          <div className="flex min-w-0 items-center gap-2">
+            <BookOpen className="size-4 shrink-0 text-indigo-500" />
+            <span className="truncate">{displayText || placeholder}</span>
           </div>
-        </Button>
+
+          {value.length > 0 ? (
+            <button
+              type="button"
+              aria-label={clearLabel}
+              onClick={handleClear}
+              className="ml-2 flex size-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+            >
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </div>
       </PopoverTrigger>
 
       <PopoverContent
