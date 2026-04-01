@@ -50,10 +50,10 @@ export default function RegisterPage() {
         const data = await res.json();
         if (ignore) return;
         
-        if (data.authenticated) {
-          router.replace('/');
-        } else if (data.adminExists === false) {
+        if (data.adminExists === false) {
           router.replace('/setup/admin');
+        } else if (data.authenticated) {
+          router.replace('/');
         } else {
           setIsCheckingAuth(false);
         }

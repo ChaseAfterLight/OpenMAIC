@@ -52,10 +52,10 @@ export default function LoginPage() {
         if (ignore) return;
         
         setAdminExists(Boolean(data.adminExists));
-        if (data.authenticated) {
-          router.replace('/');
-        } else if (data.adminExists === false) {
+        if (data.adminExists === false) {
           router.replace('/setup/admin');
+        } else if (data.authenticated) {
+          router.replace('/');
         } else {
           setIsCheckingAuth(false);
         }
