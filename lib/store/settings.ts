@@ -16,7 +16,7 @@ import type { ImageProviderId, VideoProviderId } from '@/lib/media/types';
 import { IMAGE_PROVIDERS } from '@/lib/media/image-providers';
 import { VIDEO_PROVIDERS } from '@/lib/media/video-providers';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
-import type { WebSearchProviderId } from '@/lib/web-search/types';
+import type { WebSearchProviderId, BaiduSubSources } from '@/lib/web-search/types';
 import { createLogger } from '@/lib/logger';
 import { validateProvider, validateModel } from '@/lib/store/settings-validation';
 
@@ -132,6 +132,7 @@ export interface SettingsState {
       serverBaseUrl?: string;
     }
   >;
+  baiduSubSources: BaiduSubSources;
 
   // Global TTS/ASR toggles
   ttsEnabled: boolean;
@@ -250,6 +251,7 @@ export interface SettingsState {
     providerId: WebSearchProviderId,
     config: Partial<{ apiKey: string; baseUrl: string; enabled: boolean }>,
   ) => void;
+  setBaiduSubSources: (sources: Partial<BaiduSubSources>) => void;
 
   // Server provider actions
   fetchServerProviders: () => Promise<void>;
@@ -343,7 +345,14 @@ const getDefaultWebSearchConfig = () => ({
   webSearchProviderId: 'tavily' as WebSearchProviderId,
   webSearchProvidersConfig: {
     tavily: { apiKey: '', baseUrl: '', enabled: true },
+    brave: { apiKey: '', baseUrl: '', enabled: true },
+    baidu: { apiKey: '', baseUrl: '', enabled: false },
   } as Record<WebSearchProviderId, { apiKey: string; baseUrl: string; enabled: boolean }>,
+  baiduSubSources: {
+    webSearch: true,
+    baike: true,
+    scholar: true,
+  } as BaiduSubSources,
 });
 
 /**
@@ -745,6 +754,14 @@ export const useSettingsStore = create<SettingsState>()(
                 ...state.webSearchProvidersConfig[providerId],
                 ...config,
               },
+            },
+          })),
+
+        setBaiduSubSources: (sources) =>
+          set((state) => ({
+            baiduSubSources: {
+              ...state.baiduSubSources,
+              ...sources,
             },
           })),
 
