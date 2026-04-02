@@ -6,6 +6,9 @@ import {
 } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { requireApiRole } from '@/lib/server/auth-guards';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('ClassroomJob API');
 
 export const dynamic = 'force-dynamic';
 
@@ -15,8 +18,10 @@ export async function GET(req: NextRequest, context: { params: Promise<{ jobId: 
     return auth.response;
   }
 
+  let resolvedJobId: string | undefined;
   try {
     const { jobId } = await context.params;
+    resolvedJobId = jobId;
 
     if (!isValidClassroomJobId(jobId)) {
       return apiError('INVALID_REQUEST', 400, 'Invalid classroom generation job id');
@@ -44,6 +49,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ jobId: 
       done: job.status === 'succeeded' || job.status === 'failed',
     });
   } catch (error) {
+    log.error(`Classroom job retrieval failed [jobId=${resolvedJobId ?? 'unknown'}]:`, error);
     return apiError(
       'INTERNAL_ERROR',
       500,

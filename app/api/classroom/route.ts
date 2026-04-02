@@ -8,6 +8,9 @@ import {
   persistClassroom,
   readClassroom,
 } from '@/lib/server/classroom-storage';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('Classroom API');
 
 export async function POST(request: NextRequest) {
   const auth = await requireApiRole(request, ['admin', 'teacher']);
@@ -15,9 +18,13 @@ export async function POST(request: NextRequest) {
     return auth.response;
   }
 
+  let stageId: string | undefined;
+  let sceneCount: number | undefined;
   try {
     const body = await request.json();
     const { stage, scenes } = body;
+    stageId = stage?.id;
+    sceneCount = scenes?.length;
 
     if (!stage || !scenes) {
       return apiError(
@@ -37,6 +44,10 @@ export async function POST(request: NextRequest) {
 
     return apiSuccess({ id: persisted.id, url: persisted.url }, 201);
   } catch (error) {
+    log.error(
+      `Classroom storage failed [stageId=${stageId ?? 'unknown'}, scenes=${sceneCount ?? 0}]:`,
+      error,
+    );
     return apiError(
       API_ERROR_CODES.INTERNAL_ERROR,
       500,
@@ -81,6 +92,10 @@ export async function GET(request: NextRequest) {
 
     return apiSuccess({ classroom });
   } catch (error) {
+    log.error(
+      `Classroom retrieval failed [id=${request.nextUrl.searchParams.get('id') ?? 'unknown'}]:`,
+      error,
+    );
     return apiError(
       API_ERROR_CODES.INTERNAL_ERROR,
       500,
