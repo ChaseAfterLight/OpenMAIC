@@ -13,6 +13,7 @@ import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import type { WebSearchProviderId } from '@/lib/web-search/types';
+import type { WebSearchResult } from '@/lib/types/web-search';
 
 const log = createLogger('WebSearch');
 
@@ -54,7 +55,7 @@ export async function POST(req: Request) {
       );
     }
 
-    let result;
+    let result: WebSearchResult;
     switch (provider) {
       case 'brave':
         result = await searchWithBrave({ query: query.trim() });

@@ -19,7 +19,10 @@ import { createLogger } from '@/lib/logger';
 import { parseModelString } from '@/lib/ai/providers';
 import { resolveApiKey, resolveWebSearchApiKey } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
+import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import { searchWithTavily, formatSearchResultsAsContext } from '@/lib/web-search/tavily';
+import { searchWithBrave } from '@/lib/web-search/brave';
+import { searchWithBaidu } from '@/lib/web-search/baidu';
 import { persistClassroom } from '@/lib/server/classroom-storage';
 import {
   generateMediaForClassroom,
@@ -27,6 +30,8 @@ import {
   generateTTSForClassroom,
 } from '@/lib/server/classroom-media-generation';
 import type { UserRequirements } from '@/lib/types/generation';
+import type { WebSearchResult } from '@/lib/types/web-search';
+import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import type { Scene, Stage } from '@/lib/types/stage';
 
 const log = createLogger('Classroom');
@@ -36,6 +41,9 @@ export interface GenerateClassroomInput {
   pdfContent?: { text: string; images: string[] };
   language?: string;
   enableWebSearch?: boolean;
+  webSearchProviderId?: WebSearchProviderId;
+  webSearchApiKey?: string;
+  baiduSubSources?: Partial<BaiduSubSources>;
   enableImageGeneration?: boolean;
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
@@ -98,6 +106,20 @@ function createInMemoryStore(stage: Stage): StageStore {
 
 function normalizeLanguage(language?: string): 'zh-CN' | 'en-US' {
   return language === 'en-US' ? 'en-US' : 'zh-CN';
+}
+
+function resolveWebSearchProviderId(providerId?: string): WebSearchProviderId {
+  return providerId && providerId in WEB_SEARCH_PROVIDERS
+    ? (providerId as WebSearchProviderId)
+    : 'tavily';
+}
+
+function normalizeBaiduSubSources(subSources?: Partial<BaiduSubSources>): BaiduSubSources {
+  return {
+    webSearch: subSources?.webSearch ?? true,
+    baike: subSources?.baike ?? true,
+    scholar: subSources?.scholar ?? true,
+  };
 }
 
 function stripCodeFences(text: string): string {
@@ -237,11 +259,34 @@ export async function generateClassroom(
   // Web search (optional, graceful degradation)
   let researchContext: string | undefined;
   if (input.enableWebSearch) {
-    const tavilyKey = resolveWebSearchApiKey();
-    if (tavilyKey) {
+    const providerId = resolveWebSearchProviderId(input.webSearchProviderId);
+    const provider = WEB_SEARCH_PROVIDERS[providerId];
+    const baiduSubSources = normalizeBaiduSubSources(input.baiduSubSources);
+    const apiKey = provider.requiresApiKey
+      ? resolveWebSearchApiKey(providerId, input.webSearchApiKey)
+      : '';
+
+    if (!provider.requiresApiKey || apiKey) {
       try {
-        log.info('Running web search for requirement context...');
-        const searchResult = await searchWithTavily({ query: requirement, apiKey: tavilyKey });
+        log.info(`Running ${provider.name} web search for requirement context...`);
+        let searchResult: WebSearchResult;
+        switch (providerId) {
+          case 'brave':
+            searchResult = await searchWithBrave({ query: requirement });
+            break;
+          case 'baidu':
+            searchResult = await searchWithBaidu({
+              query: requirement,
+              apiKey,
+              subSources: baiduSubSources,
+            });
+            break;
+          case 'tavily':
+          default:
+            searchResult = await searchWithTavily({ query: requirement, apiKey });
+            break;
+        }
+
         researchContext = formatSearchResultsAsContext(searchResult);
         if (researchContext) {
           log.info(`Web search returned ${searchResult.sources.length} sources`);
@@ -250,7 +295,9 @@ export async function generateClassroom(
         log.warn('Web search failed, continuing without search context:', e);
       }
     } else {
-      log.warn('enableWebSearch is true but no Tavily API key configured, skipping web search');
+      log.warn(
+        `enableWebSearch is true but no API key configured for provider "${providerId}", skipping web search`,
+      );
     }
   }
 
