@@ -125,6 +125,7 @@ Initiate classroom discussion, suitable for segments requiring student reflectio
 Generate natural teaching speech. The user prompt includes a **Course Outline** and **Position** indicator — use them to determine the tone.
 
 **Speech is where all verbal and conversational content belongs.** The slide itself only shows concise bullet points and keywords — all elaboration, explanation, encouragement, transitional phrases, and teacher's remarks must appear here in speech text. For example:
+- Keep this speech in the lead teacher's own voice only. Do not switch into any other role's voice, and do not add role labels or dialogue like "（助教）" or "（显眼包）".
 - Detailed explanations of concepts shown as bullet points on the slide
 - Encouragements and motivational remarks (e.g., "Great job, everyone!")
 - Transitional phrases (e.g., "Now let's move on to…")
