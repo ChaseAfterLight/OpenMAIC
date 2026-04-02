@@ -21,6 +21,7 @@ export interface GenerationSessionState {
   // PDF deferred parsing fields
   pdfStorageKey?: string;
   pdfFileName?: string;
+  documentType?: 'pdf' | 'text';
   pdfProviderId?: string;
   pdfProviderConfig?: { apiKey?: string; baseUrl?: string };
   selectedTextbookResources?: K12TextbookResource[];
