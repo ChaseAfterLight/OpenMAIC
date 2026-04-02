@@ -1,5 +1,6 @@
 import type {
   ChatSessionRecord,
+  AudioFileRecord,
   ImageFileRecord,
   LessonPackVersionRecord,
   MediaFileRecord,
@@ -28,6 +29,14 @@ export interface ServerImageMetadata extends Omit<ImageFileRecord, 'blob'> {
   storageStatus: ServerBinaryStatus;
   storageError?: string;
   objectKey?: string;
+}
+
+export interface ServerAudioMetadata extends Omit<AudioFileRecord, 'blob'> {
+  hasBlob: boolean;
+  storageStatus: ServerBinaryStatus;
+  storageError?: string;
+  objectKey?: string;
+  downloadUrl?: string;
 }
 
 export interface ServerStorageRepository {
@@ -70,6 +79,13 @@ export interface ServerStorageRepository {
   getMediaFileBlob(stageId: string, mediaId: string): Promise<StoredBinaryPayload | null>;
   getMediaPosterBlob(stageId: string, mediaId: string): Promise<StoredBinaryPayload | null>;
   deleteMediaFilesByStageId(stageId: string): Promise<void>;
+
+  saveAudioFileRecord(record: AudioFileRecord): Promise<void>;
+  getAudioFileRecordMetadata(id: string): Promise<ServerAudioMetadata | null>;
+  getAudioFileBlob(stageId: string, audioId: string): Promise<StoredBinaryPayload | null>;
+  listAudioFileRecordsByStageId(stageId: string): Promise<ServerAudioMetadata[]>;
+  deleteAudioFileRecord(id: string): Promise<void>;
+  deleteAudioFileRecordsByStageId(stageId: string): Promise<void>;
 
   saveImageFileRecord(record: ImageFileRecord): Promise<void>;
   getImageFileRecordMetadata(id: string): Promise<ServerImageMetadata | null>;

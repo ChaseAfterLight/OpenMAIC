@@ -13,6 +13,7 @@ import { useSettingsStore } from '@/lib/store/settings';
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
 import { getAvailableProvidersWithVoices } from '@/lib/audio/voice-resolver';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { generateAndStoreTTS } from '@/lib/hooks/use-scene-generator';
 import {
   loadImageMapping,
   loadPdfBlob,
@@ -20,7 +21,6 @@ import {
   storeImages,
 } from '@/lib/utils/image-storage';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
-import { db } from '@/lib/utils/database';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
 import { nanoid } from 'nanoid';
 import type { Stage } from '@/lib/types/stage';
@@ -802,7 +802,6 @@ function GenerationPreviewContent() {
 
       // Generate TTS for first scene (part of actions step — blocking)
       if (settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts') {
-        const ttsProviderConfig = settings.ttsProvidersConfig?.[settings.ttsProviderId];
         const speechActions = (data.scene.actions || []).filter(
           (a: { type: string; text?: string }) => a.type === 'speech' && a.text,
         );
@@ -810,42 +809,12 @@ function GenerationPreviewContent() {
         let ttsFailCount = 0;
         for (const action of speechActions) {
           const audioId = `tts_${action.id}`;
-          action.audioId = audioId;
           try {
-            const resp = await fetch('/api/generate/tts', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                text: action.text,
-                audioId,
-                ttsProviderId: settings.ttsProviderId,
-                ttsModelId: ttsProviderConfig?.modelId,
-                ttsVoice: settings.ttsVoice,
-                ttsSpeed: settings.ttsSpeed,
-                ttsApiKey: ttsProviderConfig?.apiKey || undefined,
-                ttsBaseUrl: ttsProviderConfig?.baseUrl || undefined,
-              }),
-              signal,
-            });
-            if (!resp.ok) {
-              ttsFailCount++;
-              continue;
+            const result = await generateAndStoreTTS(audioId, action.text || '', stage.id, signal);
+            action.audioId = result.audioId;
+            if (result.audioUrl) {
+              action.audioUrl = result.audioUrl;
             }
-            const ttsData = await resp.json();
-            if (!ttsData.success) {
-              ttsFailCount++;
-              continue;
-            }
-            const binary = atob(ttsData.base64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            const blob = new Blob([bytes], { type: `audio/${ttsData.format}` });
-            await db.audioFiles.put({
-              id: audioId,
-              blob,
-              format: ttsData.format,
-              createdAt: Date.now(),
-            });
           } catch (err) {
             log.warn(`[TTS] Failed for ${audioId}:`, err);
             ttsFailCount++;

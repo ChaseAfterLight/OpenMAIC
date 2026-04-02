@@ -3,6 +3,11 @@ import { apiError, apiSuccess, API_ERROR_CODES } from '@/lib/server/api-response
 import { requireApiRole } from '@/lib/server/auth-guards';
 import type { AuthPublicUser } from '@/lib/server/auth-types';
 import {
+  getAudioFileBlob,
+  getAudioFileRecordMetadata,
+  deleteAudioFileRecord,
+  deleteAudioFileRecordsByStageId,
+  listAudioFileRecordsByStageId,
   deleteChatSessionsByStageId,
   deleteImageFileRecord,
   deleteImageFileRecordsBefore,
@@ -47,6 +52,10 @@ function buildImageDownloadUrl(id: string): string {
 
 function buildMediaDownloadUrl(stageId: string, id: string, poster = false): string {
   return `/api/storage?action=${poster ? 'downloadMediaPoster' : 'downloadMedia'}&stageId=${encodeURIComponent(stageId)}&id=${encodeURIComponent(id)}`;
+}
+
+function buildAudioDownloadUrl(stageId: string, id: string): string {
+  return `/api/storage?action=downloadAudio&stageId=${encodeURIComponent(stageId)}&id=${encodeURIComponent(id)}`;
 }
 
 function hasStageAccess(user: AuthPublicUser, ownerUserId?: string): boolean {
@@ -248,6 +257,50 @@ async function handleJsonAction(body: StorageJsonAction, user: AuthPublicUser) {
       }
       await deleteMediaFilesByStageId(body.stageId);
       return apiSuccess({ ok: true });
+    case 'getAudioFileRecordMetadata': {
+      const audio = await getAudioFileRecordMetadata(body.id);
+      if (!audio) {
+        return apiSuccess({ ok: true, audio: null });
+      }
+      const denied = await ensureStageAccess(user, audio.stageId || '');
+      if (denied) return denied;
+      return apiSuccess({
+        ok: true,
+        audio: {
+          ...audio,
+          downloadUrl: audio.hasBlob ? buildAudioDownloadUrl(audio.stageId || '', audio.id) : undefined,
+        },
+      });
+    }
+    case 'listAudioFileRecordsByStageId': {
+      const denied = await ensureStageAccess(user, body.stageId);
+      if (denied) return denied;
+      const audios = await listAudioFileRecordsByStageId(body.stageId);
+      return apiSuccess({
+        ok: true,
+        audios: audios.map((record) => ({
+          ...record,
+          downloadUrl: record.hasBlob ? buildAudioDownloadUrl(body.stageId, record.id) : undefined,
+        })),
+      });
+    }
+    case 'deleteAudioFileRecord': {
+      const audio = await getAudioFileRecordMetadata(body.id);
+      if (!audio) {
+        return apiSuccess({ ok: true });
+      }
+      const denied = await ensureStageAccess(user, audio.stageId || '');
+      if (denied) return denied;
+      await deleteAudioFileRecord(body.id);
+      return apiSuccess({ ok: true });
+    }
+    case 'deleteAudioFileRecordsByStageId':
+      {
+        const denied = await ensureStageAccess(user, body.stageId);
+        if (denied) return denied;
+      }
+      await deleteAudioFileRecordsByStageId(body.stageId);
+      return apiSuccess({ ok: true });
     case 'getImageFileRecordMetadata': {
       const image = await getImageFileRecordMetadata(body.id);
       return apiSuccess({
@@ -400,6 +453,22 @@ export async function GET(request: NextRequest) {
       const record = await getMediaPosterBlob(stageId, id);
       if (!record) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Media poster not found');
+      }
+      return new NextResponse(new Uint8Array(record.buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': record.mimeType,
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+
+    if (action === 'downloadAudio' && id && stageId) {
+      const denied = await ensureStageAccess(auth.user, stageId);
+      if (denied) return denied;
+      const record = await getAudioFileBlob(stageId, id);
+      if (!record) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Audio file not found');
       }
       return new NextResponse(new Uint8Array(record.buffer), {
         status: 200,

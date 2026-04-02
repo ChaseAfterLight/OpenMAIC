@@ -2,6 +2,12 @@ import { promises as fs, createReadStream } from 'fs';
 import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { CLASSROOMS_DIR, isValidClassroomId } from '@/lib/server/classroom-storage';
+import {
+  getAudioFileBlob,
+  getMediaFileBlob,
+  listAudioFileRecordsByStageId,
+  listMediaFilesByStageId,
+} from '@/lib/server/storage-repository';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('ClassroomMedia');
@@ -19,6 +25,36 @@ const MIME_TYPES: Record<string, string> = {
   '.ogg': 'audio/ogg',
   '.aac': 'audio/aac',
 };
+
+function matchesStoredRecordId(recordId: string, classroomId: string, stem: string): boolean {
+  return recordId === stem || recordId === `${classroomId}:${stem}` || recordId.endsWith(`:${stem}`);
+}
+
+async function tryServeStoredMedia(classroomId: string, stem: string) {
+  const exact = await getMediaFileBlob(classroomId, stem);
+  if (exact) {
+    return exact;
+  }
+  const records = await listMediaFilesByStageId(classroomId);
+  const record = records.find((item) => matchesStoredRecordId(item.id, classroomId, stem));
+  if (!record) {
+    return null;
+  }
+  return getMediaFileBlob(classroomId, record.id);
+}
+
+async function tryServeStoredAudio(classroomId: string, stem: string) {
+  const exact = await getAudioFileBlob(classroomId, stem);
+  if (exact) {
+    return exact;
+  }
+  const records = await listAudioFileRecordsByStageId(classroomId);
+  const record = records.find((item) => matchesStoredRecordId(item.id, classroomId, stem));
+  if (!record) {
+    return null;
+  }
+  return getAudioFileBlob(classroomId, record.id);
+}
 
 export async function GET(
   _req: NextRequest,
@@ -41,6 +77,30 @@ export async function GET(
   const subDir = pathSegments[0];
   if (subDir !== 'media' && subDir !== 'audio') {
     return NextResponse.json({ error: 'Invalid path' }, { status: 404 });
+  }
+
+  const filename = pathSegments[pathSegments.length - 1];
+  const stem = path.parse(filename).name;
+
+  try {
+    const stored =
+      subDir === 'media'
+        ? await tryServeStoredMedia(classroomId, stem)
+        : await tryServeStoredAudio(classroomId, stem);
+    if (stored) {
+      return new NextResponse(new Uint8Array(stored.buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': stored.mimeType,
+          'Cache-Control': 'public, max-age=86400, immutable',
+        },
+      });
+    }
+  } catch (error) {
+    log.warn(
+      `Stored classroom ${subDir} lookup failed [classroomId=${classroomId}, path=${joined}]:`,
+      error,
+    );
   }
 
   const filePath = path.join(CLASSROOMS_DIR, classroomId, ...pathSegments);

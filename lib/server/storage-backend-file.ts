@@ -3,6 +3,7 @@ import path from 'path';
 import { createLogger } from '@/lib/logger';
 import { getServerStorageConfig } from '@/lib/server/storage-backend-config';
 import type {
+  ServerAudioMetadata,
   ServerImageMetadata,
   ServerMediaMetadata,
   ServerStorageRepository,
@@ -10,6 +11,7 @@ import type {
 import { writeJsonFileAtomic } from '@/lib/server/classroom-storage';
 import { safeStorageId } from '@/lib/server/storage-key-utils';
 import type {
+  AudioFileRecord,
   ChatSessionRecord,
   ImageFileRecord,
   LessonPackVersionRecord,
@@ -65,6 +67,10 @@ function mediaDir(stageId: string): string {
   return path.join(stageDir(stageId), 'media');
 }
 
+function audioDir(stageId: string): string {
+  return path.join(stageDir(stageId), 'audio');
+}
+
 function lessonPackVersionsDir(stageId: string): string {
   return path.join(stageDir(stageId), 'lesson-pack-versions');
 }
@@ -85,12 +91,35 @@ function mediaPosterFile(stageId: string, mediaId: string): string {
   return path.join(mediaDir(stageId), `${safeStorageId(mediaId)}.poster.bin`);
 }
 
+function audioMetaFile(stageId: string, audioId: string): string {
+  return path.join(audioDir(stageId), `${safeStorageId(audioId)}.json`);
+}
+
+function audioBlobFile(stageId: string, audioId: string): string {
+  return path.join(audioDir(stageId), `${safeStorageId(audioId)}.bin`);
+}
+
 function imageMetaFile(id: string): string {
   return path.join(getStorageRoots().imagesRoot, `${safeStorageId(id)}.json`);
 }
 
 function imageBlobFile(id: string): string {
   return path.join(getStorageRoots().imagesRoot, `${safeStorageId(id)}.bin`);
+}
+
+function resolveAudioMimeType(format: string): string {
+  switch (format.toLowerCase()) {
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'aac':
+      return 'audio/aac';
+    default:
+      return `audio/${format}`;
+  }
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -305,6 +334,93 @@ export function createFileStorageRepository(): ServerStorageRepository {
         await removePath(mediaPosterFile(record.stageId, record.id));
       }
       await writeJson(mediaMetaFile(record.stageId, record.id), metadata as unknown as JsonValue);
+    },
+
+    async saveAudioFileRecord(record: AudioFileRecord): Promise<void> {
+      if (!record.stageId) {
+        throw new Error(`Audio record missing stageId: ${record.id}`);
+      }
+      await ensureDir(audioDir(record.stageId));
+      const metadata: ServerAudioMetadata = {
+        id: record.id,
+        duration: record.duration,
+        format: record.format,
+        text: record.text,
+        voice: record.voice,
+        stageId: record.stageId,
+        providerId: record.providerId,
+        modelId: record.modelId,
+        speed: record.speed,
+        createdAt: record.createdAt,
+        ossKey: record.ossKey,
+        hasBlob: true,
+        storageStatus: 'ready',
+      };
+      await fs.writeFile(
+        audioBlobFile(record.stageId, record.id),
+        Buffer.from(await record.blob.arrayBuffer()),
+      );
+      await writeJson(audioMetaFile(record.stageId, record.id), metadata as unknown as JsonValue);
+    },
+
+    async getAudioFileRecordMetadata(id: string): Promise<ServerAudioMetadata | null> {
+      const { stagesRoot } = getStorageRoots();
+      await ensureDir(stagesRoot);
+      const stageDirs = await readDirectory(stagesRoot);
+      for (const stageName of stageDirs) {
+        const metadata = await readJsonFile<ServerAudioMetadata>(
+          path.join(stagesRoot, stageName, 'audio', `${safeStorageId(id)}.json`),
+        );
+        if (metadata) {
+          return metadata;
+        }
+      }
+      return null;
+    },
+
+    async getAudioFileBlob(stageId: string, audioId: string) {
+      const metadata = await readJsonFile<ServerAudioMetadata>(audioMetaFile(stageId, audioId));
+      if (!metadata?.hasBlob) {
+        return null;
+      }
+      try {
+        const buffer = await fs.readFile(audioBlobFile(stageId, audioId));
+        return { buffer, mimeType: resolveAudioMimeType(metadata.format) };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return null;
+        }
+        throw error;
+      }
+    },
+
+    async listAudioFileRecordsByStageId(stageId: string): Promise<ServerAudioMetadata[]> {
+      const dir = audioDir(stageId);
+      const files = await readDirectory(dir);
+      const jsonFiles = files.filter((file) => file.endsWith('.json'));
+      const records = await Promise.all(
+        jsonFiles.map((file) => readJsonFile<ServerAudioMetadata>(path.join(dir, file))),
+      );
+      return records
+        .filter((record): record is ServerAudioMetadata => Boolean(record))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
+
+    async deleteAudioFileRecord(id: string): Promise<void> {
+      const { stagesRoot } = getStorageRoots();
+      const stageDirs = await readDirectory(stagesRoot);
+      await Promise.all(
+        stageDirs.map(async (stageName) => {
+          await Promise.all([
+            removePath(path.join(stagesRoot, stageName, 'audio', `${safeStorageId(id)}.json`)),
+            removePath(path.join(stagesRoot, stageName, 'audio', `${safeStorageId(id)}.bin`)),
+          ]);
+        }),
+      );
+    },
+
+    async deleteAudioFileRecordsByStageId(stageId: string): Promise<void> {
+      await removePath(audioDir(stageId));
     },
 
     async listMediaFilesByStageId(stageId: string): Promise<ServerMediaMetadata[]> {

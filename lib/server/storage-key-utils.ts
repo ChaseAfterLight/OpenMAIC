@@ -53,6 +53,16 @@ export function buildStageMediaPosterObjectKey(
   return `${prefix}/stages/${safeStorageId(stageId)}/media/${safeStorageId(mediaId)}/poster.png`;
 }
 
+export function buildStageAudioObjectKey(
+  prefix: string,
+  stageId: string,
+  audioId: string,
+  mimeType: string,
+): string {
+  const suffix = sanitizeSegment(mimeType.replace('/', '-')) || 'bin';
+  return `${prefix}/stages/${safeStorageId(stageId)}/audio/${safeStorageId(audioId)}/original.${suffix}`;
+}
+
 export function buildImageObjectKey(
   prefix: string,
   imageId: string,

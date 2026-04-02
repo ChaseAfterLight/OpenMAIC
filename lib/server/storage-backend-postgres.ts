@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
 import { createLogger } from '@/lib/logger';
 import type { PostgresObjectStorageConfig } from '@/lib/server/storage-backend-config';
 import {
+  buildStageAudioObjectKey,
   buildImageObjectKey,
   buildStageMediaObjectKey,
   buildStageMediaPosterObjectKey,
@@ -24,11 +25,13 @@ import {
   type JsonRow,
 } from '@/lib/server/storage-postgres';
 import type {
+  ServerAudioMetadata,
   ServerImageMetadata,
   ServerMediaMetadata,
   ServerStorageRepository,
 } from '@/lib/server/storage-repository-types';
 import type {
+  AudioFileRecord,
   ChatSessionRecord,
   ImageFileRecord,
   LessonPackVersionRecord,
@@ -45,6 +48,21 @@ const schemaPath = path.join(process.cwd(), 'db', 'postgres-object-storage.sql')
 
 function hashBuffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
+}
+
+function resolveAudioMimeType(format: string): string {
+  switch (format.toLowerCase()) {
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'aac':
+      return 'audio/aac';
+    default:
+      return `audio/${format}`;
+  }
 }
 
 function toStageRowParams(record: StageRecord) {
@@ -120,6 +138,34 @@ function toImageMetadata(
     storageStatus: options.storageStatus,
     storageError: options.storageError,
     objectKey: options.objectKey,
+  };
+}
+
+function toAudioMetadata(
+  record: AudioFileRecord,
+  options: {
+    hasBlob: boolean;
+    storageStatus: ServerAudioMetadata['storageStatus'];
+    storageError?: string;
+    objectKey?: string;
+  },
+): ServerAudioMetadata {
+  return {
+    id: record.id,
+    stageId: record.stageId,
+    duration: record.duration,
+    format: record.format,
+    text: record.text,
+    voice: record.voice,
+    providerId: record.providerId,
+    modelId: record.modelId,
+    speed: record.speed,
+    createdAt: record.createdAt,
+    ossKey: options.objectKey,
+    hasBlob: options.hasBlob,
+    storageStatus: options.storageStatus,
+    storageError: options.storageError,
+    downloadUrl: record.stageId ? buildAudioDownloadUrl(record.stageId, record.id) : undefined,
   };
 }
 
@@ -210,6 +256,32 @@ function mapImageRow(row: JsonRow): ServerImageMetadata {
     storageError: getNullableText(row.storage_error),
     objectKey: getNullableText(row.object_key),
   };
+}
+
+function mapAudioRow(row: JsonRow): ServerAudioMetadata {
+  const stageId = String(row.stage_id);
+  const id = String(row.id);
+  return {
+    id,
+    stageId,
+    duration: row.duration == null ? undefined : Number(row.duration),
+    format: String(row.format),
+    text: getNullableText(row.text),
+    voice: getNullableText(row.voice),
+    providerId: getNullableText(row.provider_id),
+    modelId: getNullableText(row.model_id),
+    speed: row.speed == null ? undefined : Number(row.speed),
+    createdAt: Number(row.created_at),
+    ossKey: getNullableText(row.object_key),
+    hasBlob: Boolean(row.has_blob),
+    storageStatus: String(row.storage_status) as ServerAudioMetadata['storageStatus'],
+    storageError: getNullableText(row.storage_error),
+    downloadUrl: buildAudioDownloadUrl(stageId, id),
+  };
+}
+
+function buildAudioDownloadUrl(stageId: string, id: string): string {
+  return `/api/storage?action=downloadAudio&stageId=${encodeURIComponent(stageId)}&id=${encodeURIComponent(id)}`;
 }
 
 async function applySchemaIfNeeded(config: PostgresObjectStorageConfig): Promise<void> {
@@ -389,6 +461,63 @@ async function upsertImageRow(
   );
 }
 
+async function upsertAudioRow(
+  config: PostgresObjectStorageConfig,
+  record: AudioFileRecord,
+  metadata: ServerAudioMetadata,
+  checksum?: string,
+): Promise<void> {
+  await getStoragePgPool(config.databaseUrl).query(
+    `
+      INSERT INTO audio_files (
+        id, stage_id, format, mime_type, duration, text, voice, provider_id, model_id, speed,
+        object_key, has_blob, storage_status, storage_error, checksum_sha256, metadata_json,
+        created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        stage_id = EXCLUDED.stage_id,
+        format = EXCLUDED.format,
+        mime_type = EXCLUDED.mime_type,
+        duration = EXCLUDED.duration,
+        text = EXCLUDED.text,
+        voice = EXCLUDED.voice,
+        provider_id = EXCLUDED.provider_id,
+        model_id = EXCLUDED.model_id,
+        speed = EXCLUDED.speed,
+        object_key = EXCLUDED.object_key,
+        has_blob = EXCLUDED.has_blob,
+        storage_status = EXCLUDED.storage_status,
+        storage_error = EXCLUDED.storage_error,
+        checksum_sha256 = EXCLUDED.checksum_sha256,
+        metadata_json = EXCLUDED.metadata_json,
+        created_at = EXCLUDED.created_at,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      record.id,
+      record.stageId ?? null,
+      record.format,
+      resolveAudioMimeType(record.format),
+      record.duration ?? null,
+      record.text ?? null,
+      record.voice ?? null,
+      record.providerId ?? null,
+      record.modelId ?? null,
+      record.speed ?? null,
+      metadata.ossKey ?? null,
+      metadata.hasBlob,
+      metadata.storageStatus,
+      metadata.storageError ?? null,
+      checksum ?? null,
+      toJsonb(metadata),
+      record.createdAt,
+      Date.now(),
+    ],
+  );
+}
+
 export function createPostgresObjectStorageRepository(
   config: PostgresObjectStorageConfig,
 ): ServerStorageRepository {
@@ -487,6 +616,10 @@ export function createPostgresObjectStorageRepository(
           'DELETE FROM media_files WHERE stage_id = $1 RETURNING object_key, poster_object_key',
           [stageId],
         );
+        const audioRows = await client.query(
+          'DELETE FROM audio_files WHERE stage_id = $1 RETURNING object_key',
+          [stageId],
+        );
         await client.query('DELETE FROM chat_sessions WHERE stage_id = $1', [stageId]);
         await client.query('DELETE FROM scenes WHERE stage_id = $1', [stageId]);
         await client.query('DELETE FROM playback_states WHERE stage_id = $1', [stageId]);
@@ -494,6 +627,7 @@ export function createPostgresObjectStorageRepository(
         await client.query('DELETE FROM classrooms WHERE stage_id = $1', [stageId]);
         return mediaRows.rows
           .flatMap((row) => [row.object_key, row.poster_object_key])
+          .concat(audioRows.rows.map((row) => row.object_key))
           .filter(Boolean) as string[];
       });
       await deleteMediaObjectKeys(objectKeys);
@@ -858,9 +992,113 @@ export function createPostgresObjectStorageRepository(
       );
       await deleteMediaObjectKeys(
         rows.rows
-          .flatMap((row) => [row.object_key, row.poster_object_key])
-          .filter(Boolean) as string[],
+        .flatMap((row) => [row.object_key, row.poster_object_key])
+        .filter(Boolean) as string[],
       );
+    },
+
+    async saveAudioFileRecord(record: AudioFileRecord): Promise<void> {
+      await ensureReady();
+      if (!record.stageId) {
+        throw new Error(`Audio record missing stageId: ${record.id}`);
+      }
+
+      const objectKey = buildStageAudioObjectKey(
+        config.objectKeyPrefix,
+        record.stageId,
+        record.id,
+        resolveAudioMimeType(record.format),
+      );
+      const blobBuffer = Buffer.from(await record.blob.arrayBuffer());
+
+      try {
+        await putObjectToStorage(config, objectKey, blobBuffer, resolveAudioMimeType(record.format));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warn(`对象存储上传失败，音频 ${record.id} 已标记失败`, error);
+        const failedMetadata = toAudioMetadata(record, {
+          hasBlob: false,
+          storageStatus: 'failed',
+          storageError: message,
+        });
+        await upsertAudioRow(config, record, failedMetadata);
+        throw error;
+      }
+
+      const readyMetadata = toAudioMetadata(record, {
+        hasBlob: true,
+        storageStatus: 'ready',
+        objectKey,
+      });
+
+      try {
+        await upsertAudioRow(config, record, readyMetadata, hashBuffer(blobBuffer));
+      } catch (error) {
+        await deleteObjectsFromStorage(config, [objectKey]);
+        log.warn(`数据库写入失败，音频 ${record.id} 的对象已回滚删除`, error);
+        throw error;
+      }
+    },
+
+    async getAudioFileRecordMetadata(id: string): Promise<ServerAudioMetadata | null> {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'SELECT * FROM audio_files WHERE id = $1',
+        [id],
+      );
+      if (result.rowCount === 0) {
+        return null;
+      }
+      return mapAudioRow(result.rows[0]);
+    },
+
+    async getAudioFileBlob(stageId: string, audioId: string) {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'SELECT mime_type, object_key, has_blob FROM audio_files WHERE stage_id = $1 AND id = $2',
+        [stageId, audioId],
+      );
+      if (result.rowCount === 0 || !result.rows[0].has_blob || !result.rows[0].object_key) {
+        return null;
+      }
+      const buffer = await getObjectFromStorage(config, String(result.rows[0].object_key));
+      return {
+        buffer,
+        mimeType: String(result.rows[0].mime_type),
+      };
+    },
+
+    async listAudioFileRecordsByStageId(stageId: string): Promise<ServerAudioMetadata[]> {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'SELECT * FROM audio_files WHERE stage_id = $1 ORDER BY created_at DESC',
+        [stageId],
+      );
+      return result.rows.map(mapAudioRow);
+    },
+
+    async deleteAudioFileRecord(id: string): Promise<void> {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'DELETE FROM audio_files WHERE id = $1 RETURNING object_key',
+        [id],
+      );
+      const keys = result.rows
+        .map((row) => getNullableText(row.object_key))
+        .filter(Boolean) as string[];
+      await deleteObjectsFromStorage(config, keys);
+    },
+
+    async deleteAudioFileRecordsByStageId(stageId: string): Promise<void> {
+      await ensureReady();
+      const result = await getStoragePgPool(config.databaseUrl).query(
+        'DELETE FROM audio_files WHERE stage_id = $1 RETURNING object_key',
+        [stageId],
+      );
+      const keys = result.rows
+        .map((row) => getNullableText(row.object_key))
+        .filter(Boolean) as string[];
+      await deleteObjectsFromStorage(config, keys);
     },
 
     async saveImageFileRecord(record: ImageFileRecord): Promise<void> {

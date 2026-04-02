@@ -29,21 +29,36 @@ export class AudioPlayer {
    */
   public async play(audioId: string, audioUrl?: string): Promise<boolean> {
     try {
-      // 1. Try audioUrl first (server-generated TTS)
-      if (audioUrl) {
+      const playFromSource = async (src: string, revokeUrl?: () => void): Promise<void> => {
         this.stop();
         this.audio = new Audio();
-        this.audio.src = audioUrl;
+        this.audio.src = src;
         if (this.muted) this.audio.volume = 0;
         else this.audio.volume = this.volume;
         this.audio.defaultPlaybackRate = this.playbackRate;
         this.audio.playbackRate = this.playbackRate;
         this.audio.addEventListener('ended', () => {
+          revokeUrl?.();
           this.onEndedCallback?.();
         });
-        await this.audio.play();
-        this.audio.playbackRate = this.playbackRate;
-        return true;
+        try {
+          await this.audio.play();
+          this.audio.playbackRate = this.playbackRate;
+        } catch (error) {
+          revokeUrl?.();
+          throw error;
+        }
+      };
+
+      // 1. Try audioUrl first (server-generated TTS)
+      if (audioUrl) {
+        try {
+          await playFromSource(audioUrl);
+          return true;
+        } catch (error) {
+          log.warn('Shared audio URL failed, falling back to local cache:', error);
+          this.stop();
+        }
       }
 
       // 2. Fall back to IndexedDB (client-generated TTS)
@@ -55,31 +70,8 @@ export class AudioPlayer {
       }
 
       // Stop current playback
-      this.stop();
-
-      // Create audio element
-      this.audio = new Audio();
-
-      // Set audio source
       const blobUrl = URL.createObjectURL(audioRecord.blob);
-      this.audio.src = blobUrl;
-      if (this.muted) this.audio.volume = 0;
-      else this.audio.volume = this.volume;
-
-      // Apply playback rate
-      this.audio.defaultPlaybackRate = this.playbackRate;
-      this.audio.playbackRate = this.playbackRate;
-
-      // Set ended callback
-      this.audio.addEventListener('ended', () => {
-        URL.revokeObjectURL(blobUrl);
-        this.onEndedCallback?.();
-      });
-
-      // Play
-      await this.audio.play();
-      // Re-apply after play() — some browsers reset during load
-      this.audio.playbackRate = this.playbackRate;
+      await playFromSource(blobUrl, () => URL.revokeObjectURL(blobUrl));
       return true;
     } catch (error) {
       log.error('Failed to play audio:', error);

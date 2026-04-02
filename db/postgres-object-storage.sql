@@ -103,6 +103,30 @@ CREATE TABLE IF NOT EXISTS lesson_pack_versions (
 CREATE INDEX IF NOT EXISTS idx_lesson_pack_versions_stage_created
   ON lesson_pack_versions (stage_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS audio_files (
+  id TEXT PRIMARY KEY,
+  stage_id TEXT NOT NULL REFERENCES classrooms(stage_id) ON DELETE CASCADE,
+  format TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  duration DOUBLE PRECISION,
+  text TEXT,
+  voice TEXT,
+  provider_id TEXT,
+  model_id TEXT,
+  speed DOUBLE PRECISION,
+  object_key TEXT,
+  has_blob BOOLEAN NOT NULL DEFAULT FALSE,
+  storage_status TEXT NOT NULL DEFAULT 'ready',
+  storage_error TEXT,
+  checksum_sha256 TEXT,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audio_files_stage_created ON audio_files (stage_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audio_files_storage_status ON audio_files (storage_status);
+
 CREATE TABLE IF NOT EXISTS media_files (
   id TEXT PRIMARY KEY,
   stage_id TEXT NOT NULL REFERENCES classrooms(stage_id) ON DELETE CASCADE,

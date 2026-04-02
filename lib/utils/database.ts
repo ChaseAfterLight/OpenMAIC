@@ -85,6 +85,10 @@ export interface AudioFileRecord {
   format: string; // mp3, wav, etc.
   text?: string; // Corresponding text content
   voice?: string; // Voice used
+  stageId?: string; // Classroom/stage scope for shared cache cleanup
+  providerId?: string; // TTS provider used to generate this asset
+  modelId?: string; // TTS model used to generate this asset
+  speed?: number; // TTS speed used to generate this asset
   createdAt: number;
   ossKey?: string; // Stable object storage key for this audio blob
 }
@@ -438,6 +442,7 @@ export async function getScenesByStageId(stageId: string): Promise<SceneRecord[]
  * Delete a course and all its related data
  */
 export async function deleteStageWithRelatedData(stageId: string): Promise<void> {
+  const audioRecords = await db.audioFiles.toArray();
   await db.transaction(
     'rw',
     [
@@ -458,6 +463,9 @@ export async function deleteStageWithRelatedData(stageId: string): Promise<void>
       await db.stageOutlines.delete(stageId);
       await db.lessonPackVersions.where('stageId').equals(stageId).delete();
       await db.mediaFiles.where('stageId').equals(stageId).delete();
+      for (const record of audioRecords.filter((item) => item.stageId === stageId)) {
+        await db.audioFiles.delete(record.id);
+      }
       await db.generatedAgents.where('stageId').equals(stageId).delete();
     },
   );

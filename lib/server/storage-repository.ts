@@ -4,6 +4,7 @@ import { createPostgresObjectStorageRepository } from '@/lib/server/storage-back
 import type { ServerStorageRepository } from '@/lib/server/storage-repository-types';
 import type {
   ChatSessionRecord,
+  AudioFileRecord,
   ImageFileRecord,
   LessonPackVersionRecord,
   MediaFileRecord,
@@ -151,6 +152,30 @@ export async function getMediaPosterBlob(stageId: string, mediaId: string) {
 
 export async function deleteMediaFilesByStageId(stageId: string): Promise<void> {
   await getRepository().deleteMediaFilesByStageId(stageId);
+}
+
+export async function saveAudioFileRecord(record: AudioFileRecord): Promise<void> {
+  await getRepository().saveAudioFileRecord(record);
+}
+
+export async function getAudioFileRecordMetadata(id: string) {
+  return getRepository().getAudioFileRecordMetadata(id);
+}
+
+export async function getAudioFileBlob(stageId: string, audioId: string) {
+  return getRepository().getAudioFileBlob(stageId, audioId);
+}
+
+export async function listAudioFileRecordsByStageId(stageId: string) {
+  return getRepository().listAudioFileRecordsByStageId(stageId);
+}
+
+export async function deleteAudioFileRecord(id: string): Promise<void> {
+  await getRepository().deleteAudioFileRecord(id);
+}
+
+export async function deleteAudioFileRecordsByStageId(stageId: string): Promise<void> {
+  await getRepository().deleteAudioFileRecordsByStageId(stageId);
 }
 
 export async function saveImageFileRecord(record: ImageFileRecord): Promise<void> {

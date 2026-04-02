@@ -1,4 +1,5 @@
 import type {
+  AudioFileRecord,
   ChatSessionRecord,
   ImageFileRecord,
   LessonPackVersionRecord,
@@ -10,6 +11,14 @@ import type {
 } from '@/lib/utils/database';
 
 export interface ServerImageFileMetadata extends Omit<ImageFileRecord, 'blob'> {
+  downloadUrl?: string;
+  hasBlob?: boolean;
+  storageStatus?: 'ready' | 'pending' | 'failed';
+  storageError?: string;
+  objectKey?: string;
+}
+
+export interface ServerAudioFileMetadata extends Omit<AudioFileRecord, 'blob'> {
   downloadUrl?: string;
   hasBlob?: boolean;
   storageStatus?: 'ready' | 'pending' | 'failed';
@@ -51,6 +60,10 @@ export type StorageJsonAction =
   | { action: 'deleteLessonPackVersionsByStageId'; stageId: string }
   | { action: 'listMediaFilesByStageId'; stageId: string }
   | { action: 'deleteMediaFilesByStageId'; stageId: string }
+  | { action: 'getAudioFileRecordMetadata'; id: string }
+  | { action: 'listAudioFileRecordsByStageId'; stageId: string }
+  | { action: 'deleteAudioFileRecord'; id: string }
+  | { action: 'deleteAudioFileRecordsByStageId'; stageId: string }
   | { action: 'getImageFileRecordMetadata'; id: string }
   | { action: 'listImageFileRecordMetadata' }
   | { action: 'deleteImageFileRecord'; id: string }
@@ -65,4 +78,6 @@ export type StorageJsonResponse =
   | { ok: true; count: number }
   | { ok: true; images: ServerImageFileMetadata[] }
   | { ok: true; image?: ServerImageFileMetadata | null }
+  | { ok: true; audio?: ServerAudioFileMetadata | null }
+  | { ok: true; audios: ServerAudioFileMetadata[] }
   | { ok: true; media: ServerMediaFileMetadata[] };

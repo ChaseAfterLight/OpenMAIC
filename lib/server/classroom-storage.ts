@@ -3,6 +3,12 @@ import path from 'path';
 import type { NextRequest } from 'next/server';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { ensureStageLessonPack } from '@/lib/utils/lesson-pack';
+import {
+  getStageRecord,
+  listScenesByStageId,
+  replaceScenesByStageId,
+  saveStageRecord,
+} from '@/lib/server/storage-repository';
 
 export const CLASSROOMS_DIR = path.join(process.cwd(), 'data', 'classrooms');
 export const CLASSROOM_JOBS_DIR = path.join(process.cwd(), 'data', 'classroom-jobs');
@@ -47,7 +53,7 @@ export function isValidClassroomId(id: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(id);
 }
 
-export async function readClassroom(id: string): Promise<PersistedClassroomData | null> {
+async function readLegacyClassroom(id: string): Promise<PersistedClassroomData | null> {
   const filePath = path.join(CLASSROOMS_DIR, `${id}.json`);
   try {
     const content = await fs.readFile(filePath, 'utf-8');
@@ -64,6 +70,27 @@ export async function readClassroom(id: string): Promise<PersistedClassroomData 
   }
 }
 
+export async function readClassroom(id: string): Promise<PersistedClassroomData | null> {
+  try {
+    const stage = await getStageRecord(id);
+    if (stage) {
+      const scenes = await listScenesByStageId(id);
+      const normalizedStage = ensureStageLessonPack(stage);
+      return {
+        id,
+        ownerUserId: normalizedStage.ownerUserId,
+        stage: normalizedStage,
+        scenes,
+        createdAt: new Date(normalizedStage.createdAt).toISOString(),
+      };
+    }
+  } catch (error) {
+    // Fall through to legacy file-backed classroom data.
+    return readLegacyClassroom(id);
+  }
+  return readLegacyClassroom(id);
+}
+
 export async function persistClassroom(
   data: {
     id: string;
@@ -73,17 +100,44 @@ export async function persistClassroom(
   },
   baseUrl: string,
 ): Promise<PersistedClassroomData & { url: string }> {
+  const normalizedStage = ensureStageLessonPack({
+    ...data.stage,
+    id: data.id,
+    ownerUserId: data.ownerUserId ?? data.stage.ownerUserId,
+  });
+  const stageRecord = normalizedStage as Stage & { currentSceneId?: string };
   const classroomData: PersistedClassroomData = {
     id: data.id,
-    ownerUserId: data.ownerUserId,
-    stage: ensureStageLessonPack(data.stage),
+    ownerUserId: normalizedStage.ownerUserId,
+    stage: normalizedStage,
     scenes: data.scenes,
     createdAt: new Date().toISOString(),
   };
 
-  await ensureClassroomsDir();
-  const filePath = path.join(CLASSROOMS_DIR, `${data.id}.json`);
-  await writeJsonFileAtomic(filePath, classroomData);
+  await saveStageRecord({
+    id: normalizedStage.id,
+    ownerUserId: normalizedStage.ownerUserId,
+    name: normalizedStage.name,
+    description: normalizedStage.description,
+    createdAt: normalizedStage.createdAt,
+    updatedAt: normalizedStage.updatedAt,
+    lessonPack: normalizedStage.lessonPack,
+    language: normalizedStage.language,
+    style: normalizedStage.style,
+    currentSceneId: stageRecord.currentSceneId,
+    agentIds: normalizedStage.agentIds,
+    whiteboard: normalizedStage.whiteboard,
+  } as unknown as Stage);
+  await replaceScenesByStageId(
+    data.id,
+    data.scenes.map((scene, index) => ({
+      ...scene,
+      stageId: data.id,
+      order: scene.order ?? index,
+      createdAt: scene.createdAt ?? normalizedStage.createdAt,
+      updatedAt: scene.updatedAt ?? normalizedStage.updatedAt,
+    })),
+  );
 
   return {
     ...classroomData,
