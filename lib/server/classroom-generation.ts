@@ -20,6 +20,7 @@ import { parseModelString } from '@/lib/ai/providers';
 import { resolveApiKey, resolveWebSearchApiKey } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
+import { buildSearchQuery } from '@/lib/server/search-query-builder';
 import { searchWithTavily, formatSearchResultsAsContext } from '@/lib/web-search/tavily';
 import { searchWithBrave } from '@/lib/web-search/brave';
 import { searchWithBaidu } from '@/lib/web-search/baidu';
@@ -33,6 +34,7 @@ import type { UserRequirements } from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import type { Scene, Stage } from '@/lib/types/stage';
+import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 
 const log = createLogger('Classroom');
 
@@ -225,6 +227,21 @@ export async function generateClassroom(
     return result.text;
   };
 
+  const searchQueryAiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
+    const result = await callLLM(
+      {
+        model: languageModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        maxOutputTokens: 256,
+      },
+      'web-search-query-rewrite',
+    );
+    return result.text;
+  };
+
   const lang = normalizeLanguage(input.language);
   const requirements: UserRequirements = {
     requirement,
@@ -268,22 +285,31 @@ export async function generateClassroom(
 
     if (!provider.requiresApiKey || apiKey) {
       try {
-        log.info(`Running ${provider.name} web search for requirement context...`);
+        const searchQuery = await buildSearchQuery(requirement, pdfText, searchQueryAiCall);
+
+        log.info('Running web search for classroom generation', {
+          provider: provider.name,
+          hasPdfContext: searchQuery.hasPdfContext,
+          rawRequirementLength: searchQuery.rawRequirementLength,
+          rewriteAttempted: searchQuery.rewriteAttempted,
+          finalQueryLength: searchQuery.finalQueryLength,
+        });
+
         let searchResult: WebSearchResult;
         switch (providerId) {
           case 'brave':
-            searchResult = await searchWithBrave({ query: requirement });
+            searchResult = await searchWithBrave({ query: searchQuery.query });
             break;
           case 'baidu':
             searchResult = await searchWithBaidu({
-              query: requirement,
+              query: searchQuery.query,
               apiKey,
               subSources: baiduSubSources,
             });
             break;
           case 'tavily':
           default:
-            searchResult = await searchWithTavily({ query: requirement, apiKey });
+            searchResult = await searchWithTavily({ query: searchQuery.query, apiKey });
             break;
         }
 
@@ -347,6 +373,17 @@ export async function generateClassroom(
     style: 'interactive',
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    // Embed agent configs so API-generated classrooms can hydrate
+    // the client-side agent registry without IndexedDB
+    generatedAgentConfigs: agents.map((a, i) => ({
+      id: a.id,
+      name: a.name,
+      role: a.role,
+      persona: a.persona || '',
+      avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
+      color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
+      priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
+    })),
   };
 
   const store = createInMemoryStore(stage);
