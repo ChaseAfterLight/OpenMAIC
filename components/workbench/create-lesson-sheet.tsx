@@ -74,7 +74,7 @@ const sheetCopy = {
     promptKeyboard: '支持 Ctrl/⌘ + Enter 立即生成',
     libraryTitle: '关联教材与章节',
     libraryHint: '从资源库里挑一份教材，作为这节课的章节锚点。',
-    libraryPlaceholder: '从模板库中选择教材与章节...',
+    libraryPlaceholder: '从资源中心选择教材与章节...',
     libraryChange: '更换',
     libraryPick: '去选择',
     libraryChapterLabel: '已选章节：',

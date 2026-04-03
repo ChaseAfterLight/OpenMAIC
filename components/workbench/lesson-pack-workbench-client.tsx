@@ -66,13 +66,12 @@ import {
   type StageListItem,
 } from '@/lib/utils/stage-storage';
 
-// 引入刚刚新建的侧边抽屉组件
 import { CreateLessonSheet } from '@/components/workbench/create-lesson-sheet';
 
 const workbenchCopy = {
   'zh-CN': {
     title: '教师备课工作台',
-    description: '管理所有的教案与课件资产。', // 简化描述
+    description: '管理所有的教案与课件资产。',
     filters: '备课包筛选',
     searchPlaceholder: '搜索标题、教材版本或章节...',
     textbookPlaceholder: '全部教材与章节',
@@ -192,7 +191,6 @@ export function LessonPackWorkbenchClient() {
   const moduleBadge = resolveLocalizedText(activeModule.home.badge, activeLocale);
   const authUser = useAuthSessionStore((s) => s.user);
 
-  // 控制新建抽屉的状态
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -294,7 +292,6 @@ export function LessonPackWorkbenchClient() {
 
   return (
     <div className="min-h-[100dvh] bg-slate-50 font-sans selection:bg-indigo-500/30 dark:bg-slate-950">
-      {/* 极简顶部导航 */}
       <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200/50 bg-white/70 px-6 py-4 backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-950/70">
         <div className="flex items-center gap-3">
           <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-md">
@@ -356,7 +353,6 @@ export function LessonPackWorkbenchClient() {
             </Button>
           </div>
 
-          {/* 核心行动点：新建按钮 */}
           <Button
             onClick={() => setCreateSheetOpen(true)}
             className="h-9 rounded-full bg-indigo-600 pl-3 pr-4 font-semibold text-white shadow-md transition-all hover:bg-indigo-700 hover:shadow-lg"
@@ -368,7 +364,6 @@ export function LessonPackWorkbenchClient() {
       </header>
 
       <main className="mx-auto flex w-full max-w-[1600px] flex-col gap-8 px-6 py-8 sm:px-8 lg:px-12">
-        {/* 页面标题区 */}
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-4xl">
             {copy.myLibrary}
@@ -376,7 +371,6 @@ export function LessonPackWorkbenchClient() {
           <p className="text-base text-slate-500 dark:text-slate-400">{copy.description}</p>
         </div>
 
-        {/* 精简后的过滤器条 */}
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/60 bg-white/60 p-3 shadow-sm backdrop-blur-md dark:border-slate-800/60 dark:bg-slate-900/60 md:flex-row md:items-center md:justify-between">
           <div className="relative flex-1 md:max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -405,7 +399,6 @@ export function LessonPackWorkbenchClient() {
 
                 <div className="hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
 
-                {/* 状态与排序作为次要筛选 */}
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                   <SelectTrigger className="h-10 w-[110px] rounded-xl border-transparent bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800">
                     <SelectValue placeholder={copy.status} />
@@ -441,7 +434,6 @@ export function LessonPackWorkbenchClient() {
           </div>
         </div>
 
-        {/* 瀑布流网格 */}
         {visibleClassrooms.length === 0 ? (
           <div className="flex min-h-[400px] flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 bg-white/30 dark:border-slate-800 dark:bg-slate-900/30">
             <div className="flex size-20 items-center justify-center rounded-3xl bg-indigo-50 text-indigo-500 shadow-sm dark:bg-indigo-500/10 dark:text-indigo-400">
@@ -489,7 +481,6 @@ export function LessonPackWorkbenchClient() {
                       )}
                     </div>
 
-                    {/* 封面标签精简：只保留状态 */}
                     <div className="absolute right-3 top-3 z-10">
                       <Badge
                         variant="secondary"
@@ -508,7 +499,6 @@ export function LessonPackWorkbenchClient() {
                         <h2 className="truncate text-lg font-bold tracking-tight text-slate-900 transition-colors group-hover:text-indigo-600 dark:text-slate-50 dark:group-hover:text-indigo-400">
                           {classroom.name}
                         </h2>
-                        {/* 将基础信息平铺为浅色副标题，不再滥用 Badge */}
                         <p className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
                           {[
                             classroom.lessonPack.grade,
@@ -600,7 +590,6 @@ export function LessonPackWorkbenchClient() {
         )}
       </main>
 
-      {/* 挂载独立的抽屉组件 */}
       <CreateLessonSheet
         open={createSheetOpen}
         onOpenChange={setCreateSheetOpen}
