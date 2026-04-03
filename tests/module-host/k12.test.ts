@@ -67,7 +67,7 @@ describe('k12 textbook helpers', () => {
       grade: '四年级',
       subject: '数学',
       lessonType: '新课导入',
-      textbookEdition: '人教版',
+      textbookEdition: '人教版小学数学',
       volume: '四年级上册',
       unit: '大数的认识',
       chapter: '亿以内数的认识',

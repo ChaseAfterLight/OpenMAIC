@@ -25,10 +25,7 @@ import { getActiveModule } from '@/lib/module-host/runtime';
 import {
   buildK12RequirementText,
   getDefaultK12StructuredInput,
-  getK12TextbookSelection,
-  syncK12StructuredInput,
 } from '@/lib/module-host/k12';
-import { useK12CatalogPresets } from '@/lib/hooks/use-k12-catalog-presets';
 import {
   resolveLocalizedList,
   resolveLocalizedText,
@@ -115,10 +112,9 @@ export function CreateLessonSheet({
 
   const activeModule = getActiveModule();
   const isK12Module = activeModule.id === 'k12';
-  const baseK12Presets = (isK12Module ? activeModule.presets : undefined) as
+  const k12Presets = (isK12Module ? activeModule.presets : undefined) as
     | K12ModulePresets
     | undefined;
-  const { presets: k12Presets } = useK12CatalogPresets(baseK12Presets);
   const modulePlaceholder = resolveLocalizedText(
     activeModule.home.requirementPlaceholder,
     activeLocale,
@@ -155,40 +151,6 @@ export function CreateLessonSheet({
       /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!k12Presets) return;
-    setK12Form((current) => syncK12StructuredInput(current, k12Presets));
-  }, [k12Presets]);
-
-  useEffect(() => {
-    if (!k12Presets) {
-      setSelectedTextbook(null);
-      setSelectedChapterTitle('');
-      return;
-    }
-
-    const selection = getK12TextbookSelection(k12Presets, k12Form);
-    if (!selection.volume || !selection.chapter) {
-      setSelectedTextbook(null);
-      setSelectedChapterTitle('');
-      return;
-    }
-
-    setSelectedTextbook({
-      id: selection.volume.id,
-      name: resolveLocalizedText(selection.volume.label, activeLocale),
-      edition: selection.edition ? resolveLocalizedText(selection.edition.label, activeLocale) : '',
-      subject: k12Form.subjectId,
-      editionId: selection.edition?.id,
-      volumeId: selection.volume.id,
-      gradeId: selection.volume.gradeId,
-      subjectId: selection.volume.subjectId,
-    });
-    setSelectedChapterTitle(
-      [selection.unit?.title, selection.chapter.title].filter(Boolean).join(' · '),
-    );
-  }, [activeLocale, k12Form, k12Presets]);
 
   const updateForm = <K extends keyof FormState>(field: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -526,18 +488,6 @@ export function CreateLessonSheet({
         value={k12Form}
         locale={activeLocale}
         onSelect={(textbook, chapterPath, chapterTitle) => {
-          setK12Form((current) =>
-            syncK12StructuredInput(
-              {
-                ...current,
-                textbookEditionId: textbook.editionId,
-                volumeId: textbook.volumeId ?? textbook.id,
-                unitId: chapterPath[0],
-                chapterId: chapterPath[1],
-              },
-              k12Presets,
-            ),
-          );
           setSelectedTextbook(textbook);
           setSelectedChapterTitle(chapterTitle || chapterPath.join(' · '));
         }}

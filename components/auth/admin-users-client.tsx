@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, RefreshCw, Users, ShieldAlert, UserX, ArrowLeft, BookOpen } from 'lucide-react';
+import { Search, RefreshCw, Users, ShieldAlert, UserX, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -46,8 +46,6 @@ const RoleBadge = ({ role, label }: { role: SystemRole; label: string }) => {
 export function AdminUsersClient() {
   const { t } = useI18n();
   const router = useRouter();
-  const isZh = t('auth.roleAdmin') === '管理员';
-  const textbookLabel = isZh ? '教材目录' : 'Textbooks';
 
   const [users, setUsers] = useState<AuthPublicUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,10 +137,6 @@ export function AdminUsersClient() {
               </p>
             </div>
           </div>
-          <Button variant="outline" onClick={() => router.push('/admin/textbooks')}>
-            <BookOpen className="mr-2 h-4 w-4" />
-            {textbookLabel}
-          </Button>
         </div>
 
         {/* Main Card */}

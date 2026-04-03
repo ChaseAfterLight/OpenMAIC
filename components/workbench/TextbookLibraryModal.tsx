@@ -22,10 +22,6 @@ export interface Textbook {
   cover?: string;
   edition: string;
   subject: string;
-  editionId?: string;
-  volumeId?: string;
-  gradeId?: string;
-  subjectId?: string;
 }
 
 interface Chapter {
