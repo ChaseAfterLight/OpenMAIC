@@ -3,9 +3,14 @@ import {
   canManageTextbookLibrary,
   canReadTextbookAttachment,
   canReadTextbookLibrary,
+  canReadTextbookPdfImportDraft,
 } from '@/lib/server/textbook-library-access';
 import type { AuthPublicUser } from '@/lib/server/auth-types';
-import type { TextbookAttachmentLocation, TextbookLibraryRecord } from '@/lib/server/textbook-library-types';
+import type {
+  TextbookAttachmentLocation,
+  TextbookLibraryRecord,
+  TextbookPdfImportDraftRecord,
+} from '@/lib/server/textbook-library-types';
 
 const adminUser: AuthPublicUser = {
   id: 'admin-1',
@@ -78,6 +83,28 @@ function createAttachmentLocation(
   };
 }
 
+function createImportDraft(
+  scope: 'official' | 'personal',
+  status: TextbookPdfImportDraftRecord['status'],
+  ownerUserId?: string,
+): TextbookPdfImportDraftRecord {
+  return {
+    id: `${scope}-import-1`,
+    scope,
+    ownerUserId,
+    libraryId: `${scope}-library`,
+    volumeId: 'volume-1',
+    filename: 'book.pdf',
+    mimeType: 'application/pdf',
+    size: 256,
+    uploadedAt: 1,
+    updatedAt: 1,
+    status,
+    units: [],
+    unboundPages: [],
+  };
+}
+
 describe('textbook library access', () => {
   it('allows only admins to manage official libraries', () => {
     expect(canManageTextbookLibrary(adminUser, 'official')).toBe(true);
@@ -123,5 +150,20 @@ describe('textbook library access', () => {
     expect(
       canReadTextbookAttachment(teacherUser, createAttachmentLocation('personal', personalLibrary)),
     ).toBe(true);
+  });
+
+  it('allows confirmed official import drafts to be read by teachers', () => {
+    expect(canReadTextbookPdfImportDraft(adminUser, createImportDraft('official', 'uploaded'))).toBe(true);
+    expect(canReadTextbookPdfImportDraft(teacherUser, createImportDraft('official', 'uploaded'))).toBe(false);
+    expect(canReadTextbookPdfImportDraft(teacherUser, createImportDraft('official', 'confirmed'))).toBe(true);
+  });
+
+  it('restricts personal import drafts to the owner or admin', () => {
+    expect(
+      canReadTextbookPdfImportDraft(teacherUser, createImportDraft('personal', 'confirmed', teacherUser.id)),
+    ).toBe(true);
+    expect(
+      canReadTextbookPdfImportDraft(otherTeacherUser, createImportDraft('personal', 'confirmed', teacherUser.id)),
+    ).toBe(false);
   });
 });

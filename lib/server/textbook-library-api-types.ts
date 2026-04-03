@@ -1,9 +1,11 @@
 import type {
   SaveTextbookLibraryInput,
+  SaveTextbookPdfImportDraftInput,
   TextbookLibraryFilters,
   TextbookLibraryRecord,
   TextbookLibraryScope,
   TextbookLibraryView,
+  TextbookPdfImportDraftRecord,
   UpdateTextbookAttachmentProcessingInput,
 } from '@/lib/server/textbook-library-types';
 
@@ -37,6 +39,29 @@ export type TextbookLibraryJsonAction =
       payload: UpdateTextbookAttachmentProcessingInput;
     }
   | {
+      action: 'listImportDrafts';
+      scope: TextbookLibraryScope;
+      libraryId: string;
+      volumeId?: string;
+      view?: TextbookLibraryView;
+    }
+  | {
+      action: 'getImportDraft';
+      draftId: string;
+    }
+  | {
+      action: 'saveImportDraft';
+      payload: SaveTextbookPdfImportDraftInput;
+    }
+  | {
+      action: 'confirmImportDraft';
+      draftId: string;
+    }
+  | {
+      action: 'deleteImportDraft';
+      draftId: string;
+    }
+  | {
       action: 'retryAttachmentProcessing';
       attachmentId: string;
     }
@@ -55,8 +80,17 @@ export interface UploadTextbookAttachmentMetadata {
   order?: number;
 }
 
+export interface UploadTextbookImportDraftMetadata {
+  scope: TextbookLibraryScope;
+  view?: TextbookLibraryView;
+  libraryId: string;
+  volumeId: string;
+}
+
 export type TextbookLibraryJsonResponse =
   | { ok: true }
   | { ok: true; library: TextbookLibraryRecord | null }
   | { ok: true; libraries: TextbookLibraryRecord[] }
-  | { ok: true; attachmentId: string };
+  | { ok: true; attachmentId: string }
+  | { ok: true; importDraft: TextbookPdfImportDraftRecord | null }
+  | { ok: true; importDrafts: TextbookPdfImportDraftRecord[] };

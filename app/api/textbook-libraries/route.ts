@@ -3,27 +3,37 @@ import { apiError, apiSuccess, API_ERROR_CODES } from '@/lib/server/api-response
 import { requireApiRole } from '@/lib/server/auth-guards';
 import type { AuthPublicUser } from '@/lib/server/auth-types';
 import { runTextbookAttachmentProcessing } from '@/lib/server/textbook-library-parser';
+import { runTextbookPdfImportProcessing } from '@/lib/server/textbook-pdf-import-parser';
 import {
   canManageTextbookLibrary,
   canReadTextbookAttachment,
   canReadTextbookLibrary,
+  canReadTextbookPdfImportDraft,
 } from '@/lib/server/textbook-library-access';
 import type {
   TextbookLibraryJsonAction,
   UploadTextbookAttachmentMetadata,
+  UploadTextbookImportDraftMetadata,
 } from '@/lib/server/textbook-library-api-types';
 import type { TextbookAttachmentType } from '@/lib/server/textbook-library-types';
 import {
+  confirmTextbookPdfImportDraft,
+  createTextbookPdfImportDraft,
   deleteTextbookAttachment,
+  deleteTextbookPdfImportDraft,
   deleteTextbookLibrary,
   ensureTextbookLibraryStorageReady,
   findTextbookAttachment,
   getTextbookLibrary,
+  getTextbookPdfImportDraft,
   listTextbookLibraries,
+  listTextbookPdfImportDrafts,
   publishOfficialTextbookLibraries,
   readTextbookAttachmentBlob,
+  readTextbookPdfImportDraftBlob,
   saveTextbookAttachment,
   saveTextbookLibrary,
+  saveTextbookPdfImportDraft,
   updateTextbookAttachmentProcessing,
 } from '@/lib/server/textbook-library-repository';
 
@@ -81,6 +91,43 @@ async function handleJsonAction(body: TextbookLibraryJsonAction, user: AuthPubli
       return apiSuccess({ ok: true, library });
     }
 
+    case 'listImportDrafts': {
+      const editableView = body.scope === 'official' ? 'draft' : 'draft';
+      if (body.scope === 'official' && user.role !== 'admin') {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import draft access');
+      }
+      const library = await getTextbookLibrary({
+        scope: body.scope,
+        libraryId: body.libraryId,
+        view: editableView,
+      });
+      if (!library) {
+        return apiSuccess({ ok: true, importDrafts: [] });
+      }
+      if (!canManageTextbookLibrary(user, library.scope, library.ownerUserId)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import draft access');
+      }
+      const importDrafts = await listTextbookPdfImportDrafts({
+        scope: body.scope,
+        view: editableView,
+        libraryId: body.libraryId,
+        volumeId: body.volumeId,
+        ownerUserId: body.scope === 'personal' && user.role !== 'admin' ? user.id : undefined,
+      });
+      return apiSuccess({ ok: true, importDrafts });
+    }
+
+    case 'getImportDraft': {
+      const importDraft = await getTextbookPdfImportDraft(body.draftId);
+      if (!importDraft) {
+        return apiSuccess({ ok: true, importDraft: null });
+      }
+      if (!canReadTextbookPdfImportDraft(user, importDraft)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import draft access');
+      }
+      return apiSuccess({ ok: true, importDraft });
+    }
+
     case 'saveLibrary': {
       const { payload } = body;
       const ownerUserId =
@@ -100,6 +147,18 @@ async function handleJsonAction(body: TextbookLibraryJsonAction, user: AuthPubli
         },
       });
       return apiSuccess({ ok: true, library: saved });
+    }
+
+    case 'saveImportDraft': {
+      const currentDraft = await getTextbookPdfImportDraft(body.payload.draft.id);
+      if (!currentDraft) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Textbook import draft not found');
+      }
+      if (!canManageTextbookLibrary(user, currentDraft.scope, currentDraft.ownerUserId)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import draft update');
+      }
+      const importDraft = await saveTextbookPdfImportDraft(body.payload);
+      return apiSuccess({ ok: true, importDraft });
     }
 
     case 'deleteLibrary': {
@@ -159,6 +218,33 @@ async function handleJsonAction(body: TextbookLibraryJsonAction, user: AuthPubli
       return apiSuccess({ ok: true });
     }
 
+    case 'confirmImportDraft': {
+      const currentDraft = await getTextbookPdfImportDraft(body.draftId);
+      if (!currentDraft) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Textbook import draft not found');
+      }
+      if (!canManageTextbookLibrary(user, currentDraft.scope, currentDraft.ownerUserId)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import confirm');
+      }
+      const { importDraft } = await (async () => {
+        const result = await confirmTextbookPdfImportDraft(body.draftId);
+        return { importDraft: result.draft };
+      })();
+      return apiSuccess({ ok: true, importDraft });
+    }
+
+    case 'deleteImportDraft': {
+      const currentDraft = await getTextbookPdfImportDraft(body.draftId);
+      if (!currentDraft) {
+        return apiSuccess({ ok: true });
+      }
+      if (!canManageTextbookLibrary(user, currentDraft.scope, currentDraft.ownerUserId)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import delete');
+      }
+      await deleteTextbookPdfImportDraft(body.draftId);
+      return apiSuccess({ ok: true });
+    }
+
     case 'retryAttachmentProcessing': {
       const location = await findTextbookAttachment(body.attachmentId);
       if (!location) {
@@ -185,7 +271,7 @@ async function handleFormDataAction(formData: FormData, user: AuthPublicUser) {
     );
   }
 
-  if (action !== 'uploadChapterAttachment') {
+  if (action !== 'uploadChapterAttachment' && action !== 'uploadImportDraft') {
     return apiError(API_ERROR_CODES.INVALID_REQUEST, 400, 'Unsupported textbook upload action');
   }
 
@@ -194,7 +280,41 @@ async function handleFormDataAction(formData: FormData, user: AuthPublicUser) {
     return apiError(API_ERROR_CODES.MISSING_REQUIRED_FIELD, 400, 'Missing attachment file');
   }
 
-  const metadata = JSON.parse(metadataRaw) as UploadTextbookAttachmentMetadata;
+  if (action === 'uploadChapterAttachment') {
+    const metadata = JSON.parse(metadataRaw) as UploadTextbookAttachmentMetadata;
+    const view = metadata.scope === 'official' ? metadata.view ?? 'draft' : 'draft';
+    const library = await getTextbookLibrary({
+      scope: metadata.scope,
+      libraryId: metadata.libraryId,
+      view,
+    });
+    if (!library) {
+      return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Textbook library not found');
+    }
+    if (!canManageTextbookLibrary(user, library.scope, library.ownerUserId)) {
+      return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden chapter attachment upload');
+    }
+
+    const attachment = await saveTextbookAttachment({
+      scope: metadata.scope,
+      view,
+      libraryId: metadata.libraryId,
+      chapterId: metadata.chapterId,
+      ownerUserId: library.scope === 'personal' ? library.ownerUserId : undefined,
+      filename: file.name,
+      title: metadata.title,
+      mimeType: file.type || 'application/octet-stream',
+      type: inferAttachmentType(file.type || 'application/octet-stream'),
+      size: file.size,
+      description: metadata.description,
+      order: metadata.order,
+      buffer: Buffer.from(await file.arrayBuffer()),
+    });
+    after(() => runTextbookAttachmentProcessing(attachment.id));
+    return apiSuccess({ ok: true, attachmentId: attachment.id });
+  }
+
+  const metadata = JSON.parse(metadataRaw) as UploadTextbookImportDraftMetadata;
   const view = metadata.scope === 'official' ? metadata.view ?? 'draft' : 'draft';
   const library = await getTextbookLibrary({
     scope: metadata.scope,
@@ -205,26 +325,22 @@ async function handleFormDataAction(formData: FormData, user: AuthPublicUser) {
     return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Textbook library not found');
   }
   if (!canManageTextbookLibrary(user, library.scope, library.ownerUserId)) {
-    return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden chapter attachment upload');
+    return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import upload');
   }
 
-  const attachment = await saveTextbookAttachment({
+  const importDraft = await createTextbookPdfImportDraft({
     scope: metadata.scope,
     view,
     libraryId: metadata.libraryId,
-    chapterId: metadata.chapterId,
+    volumeId: metadata.volumeId,
     ownerUserId: library.scope === 'personal' ? library.ownerUserId : undefined,
     filename: file.name,
-    title: metadata.title,
-    mimeType: file.type || 'application/octet-stream',
-    type: inferAttachmentType(file.type || 'application/octet-stream'),
+    mimeType: file.type || 'application/pdf',
     size: file.size,
-    description: metadata.description,
-    order: metadata.order,
     buffer: Buffer.from(await file.arrayBuffer()),
   });
-  after(() => runTextbookAttachmentProcessing(attachment.id));
-  return apiSuccess({ ok: true, attachmentId: attachment.id });
+  after(() => runTextbookPdfImportProcessing(importDraft.id));
+  return apiSuccess({ ok: true, importDraft });
 }
 
 export async function POST(request: NextRequest) {
@@ -259,19 +375,41 @@ export async function GET(request: NextRequest) {
   try {
     await ensureTextbookLibraryStorageReady();
     const action = request.nextUrl.searchParams.get('action');
-    const attachmentId = request.nextUrl.searchParams.get('id');
+    const resourceId = request.nextUrl.searchParams.get('id');
 
-    if (action === 'downloadAttachment' && attachmentId) {
-      const location = await findTextbookAttachment(attachmentId);
+    if (action === 'downloadAttachment' && resourceId) {
+      const location = await findTextbookAttachment(resourceId);
       if (!location) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Attachment not found');
       }
       if (!canReadTextbookAttachment(auth.user, location)) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden attachment access');
       }
-      const blob = await readTextbookAttachmentBlob(attachmentId);
+      const blob = await readTextbookAttachmentBlob(resourceId);
       if (!blob) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Attachment blob not found');
+      }
+      return new NextResponse(new Uint8Array(blob.buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': blob.mimeType,
+          'Cache-Control': 'no-store',
+          'Content-Disposition': `inline; filename="${encodeURIComponent(blob.filename)}"`,
+        },
+      });
+    }
+
+    if (action === 'downloadImportDraftSource' && resourceId) {
+      const importDraft = await getTextbookPdfImportDraft(resourceId);
+      if (!importDraft) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Import draft not found');
+      }
+      if (!canReadTextbookPdfImportDraft(auth.user, importDraft)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden import draft access');
+      }
+      const blob = await readTextbookPdfImportDraftBlob(resourceId);
+      if (!blob) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Import draft blob not found');
       }
       return new NextResponse(new Uint8Array(blob.buffer), {
         status: 200,

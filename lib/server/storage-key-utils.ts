@@ -87,3 +87,17 @@ export function buildTextbookAttachmentObjectKey(
   const extension = inferFileExtension(filename, mimeType);
   return `${prefix}/textbooks/${scope}/${safeStorageId(libraryId)}/chapters/${safeStorageId(chapterId)}/attachments/${safeStorageId(attachmentId)}/${basename}${extension}`;
 }
+
+export function buildTextbookImportDraftObjectKey(
+  prefix: string,
+  scope: 'official' | 'personal',
+  libraryId: string,
+  volumeId: string,
+  draftId: string,
+  filename: string,
+  mimeType: string,
+): string {
+  const basename = sanitizeSegment(path.basename(filename, path.extname(filename)));
+  const extension = inferFileExtension(filename, mimeType);
+  return `${prefix}/textbooks/${scope}/${safeStorageId(libraryId)}/volumes/${safeStorageId(volumeId)}/imports/${safeStorageId(draftId)}/${basename}${extension}`;
+}

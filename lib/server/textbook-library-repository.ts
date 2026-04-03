@@ -15,6 +15,7 @@ import {
 import { fromJsonColumn, getStoragePgPool, toJsonb } from '@/lib/server/storage-postgres';
 import {
   buildTextbookAttachmentObjectKey,
+  buildTextbookImportDraftObjectKey,
   inferFileExtension,
   safeStorageId,
 } from '@/lib/server/storage-key-utils';
@@ -23,9 +24,12 @@ import {
   buildPublishedTextbookSeedLibraries,
 } from '@/lib/server/textbook-library-seed';
 import type {
+  CreateTextbookPdfImportDraftInput,
   ListTextbookLibrariesOptions,
+  ListTextbookPdfImportDraftsOptions,
   SaveTextbookAttachmentInput,
   SaveTextbookLibraryInput,
+  SaveTextbookPdfImportDraftInput,
   TextbookAttachmentLocation,
   TextbookAttachmentRecord,
   TextbookChapterRecord,
@@ -33,7 +37,10 @@ import type {
   TextbookLibraryScope,
   TextbookLibraryStore,
   TextbookLibraryView,
+  TextbookPdfImportDraftRecord,
+  TextbookPdfImportUnitDraft,
   UpdateTextbookAttachmentProcessingInput,
+  UpdateTextbookPdfImportProcessingInput,
 } from '@/lib/server/textbook-library-types';
 
 const log = createLogger('TextbookLibraryRepository');
@@ -52,6 +59,10 @@ function getStoreFilePath(): string {
 
 function getAttachmentDir(): string {
   return path.join(getTextbookDir(), 'attachments');
+}
+
+function getImportDraftDir(): string {
+  return path.join(getTextbookDir(), 'imports');
 }
 
 function buildTextbookCoverImageId(scope: TextbookLibraryScope, libraryId: string): string {
@@ -104,13 +115,17 @@ async function persistTextbookLibraryCover(
 
   const imageId = buildTextbookCoverImageId(library.scope, library.id);
   const extension = inferFileExtension('cover', parsed.mimeType) || '.png';
+  const blobBuffer = parsed.buffer.buffer.slice(
+    parsed.buffer.byteOffset,
+    parsed.buffer.byteOffset + parsed.buffer.byteLength,
+  ) as ArrayBuffer;
   await saveImageFileRecord({
     id: imageId,
     filename: `cover${extension}`,
     mimeType: parsed.mimeType,
     size: parsed.buffer.length,
     createdAt: library.updatedAt || library.createdAt || Date.now(),
-    blob: new Blob([parsed.buffer], { type: parsed.mimeType }),
+    blob: new Blob([blobBuffer], { type: parsed.mimeType }),
   });
   return buildTextbookCoverDownloadUrl(imageId);
 }
@@ -159,6 +174,7 @@ function createEmptyStore(): TextbookLibraryStore {
     officialDraft: [],
     officialPublished: [],
     personalLibraries: [],
+    pdfImportDrafts: [],
     updatedAt: Date.now(),
   };
 }
@@ -207,6 +223,80 @@ function normalizeAttachmentRecord(
     extractedText: attachment.extractedText,
     extractedSummary: attachment.extractedSummary,
     parseError: attachment.parseError,
+    sourcePdf: attachment.sourcePdf
+      ? {
+          importDraftId: attachment.sourcePdf.importDraftId,
+          pageStart: Number(attachment.sourcePdf.pageStart) || 1,
+          pageEnd:
+            Number(attachment.sourcePdf.pageEnd) ||
+            Number(attachment.sourcePdf.pageStart) ||
+            1,
+          confidence: Number(attachment.sourcePdf.confidence) || 0,
+          status: attachment.sourcePdf.status || 'confirmed',
+        }
+      : undefined,
+  };
+}
+
+function normalizeImportChapterDraft(
+  chapter: TextbookPdfImportUnitDraft['chapters'][number],
+  order: number,
+) {
+  const { summary: _summary, keywords: _keywords, ...rest } = chapter as TextbookPdfImportUnitDraft['chapters'][number] & {
+    summary?: unknown;
+    keywords?: unknown;
+  };
+  return {
+    ...rest,
+    title: chapter.title?.trim() || `章节 ${order + 1}`,
+    order,
+    pageStart: Math.max(1, Number(chapter.pageStart) || 1),
+    pageEnd: Math.max(1, Number(chapter.pageEnd) || Number(chapter.pageStart) || 1),
+    confidence: Math.max(0, Math.min(1, Number(chapter.confidence) || 0)),
+  };
+}
+
+function normalizeImportUnitDraft(unit: TextbookPdfImportUnitDraft, order: number): TextbookPdfImportUnitDraft {
+  return {
+    ...unit,
+    title: unit.title?.trim() || `单元 ${order + 1}`,
+    order,
+    chapters: Array.isArray(unit.chapters)
+      ? unit.chapters.map((chapter, chapterIndex) =>
+          normalizeImportChapterDraft(chapter, chapter.order ?? chapterIndex),
+        )
+      : [],
+  };
+}
+
+function normalizePdfImportDraft(draft: TextbookPdfImportDraftRecord): TextbookPdfImportDraftRecord {
+  const now = Date.now();
+  const { pageTexts: _pageTexts, ...restDraft } = draft as TextbookPdfImportDraftRecord & {
+    pageTexts?: unknown;
+  };
+  return {
+    ...restDraft,
+    ownerUserId: draft.ownerUserId?.trim() || undefined,
+    filename: draft.filename?.trim() || 'document.pdf',
+    mimeType: draft.mimeType || 'application/pdf',
+    size: Number(draft.size) || 0,
+    uploadedAt: draft.uploadedAt || now,
+    updatedAt: draft.updatedAt || draft.uploadedAt || now,
+    status: draft.status || 'uploaded',
+    storageKey: draft.storageKey,
+    objectKey: draft.objectKey,
+    parserJobId: draft.parserJobId,
+    pageCount: draft.pageCount ? Math.max(1, Number(draft.pageCount)) : undefined,
+    extractedText: draft.extractedText,
+    units: Array.isArray(draft.units)
+      ? draft.units.map((unit, unitIndex) => normalizeImportUnitDraft(unit, unit.order ?? unitIndex))
+      : [],
+    unboundPages: Array.isArray(draft.unboundPages)
+      ? [...new Set(draft.unboundPages.map((page) => Number(page)).filter((page) => page > 0))].sort(
+          (left, right) => left - right,
+        )
+      : [],
+    parseError: draft.parseError,
   };
 }
 
@@ -295,6 +385,9 @@ async function readFileStore(): Promise<TextbookLibraryStore> {
       personalLibraries: Array.isArray(parsed.personalLibraries)
         ? parsed.personalLibraries.map(normalizeLibraryRecord)
         : [],
+      pdfImportDrafts: Array.isArray(parsed.pdfImportDrafts)
+        ? parsed.pdfImportDrafts.map(normalizePdfImportDraft)
+        : [],
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     };
   } catch (error) {
@@ -319,8 +412,13 @@ async function ensurePostgresSchema(config: PostgresObjectStorageConfig): Promis
       official_draft JSONB NOT NULL,
       official_published JSONB NOT NULL,
       personal_libraries JSONB NOT NULL,
+      pdf_import_drafts JSONB NOT NULL DEFAULT '[]'::jsonb,
       updated_at BIGINT NOT NULL
     );
+  `);
+  await pool.query(`
+    ALTER TABLE textbook_library_store
+    ADD COLUMN IF NOT EXISTS pdf_import_drafts JSONB NOT NULL DEFAULT '[]'::jsonb;
   `);
   await pool.query(
     `
@@ -329,11 +427,12 @@ async function ensurePostgresSchema(config: PostgresObjectStorageConfig): Promis
         official_draft,
         official_published,
         personal_libraries,
+        pdf_import_drafts,
         updated_at
-      ) VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5)
+      ) VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, $6)
       ON CONFLICT (id) DO NOTHING
     `,
-    [STORE_ROW_ID, toJsonb([]), toJsonb([]), toJsonb([]), Date.now()],
+    [STORE_ROW_ID, toJsonb([]), toJsonb([]), toJsonb([]), toJsonb([]), Date.now()],
   );
 }
 
@@ -344,6 +443,7 @@ export async function ensureTextbookLibraryStorageReady(): Promise<void> {
       if (config.backend === 'file') {
         await ensureDir(getTextbookDir());
         await ensureDir(getAttachmentDir());
+        await ensureDir(getImportDraftDir());
         const store = await readFileStore();
         await writeFileStore(store);
         log.info('教材库存储已就绪: file');
@@ -377,7 +477,7 @@ async function readStore(): Promise<TextbookLibraryStore> {
 
   const result = await getStoragePgPool(config.databaseUrl).query(
     `
-      SELECT official_draft, official_published, personal_libraries, updated_at
+      SELECT official_draft, official_published, personal_libraries, pdf_import_drafts, updated_at
       FROM textbook_library_store
       WHERE id = $1
       LIMIT 1
@@ -397,6 +497,9 @@ async function readStore(): Promise<TextbookLibraryStore> {
     ),
     personalLibraries: fromJsonColumn<TextbookLibraryRecord[]>(row.personal_libraries).map(
       normalizeLibraryRecord,
+    ),
+    pdfImportDrafts: fromJsonColumn<TextbookPdfImportDraftRecord[]>(row.pdf_import_drafts).map(
+      normalizePdfImportDraft,
     ),
     updatedAt: Number(row.updated_at) || Date.now(),
   };
@@ -425,7 +528,8 @@ async function writeStore(store: TextbookLibraryStore): Promise<void> {
       SET official_draft = $2::jsonb,
           official_published = $3::jsonb,
           personal_libraries = $4::jsonb,
-          updated_at = $5
+          pdf_import_drafts = $5::jsonb,
+          updated_at = $6
       WHERE id = $1
     `,
     [
@@ -433,6 +537,7 @@ async function writeStore(store: TextbookLibraryStore): Promise<void> {
       toJsonb(nextStore.officialDraft),
       toJsonb(nextStore.officialPublished),
       toJsonb(nextStore.personalLibraries),
+      toJsonb(nextStore.pdfImportDrafts),
       nextStore.updatedAt,
     ],
   );
@@ -557,6 +662,13 @@ function findChapterInLibrary(
   return undefined;
 }
 
+function findVolumeInLibrary(
+  library: TextbookLibraryRecord,
+  volumeId: string,
+) {
+  return library.volumes.find((volume) => volume.id === volumeId);
+}
+
 function findAttachmentInLibraries(
   libraries: TextbookLibraryRecord[],
   source: TextbookAttachmentLocation['source'],
@@ -602,6 +714,45 @@ function buildTextbookAttachmentFilePath(
   );
 }
 
+function buildTextbookImportDraftFilePath(
+  scope: TextbookLibraryScope,
+  libraryId: string,
+  volumeId: string,
+  draftId: string,
+  filename: string,
+  mimeType: string,
+): string {
+  const extension = inferFileExtension(filename, mimeType);
+  const basename = path.basename(filename, path.extname(filename)) || 'import';
+  return path.join(
+    getImportDraftDir(),
+    scope,
+    safeStorageId(libraryId),
+    safeStorageId(volumeId),
+    safeStorageId(draftId),
+    `${basename}${extension}`,
+  );
+}
+
+function matchesImportDraftQuery(
+  draft: TextbookPdfImportDraftRecord,
+  options: ListTextbookPdfImportDraftsOptions,
+): boolean {
+  if (draft.scope !== options.scope) {
+    return false;
+  }
+  if (draft.libraryId !== options.libraryId) {
+    return false;
+  }
+  if (options.volumeId && draft.volumeId !== options.volumeId) {
+    return false;
+  }
+  if (options.ownerUserId && draft.ownerUserId && draft.ownerUserId !== options.ownerUserId) {
+    return false;
+  }
+  return true;
+}
+
 async function deleteAttachmentObjects(attachments: TextbookAttachmentRecord[]): Promise<void> {
   const config = getServerStorageConfig();
   const persistedAttachments = attachments.filter(
@@ -628,6 +779,34 @@ async function deleteAttachmentObjects(attachments: TextbookAttachmentRecord[]):
     config,
     persistedAttachments
       .map((attachment) => attachment.objectKey)
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+async function deleteImportDraftObjects(drafts: TextbookPdfImportDraftRecord[]): Promise<void> {
+  const config = getServerStorageConfig();
+  const persistedDrafts = drafts.filter((draft) => draft.storageKey || draft.objectKey);
+  if (persistedDrafts.length === 0) {
+    return;
+  }
+
+  if (config.backend === 'file') {
+    await Promise.all(
+      persistedDrafts.map(async (draft) => {
+        if (!draft.storageKey) {
+          return;
+        }
+        const filePath = path.join(config.storageRoot, draft.storageKey);
+        await fs.rm(filePath, { force: true }).catch(() => {});
+      }),
+    );
+    return;
+  }
+
+  await deleteObjectsFromStorage(
+    config,
+    persistedDrafts
+      .map((draft) => draft.objectKey ?? draft.storageKey)
       .filter((value): value is string => Boolean(value)),
   );
 }
@@ -703,8 +882,15 @@ export async function deleteTextbookLibrary(input: {
   const attachments = target.volumes.flatMap((volume) =>
     volume.units.flatMap((unit) => unit.chapters.flatMap((chapter) => chapter.attachments)),
   );
+  const relatedImportDrafts = store.pdfImportDrafts.filter(
+    (candidate) => candidate.scope === input.scope && candidate.libraryId === input.libraryId,
+  );
   await deleteAttachmentObjects(attachments);
+  await deleteImportDraftObjects(relatedImportDrafts);
   await deleteImageFileRecord(buildTextbookCoverImageId(input.scope, input.libraryId));
+  store.pdfImportDrafts = store.pdfImportDrafts.filter(
+    (candidate) => !(candidate.scope === input.scope && candidate.libraryId === input.libraryId),
+  );
   setLibrariesForView(store, input.scope, removeLibrary(libraries, input.libraryId), input.view);
   await writeStore(store);
 }
@@ -801,6 +987,7 @@ export async function saveTextbookAttachment(
     status: 'uploaded',
     storageKey,
     objectKey,
+    sourcePdf: input.sourcePdf,
   };
 
   chapter.attachments = [...chapter.attachments, attachment].sort((a, b) => a.order - b.order);
@@ -808,6 +995,286 @@ export async function saveTextbookAttachment(
   setLibrariesForView(store, input.scope, upsertLibrary(libraries, normalizeLibraryRecord(library)), input.view);
   await writeStore(store);
   return structuredClone(attachment);
+}
+
+export async function listTextbookPdfImportDrafts(
+  options: ListTextbookPdfImportDraftsOptions,
+): Promise<TextbookPdfImportDraftRecord[]> {
+  const store = await readStore();
+  return store.pdfImportDrafts
+    .filter((draft) => matchesImportDraftQuery(draft, options))
+    .map((draft) => structuredClone(draft));
+}
+
+export async function getTextbookPdfImportDraft(
+  draftId: string,
+): Promise<TextbookPdfImportDraftRecord | null> {
+  const store = await readStore();
+  const draft = store.pdfImportDrafts.find((candidate) => candidate.id === draftId) ?? null;
+  return draft ? structuredClone(draft) : null;
+}
+
+export async function createTextbookPdfImportDraft(
+  input: CreateTextbookPdfImportDraftInput,
+): Promise<TextbookPdfImportDraftRecord> {
+  const store = await readStore();
+  const libraries = getLibrariesForView(store, input.scope, input.view);
+  const library = libraries.find((candidate) => candidate.id === input.libraryId);
+  if (!library) {
+    throw new Error('TEXTBOOK_LIBRARY_NOT_FOUND');
+  }
+  if (input.scope === 'personal' && input.ownerUserId && library.ownerUserId !== input.ownerUserId) {
+    throw new Error('TEXTBOOK_LIBRARY_FORBIDDEN');
+  }
+  const volume = findVolumeInLibrary(library, input.volumeId);
+  if (!volume) {
+    throw new Error('TEXTBOOK_VOLUME_NOT_FOUND');
+  }
+
+  const draftId = randomUUID();
+  const now = Date.now();
+  let storageKey = '';
+  let objectKey: string | undefined;
+  const config = getServerStorageConfig();
+  if (config.backend === 'file') {
+    const filePath = buildTextbookImportDraftFilePath(
+      input.scope,
+      input.libraryId,
+      input.volumeId,
+      draftId,
+      input.filename,
+      input.mimeType,
+    );
+    await ensureDir(path.dirname(filePath));
+    await fs.writeFile(filePath, input.buffer);
+    storageKey = path.relative(config.storageRoot, filePath).replace(/\\/g, '/');
+  } else {
+    objectKey = buildTextbookImportDraftObjectKey(
+      config.objectKeyPrefix,
+      input.scope,
+      input.libraryId,
+      input.volumeId,
+      draftId,
+      input.filename,
+      input.mimeType,
+    );
+    await putObjectToStorage(config, objectKey, input.buffer, input.mimeType);
+    storageKey = objectKey;
+  }
+
+  const draft = normalizePdfImportDraft({
+    id: draftId,
+    scope: input.scope,
+    ownerUserId: library.scope === 'personal' ? library.ownerUserId : undefined,
+    libraryId: input.libraryId,
+    volumeId: input.volumeId,
+    filename: input.filename,
+    mimeType: input.mimeType,
+    size: input.size,
+    uploadedAt: now,
+    updatedAt: now,
+    status: 'uploaded',
+    storageKey,
+    objectKey,
+    units: [],
+    unboundPages: [],
+  });
+  store.pdfImportDrafts = [...store.pdfImportDrafts, draft];
+  await writeStore(store);
+  return structuredClone(draft);
+}
+
+export async function saveTextbookPdfImportDraft(
+  input: SaveTextbookPdfImportDraftInput,
+): Promise<TextbookPdfImportDraftRecord> {
+  const store = await readStore();
+  const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === input.draft.id);
+  if (draftIndex < 0) {
+    throw new Error('TEXTBOOK_IMPORT_DRAFT_NOT_FOUND');
+  }
+  const existing = store.pdfImportDrafts[draftIndex];
+  const nextDraft = normalizePdfImportDraft({
+    ...input.draft,
+    id: existing.id,
+    scope: existing.scope,
+    ownerUserId: existing.ownerUserId,
+    libraryId: existing.libraryId,
+    volumeId: existing.volumeId,
+    filename: existing.filename,
+    mimeType: existing.mimeType,
+    size: existing.size,
+    uploadedAt: existing.uploadedAt,
+    storageKey: existing.storageKey,
+    objectKey: existing.objectKey,
+    updatedAt: Date.now(),
+  });
+  store.pdfImportDrafts[draftIndex] = nextDraft;
+  await writeStore(store);
+  return structuredClone(nextDraft);
+}
+
+export async function updateTextbookPdfImportProcessing(
+  input: UpdateTextbookPdfImportProcessingInput,
+): Promise<TextbookPdfImportDraftRecord | null> {
+  const store = await readStore();
+  const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === input.draftId);
+  if (draftIndex < 0) {
+    return null;
+  }
+  const current = store.pdfImportDrafts[draftIndex];
+  const nextDraft = normalizePdfImportDraft({
+    ...current,
+    status: input.status,
+    parserJobId: input.parserJobId ?? current.parserJobId,
+    pageCount: input.pageCount ?? current.pageCount,
+    extractedText: input.extractedText ?? current.extractedText,
+    units: input.units ?? current.units,
+    unboundPages: input.unboundPages ?? current.unboundPages,
+    parseError: input.parseError,
+    updatedAt: Date.now(),
+  });
+  store.pdfImportDrafts[draftIndex] = nextDraft;
+  await writeStore(store);
+  return structuredClone(nextDraft);
+}
+
+export async function readTextbookPdfImportDraftBlob(draftId: string): Promise<{
+  buffer: Buffer;
+  mimeType: string;
+  filename: string;
+} | null> {
+  const draft = await getTextbookPdfImportDraft(draftId);
+  if (!draft?.storageKey) {
+    return null;
+  }
+  const config = getServerStorageConfig();
+  if (config.backend === 'file') {
+    const filePath = path.join(config.storageRoot, draft.storageKey);
+    const buffer = await fs.readFile(filePath);
+    return {
+      buffer,
+      mimeType: draft.mimeType,
+      filename: draft.filename,
+    };
+  }
+
+  const objectKey = draft.objectKey ?? draft.storageKey;
+  const buffer = await getObjectFromStorage(config, objectKey);
+  return {
+    buffer,
+    mimeType: draft.mimeType,
+    filename: draft.filename,
+  };
+}
+
+export async function deleteTextbookPdfImportDraft(draftId: string): Promise<boolean> {
+  const store = await readStore();
+  const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === draftId);
+  if (draftIndex < 0) {
+    return false;
+  }
+  const draft = store.pdfImportDrafts[draftIndex];
+  if (draft.status === 'confirmed') {
+    throw new Error('TEXTBOOK_IMPORT_DRAFT_IN_USE');
+  }
+
+  store.pdfImportDrafts = store.pdfImportDrafts.filter((candidate) => candidate.id !== draftId);
+  const config = getServerStorageConfig();
+  if (draft.storageKey) {
+    if (config.backend === 'file') {
+      const filePath = path.join(config.storageRoot, draft.storageKey);
+      await fs.rm(filePath, { force: true }).catch(() => {});
+    } else if (draft.objectKey || draft.storageKey) {
+      await deleteObjectsFromStorage(config, [draft.objectKey ?? draft.storageKey]);
+    }
+  }
+  await writeStore(store);
+  return true;
+}
+
+export async function confirmTextbookPdfImportDraft(
+  draftId: string,
+): Promise<{ draft: TextbookPdfImportDraftRecord; library: TextbookLibraryRecord }> {
+  const store = await readStore();
+  const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === draftId);
+  if (draftIndex < 0) {
+    throw new Error('TEXTBOOK_IMPORT_DRAFT_NOT_FOUND');
+  }
+
+  const draft = store.pdfImportDrafts[draftIndex];
+  const view: TextbookLibraryView = 'draft';
+  const libraries = getLibrariesForView(store, draft.scope, view);
+  const libraryIndex = libraries.findIndex((candidate) => candidate.id === draft.libraryId);
+  if (libraryIndex < 0) {
+    throw new Error('TEXTBOOK_LIBRARY_NOT_FOUND');
+  }
+
+  const library = libraries[libraryIndex];
+  const volume = findVolumeInLibrary(library, draft.volumeId);
+  if (!volume) {
+    throw new Error('TEXTBOOK_VOLUME_NOT_FOUND');
+  }
+
+  const oldAttachments = volume.units.flatMap((unit) =>
+    unit.chapters.flatMap((chapter) => chapter.attachments),
+  );
+
+  const importedUnits = draft.units.map((unit, unitIndex) => ({
+    id: `${draft.id}-unit-${unitIndex + 1}`,
+    title: unit.title,
+    order: unitIndex,
+    chapters: unit.chapters.map((chapter, chapterIndex) => {
+      const chapterId = `${draft.id}-chapter-${unitIndex + 1}-${chapterIndex + 1}`;
+      const attachmentId = `${draft.id}-attachment-${unitIndex + 1}-${chapterIndex + 1}`;
+      return {
+        id: chapterId,
+        title: chapter.title,
+        order: chapterIndex,
+        attachments: [
+          {
+            id: attachmentId,
+            filename: draft.filename,
+            title: `${chapter.title}.pdf`,
+            mimeType: draft.mimeType,
+            type: 'pdf' as const,
+            size: draft.size,
+            description: `${chapter.title}（PDF 第 ${chapter.pageStart}-${chapter.pageEnd} 页）`,
+            order: 0,
+            uploadedAt: Date.now(),
+            updatedAt: Date.now(),
+            status: 'ready' as const,
+            externalUrl: `/api/textbook-libraries?action=downloadImportDraftSource&id=${encodeURIComponent(draft.id)}#page=${chapter.pageStart}`,
+            extractedSummary: undefined,
+            sourcePdf: {
+              importDraftId: draft.id,
+              pageStart: chapter.pageStart,
+              pageEnd: chapter.pageEnd,
+              confidence: chapter.confidence,
+              status: 'confirmed' as const,
+            },
+          },
+        ],
+      };
+    }),
+  }));
+
+  volume.units = importedUnits;
+  library.updatedAt = Date.now();
+  setLibrariesForView(store, draft.scope, upsertLibrary(libraries, normalizeLibraryRecord(library)), view);
+
+  store.pdfImportDrafts[draftIndex] = normalizePdfImportDraft({
+    ...draft,
+    status: 'confirmed',
+    updatedAt: Date.now(),
+  });
+
+  await deleteAttachmentObjects(oldAttachments);
+  await writeStore(store);
+
+  return {
+    draft: structuredClone(store.pdfImportDrafts[draftIndex]),
+    library: structuredClone(normalizeLibraryRecord(library)),
+  };
 }
 
 export async function findTextbookAttachment(

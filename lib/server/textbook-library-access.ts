@@ -4,6 +4,7 @@ import type {
   TextbookLibraryRecord,
   TextbookLibraryScope,
   TextbookLibraryView,
+  TextbookPdfImportDraftRecord,
 } from '@/lib/server/textbook-library-types';
 
 export function canManageTextbookLibrary(
@@ -56,4 +57,19 @@ export function canReadTextbookAttachment(
   }
 
   return user.role === 'teacher' && location.library.ownerUserId === user.id;
+}
+
+export function canReadTextbookPdfImportDraft(
+  user: AuthPublicUser,
+  draft: TextbookPdfImportDraftRecord,
+): boolean {
+  if (draft.scope === 'official') {
+    return user.role === 'admin' || (user.role === 'teacher' && draft.status === 'confirmed');
+  }
+
+  if (user.role === 'admin') {
+    return true;
+  }
+
+  return user.role === 'teacher' && draft.ownerUserId === user.id;
 }
