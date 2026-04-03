@@ -54,6 +54,7 @@ export interface TextbookLibraryRecord {
   id: string;
   scope: TextbookLibraryScope;
   ownerUserId?: string;
+  cover?: string;
   publisher: string;
   subjectId: string;
   subjectLabel?: string;

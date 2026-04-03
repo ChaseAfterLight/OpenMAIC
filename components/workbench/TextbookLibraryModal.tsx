@@ -59,11 +59,13 @@ interface Chapter {
 export interface TextbookCard extends Textbook {
   libraryId?: string;
   editionId: string;
+  editionLabel?: string;
   volumeId: string;
   volumeLabel?: string;
   gradeId: string;
   gradeLabel?: string;
   subjectId: string;
+  subjectLabel?: string;
   units: Chapter[];
 }
 
@@ -88,6 +90,30 @@ interface TextbookLibraryModalProps {
 const DEFAULT_LOCALE: SupportedLocale = 'zh-CN';
 
 type TextbookUnits = K12ModulePresets['textbookEditions'][number]['volumes'][number]['units'];
+
+function getBookGradient(id: string) {
+  const gradients = [
+    'from-blue-500 to-cyan-400',
+    'from-indigo-500 to-purple-500',
+    'from-emerald-400 to-teal-500',
+    'from-orange-400 to-rose-400',
+    'from-slate-700 to-slate-500',
+  ];
+  const index = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return gradients[index % gradients.length];
+}
+
+function normalizeLookupValue(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function matchesLookupValue(candidate: string | undefined, filter: string) {
+  const normalizedFilter = normalizeLookupValue(filter);
+  if (!normalizedFilter) {
+    return true;
+  }
+  return normalizeLookupValue(candidate ?? '') === normalizedFilter;
+}
 
 function buildPresetChapterTree(units: TextbookUnits) {
   return units.map((unit) => ({
@@ -135,7 +161,10 @@ function buildRemoteCards(libraries: TextbookLibraryRecord[]): TextbookCard[] {
       source: library.scope,
       name: volume.label,
       edition: library.editionLabel,
+      editionLabel: library.editionLabel,
+      cover: library.cover,
       subject: library.subjectLabel ?? library.subjectId,
+      subjectLabel: library.subjectLabel,
       publisher: library.publisher,
       grade: library.gradeLabel ?? library.gradeId,
       editionId: library.editionId,
@@ -159,6 +188,26 @@ function buildRemoteCards(libraries: TextbookLibraryRecord[]): TextbookCard[] {
   );
 }
 
+function dedupeTextbookCards(cards: TextbookCard[]) {
+  const deduped = new Map<string, TextbookCard>();
+
+  for (const card of cards) {
+    const existing = deduped.get(card.id);
+    if (!existing) {
+      deduped.set(card.id, card);
+      continue;
+    }
+
+    const existingHasCover = Boolean(existing.cover);
+    const nextHasCover = Boolean(card.cover);
+    if (nextHasCover && !existingHasCover) {
+      deduped.set(card.id, card);
+    }
+  }
+
+  return [...deduped.values()];
+}
+
 function matchesQuery(card: TextbookCard, query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
@@ -166,9 +215,15 @@ function matchesQuery(card: TextbookCard, query: string) {
   const haystack = [
     card.name,
     card.edition,
+    card.editionLabel ?? '',
     card.subject,
+    card.subjectLabel ?? '',
     card.publisher ?? '',
     card.grade ?? '',
+    card.gradeLabel ?? '',
+    card.subjectId,
+    card.gradeId,
+    card.editionId,
     ...card.units.flatMap((unit) => [
       unit.title,
       ...(unit.children ?? []).flatMap((chapter) => [
@@ -188,11 +243,23 @@ export function filterTextbookCards(cards: TextbookCard[], filters: TextbookCard
   return cards.filter((book) => {
     const matchSearch = matchesQuery(book, filters.searchQuery);
     const matchSource = filters.sourceFilter === 'all' || book.source === filters.sourceFilter;
-    const matchSubject = filters.subjectFilter === '全部' || book.subject === filters.subjectFilter;
-    const matchGrade = filters.gradeFilter === '全部' || book.grade === filters.gradeFilter;
+    const matchSubject =
+      filters.subjectFilter === '全部' ||
+      matchesLookupValue(book.subject, filters.subjectFilter) ||
+      matchesLookupValue(book.subjectLabel, filters.subjectFilter) ||
+      matchesLookupValue(book.subjectId, filters.subjectFilter);
+    const matchGrade =
+      filters.gradeFilter === '全部' ||
+      matchesLookupValue(book.grade, filters.gradeFilter) ||
+      matchesLookupValue(book.gradeLabel, filters.gradeFilter) ||
+      matchesLookupValue(book.gradeId, filters.gradeFilter);
     const matchPublisher =
-      filters.publisherFilter === '全部' || book.publisher === filters.publisherFilter;
-    const matchEdition = filters.editionFilter === '全部' || book.edition === filters.editionFilter;
+      filters.publisherFilter === '全部' || matchesLookupValue(book.publisher, filters.publisherFilter);
+    const matchEdition =
+      filters.editionFilter === '全部' ||
+      matchesLookupValue(book.edition, filters.editionFilter) ||
+      matchesLookupValue(book.editionLabel, filters.editionFilter) ||
+      matchesLookupValue(book.editionId, filters.editionFilter);
     return (
       matchSearch &&
       matchSource &&
@@ -281,18 +348,25 @@ export function TextbookLibraryModal({
     async function loadRemoteLibraries() {
       setIsLoadingRemote(true);
       try {
-        const requestLibraries = async (scope: 'official' | 'personal') => {
+        const requestLibraries = async (
+          scope: 'official' | 'personal',
+          options?: { view?: 'draft' | 'published'; withFilters?: boolean },
+        ) => {
           const response = await fetch('/api/textbook-libraries', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'listLibraries',
               scope,
-              ...(scope === 'official' ? { view: 'published' } : {}),
-              filters: {
-                gradeId: value?.gradeId,
-                subjectId: value?.subjectId,
-              },
+              ...(options?.view ? { view: options.view } : {}),
+              ...(options?.withFilters ?? true
+                ? {
+                    filters: {
+                      gradeId: value?.gradeId,
+                      subjectId: value?.subjectId,
+                    },
+                  }
+                : {}),
             }),
             cache: 'no-store',
           });
@@ -307,12 +381,23 @@ export function TextbookLibraryModal({
         };
 
         const [officialLibraries, personalLibraries] = await Promise.all([
-          requestLibraries('official'),
-          requestLibraries('personal'),
+          requestLibraries('official', { view: 'published', withFilters: true }),
+          requestLibraries('personal', { withFilters: true }),
         ]);
 
+        let nextRemoteCards = buildRemoteCards([...officialLibraries, ...personalLibraries]);
+
+        if (nextRemoteCards.length === 0) {
+          const fallbackLibraries = await Promise.all([
+            requestLibraries('official', { view: 'published', withFilters: false }),
+            requestLibraries('official', { view: 'draft', withFilters: false }),
+            requestLibraries('personal', { withFilters: false }),
+          ]);
+          nextRemoteCards = buildRemoteCards(fallbackLibraries.flat());
+        }
+
         if (!cancelled) {
-          setRemoteCards(buildRemoteCards([...officialLibraries, ...personalLibraries]));
+          setRemoteCards(dedupeTextbookCards(nextRemoteCards));
         }
       } catch {
         if (!cancelled) {
@@ -395,6 +480,21 @@ export function TextbookLibraryModal({
     subjectFilter,
     textbookCards,
   ]);
+
+  useEffect(() => {
+    if (!open || !activeBook) return;
+    const freshActiveBook =
+      textbookCards.find((book) => book.id === activeBook.id) ??
+      textbookCards.find(
+        (book) =>
+          book.volumeId === activeBook.volumeId ||
+          (book.libraryId && book.libraryId === activeBook.libraryId),
+      );
+
+    if (freshActiveBook && freshActiveBook !== activeBook) {
+      setActiveBook(freshActiveBook);
+    }
+  }, [activeBook, open, textbookCards]);
 
   const handleDialogOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
@@ -639,10 +739,38 @@ export function TextbookLibraryModal({
                             : 'border-transparent hover:border-slate-300 dark:hover:border-slate-700 shadow-sm',
                         )}
                       >
-                        <div className="aspect-[3/4] w-full bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center overflow-hidden relative">
-                          <div className="flex flex-col items-center gap-2 px-3 text-center">
-                            <Book className="size-8 text-slate-300 dark:text-slate-600" />
-                            <span className="text-xs font-medium text-slate-400">{book.subject}</span>
+                        <div
+                          className={`aspect-[2/3] w-full rounded-r-2xl rounded-l-md overflow-hidden relative shadow-lg transition-all duration-500 group-hover:shadow-2xl bg-gradient-to-br ${getBookGradient(book.id)}`}
+                        >
+                          {book.cover ? (
+                            <img
+                              src={book.cover}
+                              alt={book.name}
+                              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+                            />
+                          ) : (
+                            <>
+                              <div className={`absolute inset-0 bg-gradient-to-br ${getBookGradient(book.id)}`} />
+                              <div className="absolute left-0 top-0 bottom-0 w-4 bg-gradient-to-r from-black/20 via-white/10 to-transparent z-10" />
+                              <div className="absolute left-0 top-0 bottom-0 w-[1px] bg-white/30 z-20" />
+                            </>
+                          )}
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/25 to-black/10" />
+                          <div className="absolute inset-0 p-4 flex flex-col justify-between text-white z-20">
+                            <Badge
+                              variant="secondary"
+                              className="bg-white/20 hover:bg-white/30 text-white backdrop-blur-md border-0 self-start text-[10px] shadow-sm"
+                            >
+                              {book.publisher || (locale === 'en-US' ? 'Publisher' : '出版社')}
+                            </Badge>
+                            <div className="space-y-1 mt-auto mb-4">
+                              <h4 className="font-bold text-base leading-tight drop-shadow-md line-clamp-3">
+                                {book.name}
+                              </h4>
+                              <p className="text-[11px] text-white/80 line-clamp-1">
+                                {book.subject} • {book.grade}
+                              </p>
+                            </div>
                           </div>
                           {isSelected ? (
                             <div className="absolute top-2 right-2 bg-indigo-500 text-white rounded-full p-1 shadow-sm animate-in zoom-in-50 duration-200">
@@ -651,42 +779,13 @@ export function TextbookLibraryModal({
                           ) : null}
                         </div>
 
-                        <div className="space-y-1.5 px-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <Badge
-                              variant="secondary"
-                              className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
-                            >
-                              {sourceLabel(locale, book.source)}
-                            </Badge>
-                            {book.publisher ? (
-                              <Badge
-                                variant="secondary"
-                                className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
-                              >
-                                {book.publisher}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          <h4 className="font-medium text-sm text-slate-900 dark:text-slate-100 line-clamp-2 leading-tight">
-                            {book.name}
-                          </h4>
-                          <div className="flex gap-1.5 flex-wrap">
-                            <Badge
-                              variant="secondary"
-                              className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
-                            >
-                              {book.edition}
-                            </Badge>
-                            {book.grade ? (
-                              <Badge
-                                variant="secondary"
-                                className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
-                              >
-                                {book.grade}
-                              </Badge>
-                            ) : null}
-                          </div>
+                        <div className="px-1 flex items-center gap-2 flex-wrap">
+                          <Badge
+                            variant="secondary"
+                            className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
+                          >
+                            {sourceLabel(locale, book.source)}
+                          </Badge>
                         </div>
                       </div>
                     );
@@ -708,13 +807,48 @@ export function TextbookLibraryModal({
             {activeBook ? (
               <>
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
-                  <h3 className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                    <Book className="size-4 text-indigo-500" />
-                    {locale === 'en-US' ? 'Choose chapter' : '选择章节'}
-                  </h3>
-                  <p className="text-sm text-slate-500 mt-1">
-                    {locale === 'en-US' ? 'Current' : '当前'}：{activeBook.name} ({activeBook.edition})
-                  </p>
+                  <div className="flex items-start gap-4">
+                    <div
+                      className={`w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 shadow-sm bg-gradient-to-br ${getBookGradient(activeBook.id)}`}
+                    >
+                      {activeBook.cover ? (
+                        <img
+                          src={activeBook.cover}
+                          alt={activeBook.name}
+                          className="aspect-[3/4] w-full object-cover"
+                        />
+                      ) : (
+                        <div className="aspect-[3/4] w-full flex items-center justify-center bg-gradient-to-b from-black/10 to-black/25">
+                          <Book className="size-6 text-white/90" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                        <Book className="size-4 text-indigo-500" />
+                        {locale === 'en-US' ? 'Choose chapter' : '选择章节'}
+                      </h3>
+                      <p className="text-sm text-slate-500 mt-1 line-clamp-2">
+                        {locale === 'en-US' ? 'Current' : '当前'}：{activeBook.name} ({activeBook.edition})
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {activeBook.publisher ? (
+                          <Badge
+                            variant="secondary"
+                            className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
+                          >
+                            {activeBook.publisher}
+                          </Badge>
+                        ) : null}
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
+                        >
+                          {activeBook.units.length} {locale === 'en-US' ? 'units' : '单元'}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3">
                   <div className="space-y-2">

@@ -5,6 +5,7 @@ import { createLogger } from '@/lib/logger';
 import { writeJsonFileAtomic } from '@/lib/server/classroom-storage';
 import type { PostgresObjectStorageConfig } from '@/lib/server/storage-backend-config';
 import { getServerStorageConfig } from '@/lib/server/storage-backend-config';
+import { deleteImageFileRecord, saveImageFileRecord } from '@/lib/server/storage-repository';
 import {
   deleteObjectsFromStorage,
   ensureObjectStorageBucket,
@@ -37,6 +38,7 @@ import type {
 
 const log = createLogger('TextbookLibraryRepository');
 const STORE_ROW_ID = 'default';
+const TEXTBOOK_COVER_DOWNLOAD_URL_PREFIX = '/api/storage?action=downloadImage&id=';
 
 let readyPromise: Promise<void> | null = null;
 
@@ -50,6 +52,102 @@ function getStoreFilePath(): string {
 
 function getAttachmentDir(): string {
   return path.join(getTextbookDir(), 'attachments');
+}
+
+function buildTextbookCoverImageId(scope: TextbookLibraryScope, libraryId: string): string {
+  return `textbook-cover-${scope}-${safeStorageId(libraryId)}`;
+}
+
+function buildTextbookCoverDownloadUrl(imageId: string): string {
+  return `${TEXTBOOK_COVER_DOWNLOAD_URL_PREFIX}${encodeURIComponent(imageId)}`;
+}
+
+function parseTextbookCoverDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } | null {
+  if (!dataUrl.startsWith('data:')) {
+    return null;
+  }
+
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex < 0) {
+    return null;
+  }
+
+  const header = dataUrl.slice(5, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  if (!payload) {
+    return null;
+  }
+
+  const mimeType = header.split(';')[0]?.trim() || 'image/png';
+  return {
+    mimeType,
+    buffer: Buffer.from(payload, 'base64'),
+  };
+}
+
+async function persistTextbookLibraryCover(
+  library: TextbookLibraryRecord,
+): Promise<string | undefined> {
+  const cover = library.cover?.trim();
+  if (!cover) {
+    return undefined;
+  }
+
+  if (!cover.startsWith('data:')) {
+    return cover;
+  }
+
+  const parsed = parseTextbookCoverDataUrl(cover);
+  if (!parsed) {
+    return cover;
+  }
+
+  const imageId = buildTextbookCoverImageId(library.scope, library.id);
+  const extension = inferFileExtension('cover', parsed.mimeType) || '.png';
+  await saveImageFileRecord({
+    id: imageId,
+    filename: `cover${extension}`,
+    mimeType: parsed.mimeType,
+    size: parsed.buffer.length,
+    createdAt: library.updatedAt || library.createdAt || Date.now(),
+    blob: new Blob([parsed.buffer], { type: parsed.mimeType }),
+  });
+  return buildTextbookCoverDownloadUrl(imageId);
+}
+
+async function migrateStoredLibraryCoverIfNeeded(
+  library: TextbookLibraryRecord,
+): Promise<TextbookLibraryRecord> {
+  try {
+    const cover = await persistTextbookLibraryCover(library);
+    if (cover === library.cover) {
+      return library;
+    }
+    return {
+      ...library,
+      cover,
+    };
+  } catch (error) {
+    log.warn(`教材封面迁移失败，已保留原始内容: ${library.id}`, error);
+    return library;
+  }
+}
+
+async function migrateStoredTextbookCovers(store: TextbookLibraryStore): Promise<boolean> {
+  let changed = false;
+
+  for (const collection of [store.officialDraft, store.officialPublished, store.personalLibraries]) {
+    for (let index = 0; index < collection.length; index += 1) {
+      const current = collection[index];
+      const next = await migrateStoredLibraryCoverIfNeeded(current);
+      if (next !== current) {
+        collection[index] = next;
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
 }
 
 async function ensureDir(dirPath: string): Promise<void> {
@@ -128,6 +226,8 @@ function normalizeLibraryRecord(library: TextbookLibraryRecord): TextbookLibrary
   const now = Date.now();
   return {
     ...library,
+    ownerUserId: library.ownerUserId?.trim() || undefined,
+    cover: library.cover?.trim() || undefined,
     publisher: library.publisher.trim(),
     subjectId: library.subjectId.trim(),
     subjectLabel: library.subjectLabel?.trim() || undefined,
@@ -159,6 +259,25 @@ function normalizeLibraryRecord(library: TextbookLibraryRecord): TextbookLibrary
         }))
       : [],
   };
+}
+
+function normalizeFilterText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function matchesFilterText(
+  value: string | undefined,
+  label: string | undefined,
+  filterValue: string,
+): boolean {
+  const target = normalizeFilterText(filterValue);
+  if (!target) {
+    return true;
+  }
+
+  const valueMatches = normalizeFilterText(value ?? '') === target;
+  const labelMatches = normalizeFilterText(label ?? '') === target;
+  return valueMatches || labelMatches;
 }
 
 async function readFileStore(): Promise<TextbookLibraryStore> {
@@ -249,7 +368,11 @@ async function readStore(): Promise<TextbookLibraryStore> {
   await ensureTextbookLibraryStorageReady();
   const config = getServerStorageConfig();
   if (config.backend === 'file') {
-    return seedStoreIfNeeded(await readFileStore());
+    const seededStore = await seedStoreIfNeeded(await readFileStore());
+    if (await migrateStoredTextbookCovers(seededStore)) {
+      await writeStore(seededStore);
+    }
+    return seededStore;
   }
 
   const result = await getStoragePgPool(config.databaseUrl).query(
@@ -277,7 +400,11 @@ async function readStore(): Promise<TextbookLibraryStore> {
     ),
     updatedAt: Number(row.updated_at) || Date.now(),
   };
-  return seedStoreIfNeeded(store);
+  const seededStore = await seedStoreIfNeeded(store);
+  if (await migrateStoredTextbookCovers(seededStore)) {
+    await writeStore(seededStore);
+  }
+  return seededStore;
 }
 
 async function writeStore(store: TextbookLibraryStore): Promise<void> {
@@ -312,19 +439,19 @@ async function writeStore(store: TextbookLibraryStore): Promise<void> {
 }
 
 function matchesLibraryQuery(library: TextbookLibraryRecord, options: ListTextbookLibrariesOptions): boolean {
-  if (options.ownerUserId && library.ownerUserId !== options.ownerUserId) {
+  if (options.ownerUserId && library.ownerUserId && library.ownerUserId !== options.ownerUserId) {
     return false;
   }
-  if (options.publisher && library.publisher !== options.publisher) {
+  if (options.publisher && normalizeFilterText(library.publisher) !== normalizeFilterText(options.publisher)) {
     return false;
   }
-  if (options.subjectId && library.subjectId !== options.subjectId) {
+  if (options.subjectId && !matchesFilterText(library.subjectId, library.subjectLabel, options.subjectId)) {
     return false;
   }
-  if (options.gradeId && library.gradeId !== options.gradeId) {
+  if (options.gradeId && !matchesFilterText(library.gradeId, library.gradeLabel, options.gradeId)) {
     return false;
   }
-  if (options.editionId && library.editionId !== options.editionId) {
+  if (options.editionId && !matchesFilterText(library.editionId, library.editionLabel, options.editionId)) {
     return false;
   }
   if (options.semester) {
@@ -534,14 +661,26 @@ export async function saveTextbookLibrary(
   const view = input.view ?? (scope === 'official' ? 'draft' : 'draft');
   const libraries = getLibrariesForView(store, scope, view);
   const existing = libraries.find((library) => library.id === input.library.id);
+  const libraryId = input.library.id || randomUUID();
+  const storedCover = await persistTextbookLibraryCover({
+    ...input.library,
+    id: libraryId,
+    scope,
+    createdAt: existing?.createdAt ?? input.library.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+  });
+  if (!storedCover) {
+    await deleteImageFileRecord(buildTextbookCoverImageId(scope, libraryId));
+  }
   const normalized = normalizeLibraryRecord({
     ...input.library,
-    id: input.library.id || randomUUID(),
+    id: libraryId,
     createdAt: existing?.createdAt ?? input.library.createdAt ?? Date.now(),
     updatedAt: Date.now(),
     publishedAt: scope === 'official' && view === 'published' ? input.library.publishedAt : undefined,
     publishedByUserId:
       scope === 'official' && view === 'published' ? input.library.publishedByUserId : undefined,
+    cover: storedCover,
   });
 
   setLibrariesForView(store, scope, upsertLibrary(libraries, normalized), view);
@@ -565,6 +704,7 @@ export async function deleteTextbookLibrary(input: {
     volume.units.flatMap((unit) => unit.chapters.flatMap((chapter) => chapter.attachments)),
   );
   await deleteAttachmentObjects(attachments);
+  await deleteImageFileRecord(buildTextbookCoverImageId(input.scope, input.libraryId));
   setLibrariesForView(store, input.scope, removeLibrary(libraries, input.libraryId), input.view);
   await writeStore(store);
 }
@@ -574,14 +714,23 @@ export async function publishOfficialTextbookLibraries(
 ): Promise<TextbookLibraryRecord[]> {
   const store = await readStore();
   const publishedAt = Date.now();
-  store.officialPublished = store.officialDraft.map((library) =>
-    normalizeLibraryRecord({
+  const publishedLibraries: TextbookLibraryRecord[] = [];
+  for (const library of store.officialDraft) {
+    const storedCover = await persistTextbookLibraryCover({
       ...structuredClone(library),
-      publishedAt,
-      publishedByUserId,
       updatedAt: publishedAt,
-    }),
-  );
+    });
+    publishedLibraries.push(
+      normalizeLibraryRecord({
+        ...structuredClone(library),
+        cover: storedCover,
+        publishedAt,
+        publishedByUserId,
+        updatedAt: publishedAt,
+      }),
+    );
+  }
+  store.officialPublished = publishedLibraries;
   await writeStore(store);
   return structuredClone(store.officialPublished);
 }
