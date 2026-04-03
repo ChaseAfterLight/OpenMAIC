@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { toast } from 'sonner';
 
-import { BookshelfView, type BookshelfCopy, type CreateEditionInput } from '@/components/auth/admin-textbooks-bookshelf';
+import { BookshelfView, type BookshelfCopy } from '@/components/auth/admin-textbooks-bookshelf';
 import {
   WorkspaceView,
   type TextbookSelectionPath,
@@ -17,7 +17,6 @@ import type {
   K12TextbookEdition,
   K12TextbookResource,
   K12TextbookUnit,
-  K12TextbookVolume,
 } from '@/lib/module-host/types';
 
 type CatalogResponse = {
@@ -73,16 +72,6 @@ const copy: Record<'zh-CN' | 'en-US', AdminTextbooksCopy> = {
     resources: '配套资源',
     addResource: '附加文件或链接',
     emptyResources: '暂无资源，点击右上角添加一个。',
-    allSubjects: '全部学科',
-    createDrawerTitle: '新建教材',
-    createDrawerDesc: '先填写出版社、学科和年级，系统会自动生成第一册并进入工作台。',
-    editionLabel: '教材版本名称',
-    publisherLabel: '出版社',
-    subjectLabel: '学科',
-    gradeLabel: '适用年级',
-    volumeLabelInput: '默认册次名称',
-    cancel: '取消',
-    createAndEnter: '创建并进入工作台',
     addUnit: '新建单元',
     addChapter: '新建章节',
     unitTitle: '单元名称',
@@ -134,16 +123,6 @@ const copy: Record<'zh-CN' | 'en-US', AdminTextbooksCopy> = {
     resources: 'Resources',
     addResource: 'Add files or links',
     emptyResources: 'No resources yet. Use the button above to add one.',
-    allSubjects: 'All Subjects',
-    createDrawerTitle: 'Create Textbook',
-    createDrawerDesc: 'Fill in the publisher, subject, and grade. The first volume will be created automatically.',
-    editionLabel: 'Edition Name',
-    publisherLabel: 'Publisher',
-    subjectLabel: 'Subject',
-    gradeLabel: 'Grade',
-    volumeLabelInput: 'Default Volume Name',
-    cancel: 'Cancel',
-    createAndEnter: 'Create and Enter Workspace',
     addUnit: 'New Unit',
     addChapter: 'New Chapter',
     unitTitle: 'Unit Title',
@@ -175,7 +154,7 @@ function makeChapter(locale: 'zh-CN' | 'en-US'): K12TextbookChapter {
   };
 }
 
-function createStarterEdition(locale: 'zh-CN' | 'en-US', input: CreateEditionInput): K12TextbookEdition {
+function createStarterEdition(locale: 'zh-CN' | 'en-US'): K12TextbookEdition {
   const chapter = makeChapter(locale);
   const unit: K12TextbookUnit = {
     id: createId('unit'),
@@ -185,11 +164,11 @@ function createStarterEdition(locale: 'zh-CN' | 'en-US', input: CreateEditionInp
   const volume: K12TextbookVolume = {
     id: createId('volume'),
     label: {
-      'zh-CN': input.volumeLabel,
-      'en-US': input.volumeLabel,
+      'zh-CN': '上册',
+      'en-US': 'Volume 1',
     },
-    gradeId: input.gradeId,
-    subjectId: input.subjectId,
+    gradeId: '',
+    subjectId: '',
     semester: 'upper',
     units: [unit],
   };
@@ -197,10 +176,10 @@ function createStarterEdition(locale: 'zh-CN' | 'en-US', input: CreateEditionInp
   return {
     id: createId('edition'),
     label: {
-      'zh-CN': input.editionLabel,
-      'en-US': input.editionLabel,
+      'zh-CN': '新教材版本',
+      'en-US': 'New Textbook Edition',
     },
-    publisher: input.publisher,
+    publisher: '',
     volumes: [volume],
   };
 }
@@ -390,12 +369,12 @@ export function AdminTextbooksClient() {
     });
   };
 
-  const handleAddEdition = async (data: CreateEditionInput) => {
+  const handleAddEdition = async () => {
     if (saving) return;
 
     setSaving(true);
     try {
-      const nextEdition = createStarterEdition(activeLocale, data);
+      const nextEdition = createStarterEdition(activeLocale);
       const nextEditions = [nextEdition, ...(draft?.editions ?? [])];
       const result = await persistCatalog(nextEditions);
       setDraft(result.draft ?? null);
