@@ -53,10 +53,17 @@ export interface K12StructuredInput {
   subjectId: string;
   lessonTypeId: string;
   durationMinutes: number;
+  textbookSource?: 'preset' | 'official' | 'personal';
+  textbookLibraryId?: string;
+  textbookPublisher?: string;
   textbookEditionId?: string;
+  textbookEditionLabel?: string;
   volumeId?: string;
+  volumeLabel?: string;
   unitId?: string;
+  unitTitle?: string;
   chapterId?: string;
+  chapterTitle?: string;
   chapterSummary?: string;
   chapterKeywords?: string[];
   chapterResources?: K12TextbookResource[];

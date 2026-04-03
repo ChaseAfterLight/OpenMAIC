@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildK12RequirementText,
+  buildK12TextbookResourceReferenceText,
   getDefaultK12StructuredInput,
+  mergeK12TextbookResourcesIntoReferenceText,
   resolveK12LessonPackMetadata,
   syncK12StructuredInput,
 } from '@/lib/module-host/k12';
@@ -53,7 +55,65 @@ describe('k12 textbook helpers', () => {
     expect(requirement).toContain('亿以内数的认识');
     expect(requirement).toContain('章节摘要');
     expect(requirement).toContain('章节可参考资料');
+    expect(requirement).toContain('章节参考资料');
     expect(requirement).toContain('补充资料 PDF《班级学情分析.pdf》');
+  });
+
+  it('preserves non-preset textbook snapshots and resource references', () => {
+    const input = syncK12StructuredInput(
+      {
+        ...getDefaultK12StructuredInput(presets),
+        textbookSource: 'official',
+        textbookEditionId: 'official-math-grade-4',
+        textbookEditionLabel: '学校统编版',
+        volumeId: 'school-volume-1',
+        volumeLabel: '四年级上册',
+        unitId: 'unit-a',
+        unitTitle: '第一单元',
+        chapterId: 'chapter-a',
+        chapterTitle: '校园里的大数',
+        chapterSummary: '结合校园和城市数据理解大数。',
+        chapterKeywords: ['大数', '校园数据'],
+        chapterResources: [
+          {
+            id: 'resource-1',
+            title: '教材原页',
+            type: 'pdf',
+            description: '含课本例题与练习',
+            url: '/api/textbook-libraries?action=downloadAttachment&id=resource-1',
+          },
+        ],
+      },
+      presets,
+    );
+
+    expect(input.chapterTitle).toBe('校园里的大数');
+    expect(input.chapterResources?.[0]?.title).toBe('教材原页');
+
+    const resourceReference = buildK12TextbookResourceReferenceText({
+      resources: input.chapterResources ?? [],
+      locale: 'zh-CN',
+    });
+    expect(resourceReference).toContain('教材原页');
+    expect(resourceReference).toContain('含课本例题与练习');
+  });
+
+  it('merges textbook resources into reference text without requiring an extra pdf upload', () => {
+    const merged = mergeK12TextbookResourcesIntoReferenceText({
+      baseText: '',
+      locale: 'zh-CN',
+      resources: [
+        {
+          title: '教师讲义',
+          description: '用于课堂导入和例题讲解',
+          url: '/api/textbook-libraries?action=downloadAttachment&id=teacher-note',
+        },
+      ],
+    });
+
+    expect(merged).toContain('章节参考资料');
+    expect(merged).toContain('教师讲义');
+    expect(merged).toContain('用于课堂导入和例题讲解');
   });
 
   it('resolves lesson pack metadata from textbook selection', () => {
@@ -67,7 +127,7 @@ describe('k12 textbook helpers', () => {
       grade: '四年级',
       subject: '数学',
       lessonType: '新课导入',
-      textbookEdition: '人教版小学数学',
+      textbookEdition: '人教版',
       volume: '四年级上册',
       unit: '大数的认识',
       chapter: '亿以内数的认识',

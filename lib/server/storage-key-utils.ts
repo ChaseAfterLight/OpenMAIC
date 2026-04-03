@@ -73,3 +73,17 @@ export function buildImageObjectKey(
   const extension = inferFileExtension(filename, mimeType);
   return `${prefix}/images/${safeStorageId(imageId)}/${basename}${extension}`;
 }
+
+export function buildTextbookAttachmentObjectKey(
+  prefix: string,
+  scope: 'official' | 'personal',
+  libraryId: string,
+  chapterId: string,
+  attachmentId: string,
+  filename: string,
+  mimeType: string,
+): string {
+  const basename = sanitizeSegment(path.basename(filename, path.extname(filename)));
+  const extension = inferFileExtension(filename, mimeType);
+  return `${prefix}/textbooks/${scope}/${safeStorageId(libraryId)}/chapters/${safeStorageId(chapterId)}/attachments/${safeStorageId(attachmentId)}/${basename}${extension}`;
+}

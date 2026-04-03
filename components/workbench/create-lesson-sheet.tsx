@@ -12,7 +12,11 @@ import { K12StructuredInputFields } from '@/components/k12/k12-structured-input'
 import { SettingsDialog } from '@/components/settings';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { TextbookLibraryModal, type Textbook } from '@/components/workbench/TextbookLibraryModal';
+import {
+  TextbookLibraryModal,
+  type Textbook,
+  type TextbookSelection,
+} from '@/components/workbench/TextbookLibraryModal';
 import {
   Sheet,
   SheetContent,
@@ -487,9 +491,28 @@ export function CreateLessonSheet({
         presets={k12Presets}
         value={k12Form}
         locale={activeLocale}
-        onSelect={(textbook, chapterPath, chapterTitle) => {
-          setSelectedTextbook(textbook);
-          setSelectedChapterTitle(chapterTitle || chapterPath.join(' · '));
+        onSelect={(selection: TextbookSelection) => {
+          setSelectedTextbook(selection.textbook);
+          setSelectedChapterTitle(
+            selection.chapterTitlePath.join(' · ') || selection.chapterPath.join(' · '),
+          );
+          setK12Form((current) => ({
+            ...current,
+            textbookSource: selection.textbook.source,
+            textbookLibraryId: selection.libraryId,
+            textbookPublisher: selection.publisher,
+            textbookEditionId: selection.editionId,
+            textbookEditionLabel: selection.textbook.edition,
+            volumeId: selection.volumeId,
+            volumeLabel: selection.volumeLabel,
+            unitId: selection.unitId,
+            unitTitle: selection.unitTitle,
+            chapterId: selection.chapterId,
+            chapterTitle: selection.chapterTitle,
+            chapterSummary: selection.chapterSummary,
+            chapterKeywords: selection.chapterKeywords ?? [],
+            chapterResources: selection.chapterResources ?? [],
+          }));
         }}
       />
 

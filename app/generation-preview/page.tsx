@@ -27,7 +27,12 @@ import type { Stage } from '@/lib/types/stage';
 import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
 import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
-import { buildK12LessonPackTitle, resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
+import {
+  buildK12LessonPackTitle,
+  buildK12TextbookResourceReferenceText,
+  mergeK12TextbookResourcesIntoReferenceText,
+  resolveK12LessonPackMetadata,
+} from '@/lib/module-host/k12';
 import { getModuleById } from '@/lib/module-host/runtime';
 import {
   type K12ModulePresets,
@@ -37,6 +42,39 @@ import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types'
 import { StepVisualizer } from './components/visualizers';
 
 const log = createLogger('GenerationPreview');
+
+function mergeSelectedTextbookResourcesIntoPdfText(
+  session: GenerationSessionState,
+): GenerationSessionState {
+  const resources = session.selectedTextbookResources ?? [];
+  if (resources.length === 0) {
+    return session;
+  }
+
+  const locale = session.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  const resourceReference = buildK12TextbookResourceReferenceText({
+    resources,
+    locale,
+  });
+  if (!resourceReference) {
+    return session;
+  }
+
+  const currentPdfText = session.pdfText ?? '';
+  const nextPdfText = mergeK12TextbookResourcesIntoReferenceText({
+    baseText: currentPdfText,
+    resources,
+    locale,
+  });
+  if (nextPdfText === currentPdfText) {
+    return session;
+  }
+
+  return {
+    ...session,
+    pdfText: nextPdfText,
+  };
+}
 
 function buildLessonPackMetadata(session: GenerationSessionState, locale: SupportedLocale) {
   if (session.requirements.moduleId !== 'k12' || !session.requirements.k12) {
@@ -201,7 +239,11 @@ function GenerationPreviewContent() {
     const signal = controller.signal;
 
     // Use a local mutable copy so we can update it after PDF parsing
-    let currentSession = session;
+    let currentSession = mergeSelectedTextbookResourcesIntoPdfText(session);
+    if (currentSession !== session) {
+      setSession(currentSession);
+      sessionStorage.setItem('generationSession', JSON.stringify(currentSession));
+    }
 
     setError(null);
     setCurrentStepIndex(0);
@@ -353,13 +395,13 @@ function GenerationPreviewContent() {
           }
         }
 
-        const updatedSession = {
+        const updatedSession = mergeSelectedTextbookResourcesIntoPdfText({
           ...currentSession,
           pdfText,
           pdfImages,
           imageStorageIds,
           pdfStorageKey: undefined, // Clear so we don't re-parse
-        };
+        });
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
 

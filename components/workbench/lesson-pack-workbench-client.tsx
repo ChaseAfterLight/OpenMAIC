@@ -112,6 +112,7 @@ const workbenchCopy = {
     quickPrompts: '快捷建议',
     createHint: '输入需求并生成后，将自动进入课堂编辑器。结束后也可在工作台继续管理。',
     myLibrary: '我的备课库',
+    textbookEntry: '教材库',
     adminEntry: '管理后台',
     logout: '退出登录',
   },
@@ -159,6 +160,7 @@ const workbenchCopy = {
     createHint:
       'After generation, you will automatically enter the classroom editor. You can always manage it later in the workbench.',
     myLibrary: 'My Library',
+    textbookEntry: 'Textbooks',
     adminEntry: 'Admin',
     logout: 'Logout',
   },
@@ -309,6 +311,13 @@ export function LessonPackWorkbenchClient() {
         </div>
 
         <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(authUser?.role === 'admin' ? '/admin/textbooks' : '/textbooks')}
+          >
+            {copy.textbookEntry}
+          </Button>
           {authUser?.role === 'admin' ? (
             <Button variant="outline" size="sm" onClick={() => router.push('/admin/users')}>
               {copy.adminEntry}

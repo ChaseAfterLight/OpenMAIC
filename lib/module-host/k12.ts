@@ -117,18 +117,75 @@ export function syncK12StructuredInput(
     ...input,
   };
 
+  if (base.textbookSource && base.textbookSource !== 'preset') {
+    return {
+      ...base,
+      chapterKeywords: base.chapterKeywords ?? [],
+      chapterResources: base.chapterResources ?? [],
+    };
+  }
+
   const selection = getK12TextbookSelection(presets, base);
 
   return {
     ...base,
+    textbookSource: 'preset',
+    textbookPublisher: selection.edition?.publisher,
     textbookEditionId: selection.edition?.id,
+    textbookEditionLabel: selection.edition
+      ? resolveLocalizedText(selection.edition.label, 'zh-CN')
+      : undefined,
     volumeId: selection.volume?.id,
+    volumeLabel: selection.volume ? resolveLocalizedText(selection.volume.label, 'zh-CN') : undefined,
     unitId: selection.unit?.id,
+    unitTitle: selection.unit?.title,
     chapterId: selection.chapter?.id,
+    chapterTitle: selection.chapter?.title,
     chapterSummary: selection.chapter?.summary,
     chapterKeywords: selection.chapter?.keywords ?? [],
     chapterResources: selection.chapter?.sourceDocuments ?? [],
   };
+}
+
+export function buildK12TextbookResourceReferenceText(args: {
+  resources: Array<{ title: string; description?: string; url?: string }>;
+  locale: SupportedLocale;
+}): string {
+  const { resources, locale } = args;
+  if (!resources.length) {
+    return '';
+  }
+
+  const lines = resources.map((resource, index) => {
+    const detail = [resource.description, resource.url].filter(Boolean).join('；');
+    if (locale === 'zh-CN') {
+      return `${index + 1}. ${resource.title}${detail ? `：${detail}` : ''}`;
+    }
+    return `${index + 1}. ${resource.title}${detail ? `: ${detail}` : ''}`;
+  });
+
+  return locale === 'zh-CN'
+    ? ['章节参考资料：', ...lines].join('\n')
+    : ['Chapter reference materials:', ...lines].join('\n');
+}
+
+export function mergeK12TextbookResourcesIntoReferenceText(args: {
+  baseText?: string;
+  resources: Array<{ title: string; description?: string; url?: string }>;
+  locale: SupportedLocale;
+}): string {
+  const { baseText = '', resources, locale } = args;
+  const resourceReference = buildK12TextbookResourceReferenceText({
+    resources,
+    locale,
+  });
+  if (!resourceReference) {
+    return baseText;
+  }
+  if (baseText.includes(resourceReference)) {
+    return baseText;
+  }
+  return [baseText, resourceReference].filter(Boolean).join('\n\n');
 }
 
 export function buildK12RequirementText(args: {
@@ -145,24 +202,31 @@ export function buildK12RequirementText(args: {
     getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale) ?? input.lessonTypeId;
   const editionLabel = selection.edition
     ? resolveLocalizedText(selection.edition.label, locale)
-    : undefined;
+    : input.textbookEditionLabel;
   const volumeLabel = selection.volume
     ? resolveLocalizedText(selection.volume.label, locale)
-    : undefined;
+    : input.volumeLabel;
+  const unitTitle = selection.unit?.title ?? input.unitTitle;
+  const chapterTitle = selection.chapter?.title ?? input.chapterTitle;
   const chapterKeywords = input.chapterKeywords ?? [];
   const chapterResources = input.chapterResources ?? [];
+  const chapterResourceReference = buildK12TextbookResourceReferenceText({
+    resources: chapterResources,
+    locale,
+  });
 
   if (locale === 'zh-CN') {
     return [
       `请基于当前关联教材章节设计一节${input.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
-      selection.chapter
-        ? `优先基于${editionLabel ?? '教材'}${volumeLabel ? ` ${volumeLabel}` : ''}中“${selection.unit?.title ?? '当前单元'}”的“${selection.chapter.title}”组织内容。`
+      chapterTitle
+        ? `优先基于${editionLabel ?? '教材'}${volumeLabel ? ` ${volumeLabel}` : ''}中“${unitTitle ?? '当前单元'}”的“${chapterTitle}”组织内容。`
         : '如果教材章节信息不完整，请结合老师补充要求组织内容。',
       input.chapterSummary ? `章节摘要：${input.chapterSummary}` : null,
       chapterKeywords.length > 0 ? `核心关键词：${chapterKeywords.join('、')}` : null,
       chapterResources.length > 0
         ? `章节可参考资料：${chapterResources.map((resource) => resource.title).join('；')}`
         : null,
+      chapterResourceReference || null,
       supplementaryPdfName ? `老师额外上传了补充资料 PDF《${supplementaryPdfName}》。` : null,
       '输出应适合小学课堂使用，包含导入、讲解、例题、随堂提问、练习和总结。',
       freeform ? `补充要求：${freeform}` : null,
@@ -173,14 +237,15 @@ export function buildK12RequirementText(args: {
 
   return [
     `Design a ${input.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson based on the linked textbook chapter.`,
-    selection.chapter
-      ? `Prioritize the chapter "${selection.chapter.title}" from ${editionLabel ?? 'the selected textbook'}${volumeLabel ? ` (${volumeLabel})` : ''}${selection.unit?.title ? `, unit "${selection.unit.title}"` : ''}.`
+    chapterTitle
+      ? `Prioritize the chapter "${chapterTitle}" from ${editionLabel ?? 'the selected textbook'}${volumeLabel ? ` (${volumeLabel})` : ''}${unitTitle ? `, unit "${unitTitle}"` : ''}.`
       : 'If textbook chapter data is incomplete, rely on the teacher notes and any uploaded supporting materials.',
     input.chapterSummary ? `Chapter summary: ${input.chapterSummary}` : null,
     chapterKeywords.length > 0 ? `Key concepts: ${chapterKeywords.join(', ')}` : null,
     chapterResources.length > 0
-      ? `Reference chapter resources: ${chapterResources.map((resource) => resource.title).join('; ')}`
+      ? `Reference chapter resources: ${chapterResources.map((resource) => resource.title).join('; ')}` 
       : null,
+    chapterResourceReference || null,
     supplementaryPdfName
       ? `The teacher also uploaded a supplementary PDF named "${supplementaryPdfName}".`
       : null,
@@ -204,10 +269,16 @@ export function buildK12StructuredContext(
   const lessonTypeLabel = getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale);
   const editionLabel = selection.edition
     ? resolveLocalizedText(selection.edition.label, locale)
-    : undefined;
+    : input.textbookEditionLabel;
   const volumeLabel = selection.volume
     ? resolveLocalizedText(selection.volume.label, locale)
-    : undefined;
+    : input.volumeLabel;
+  const unitTitle = selection.unit?.title ?? input.unitTitle;
+  const chapterTitle = selection.chapter?.title ?? input.chapterTitle;
+  const chapterResourceReference = buildK12TextbookResourceReferenceText({
+    resources: input.chapterResources ?? [],
+    locale,
+  });
 
   const lines =
     locale === 'zh-CN'
@@ -218,15 +289,17 @@ export function buildK12StructuredContext(
           subjectLabel ? `- 学科：${subjectLabel}` : null,
           lessonTypeLabel ? `- 课型：${lessonTypeLabel}` : null,
           input.durationMinutes ? `- 课时：${input.durationMinutes} 分钟` : null,
+          input.textbookPublisher ? `- 出版社：${input.textbookPublisher}` : null,
           editionLabel ? `- 教材版本：${editionLabel}` : null,
           volumeLabel ? `- 册次：${volumeLabel}` : null,
-          selection.unit?.title ? `- 单元：${selection.unit.title}` : null,
-          selection.chapter?.title ? `- 章节：${selection.chapter.title}` : null,
+          unitTitle ? `- 单元：${unitTitle}` : null,
+          chapterTitle ? `- 章节：${chapterTitle}` : null,
           input.chapterSummary ? `- 章节摘要：${input.chapterSummary}` : null,
           input.chapterKeywords?.length ? `- 章节关键词：${input.chapterKeywords.join('、')}` : null,
           input.chapterResources?.length
             ? `- 章节资料：${input.chapterResources.map((resource) => resource.title).join('；')}`
             : null,
+          chapterResourceReference ? `- 章节资料详情：\n${chapterResourceReference}` : null,
         ]
       : [
           '',
@@ -235,10 +308,11 @@ export function buildK12StructuredContext(
           subjectLabel ? `- Subject: ${subjectLabel}` : null,
           lessonTypeLabel ? `- Lesson type: ${lessonTypeLabel}` : null,
           input.durationMinutes ? `- Duration: ${input.durationMinutes} minutes` : null,
+          input.textbookPublisher ? `- Publisher: ${input.textbookPublisher}` : null,
           editionLabel ? `- Textbook edition: ${editionLabel}` : null,
           volumeLabel ? `- Volume: ${volumeLabel}` : null,
-          selection.unit?.title ? `- Unit: ${selection.unit.title}` : null,
-          selection.chapter?.title ? `- Chapter: ${selection.chapter.title}` : null,
+          unitTitle ? `- Unit: ${unitTitle}` : null,
+          chapterTitle ? `- Chapter: ${chapterTitle}` : null,
           input.chapterSummary ? `- Chapter summary: ${input.chapterSummary}` : null,
           input.chapterKeywords?.length
             ? `- Chapter keywords: ${input.chapterKeywords.join(', ')}`
@@ -246,6 +320,7 @@ export function buildK12StructuredContext(
           input.chapterResources?.length
             ? `- Chapter resources: ${input.chapterResources.map((resource) => resource.title).join('; ')}`
             : null,
+          chapterResourceReference ? `- Resource details:\n${chapterResourceReference}` : null,
         ];
 
   return lines.filter(Boolean).join('\n');
@@ -267,8 +342,12 @@ export function buildK12LessonPackTitle(args: {
   const selection = getK12TextbookSelection(presets, input);
   const lessonTypeLabel =
     getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale) ?? input.lessonTypeId;
-  const chapterTitle = selection.chapter?.title ? collapseWhitespace(selection.chapter.title) : '';
-  const unitTitle = selection.unit?.title ? collapseWhitespace(selection.unit.title) : '';
+  const chapterTitle = selection.chapter?.title
+    ? collapseWhitespace(selection.chapter.title)
+    : collapseWhitespace(input.chapterTitle ?? '');
+  const unitTitle = selection.unit?.title
+    ? collapseWhitespace(selection.unit.title)
+    : collapseWhitespace(input.unitTitle ?? '');
   const chapterSummary = input.chapterSummary ? collapseWhitespace(input.chapterSummary) : '';
   const mainTopic = chapterTitle || chapterSummary || unitTitle;
 
@@ -311,10 +390,10 @@ export function resolveK12LessonPackMetadata(args: {
     durationMinutes: input.durationMinutes,
     textbookEdition: selection.edition
       ? resolveLocalizedText(selection.edition.label, locale)
-      : undefined,
-    volume: selection.volume ? resolveLocalizedText(selection.volume.label, locale) : undefined,
-    unit: selection.unit?.title,
-    chapter: selection.chapter?.title,
-    chapterId: selection.chapter?.id,
+      : input.textbookEditionLabel,
+    volume: selection.volume ? resolveLocalizedText(selection.volume.label, locale) : input.volumeLabel,
+    unit: selection.unit?.title ?? input.unitTitle,
+    chapter: selection.chapter?.title ?? input.chapterTitle,
+    chapterId: selection.chapter?.id ?? input.chapterId,
   };
 }
