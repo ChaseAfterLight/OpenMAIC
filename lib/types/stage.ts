@@ -1,5 +1,6 @@
 // Stage and Scene data types
 import type { Slide } from '@/lib/types/slides';
+import type { ClassroomGenerationJobStatus } from '@/lib/types/classroom-job';
 import type { Action } from '@/lib/types/action';
 import type { PBLProjectConfig } from '@/lib/pbl/types';
 
@@ -26,6 +27,10 @@ export interface LessonPackMetadata {
   status: LessonPackStatus;
   exportStatus?: 'not_exported' | 'exported';
   lastExportedAt?: number;
+  generationJobId?: string;
+  generationJobStatus?: Exclude<ClassroomGenerationJobStatus, 'succeeded'>;
+  generationProgress?: number;
+  generationMessage?: string;
 }
 
 /**

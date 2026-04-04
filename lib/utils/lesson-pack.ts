@@ -19,6 +19,14 @@ const VALID_LESSON_PACK_STATUSES = new Set<LessonPackStatus>([
   'ready',
   'archived',
 ]);
+type GenerationStageStatus = NonNullable<LessonPackMetadata['generationJobStatus']>;
+
+const VALID_GENERATION_JOB_STATUSES = new Set<GenerationStageStatus>([
+  'queued',
+  'running',
+  'failed',
+  'expired',
+]);
 
 export const DEFAULT_LESSON_PACK_STATUS: LessonPackStatus = 'draft';
 
@@ -49,6 +57,17 @@ export function normalizeLessonPackMetadata(
       typeof metadata?.lastExportedAt === 'number' && Number.isFinite(metadata.lastExportedAt)
         ? metadata.lastExportedAt
         : undefined,
+    generationJobId: metadata?.generationJobId?.trim() || undefined,
+    generationJobStatus: VALID_GENERATION_JOB_STATUSES.has(
+      metadata?.generationJobStatus as GenerationStageStatus,
+    )
+      ? (metadata?.generationJobStatus as GenerationStageStatus)
+      : undefined,
+    generationProgress:
+      typeof metadata?.generationProgress === 'number' && Number.isFinite(metadata.generationProgress)
+        ? Math.max(0, Math.min(100, Math.round(metadata.generationProgress)))
+        : undefined,
+    generationMessage: metadata?.generationMessage?.trim() || undefined,
   };
 }
 

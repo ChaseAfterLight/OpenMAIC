@@ -29,8 +29,6 @@ import { SettingsDialog } from '@/components/settings';
 import { GenerationToolbar } from '@/components/generation/generation-toolbar';
 import { AgentBar } from '@/components/agent/agent-bar';
 import { useTheme } from '@/lib/hooks/use-theme';
-import { nanoid } from 'nanoid';
-import { storePdfBlob } from '@/lib/utils/image-storage';
 import type { UserRequirements } from '@/lib/types/generation';
 import { useSettingsStore } from '@/lib/store/settings';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
@@ -50,6 +48,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDraftCache } from '@/lib/hooks/use-draft-cache';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { getSupportedDocumentType, readTextFileContent } from '@/lib/utils/document-upload';
+import { getCurrentModelConfig } from '@/lib/utils/model-config';
+import { createClassroomGenerationJob } from '@/lib/utils/classroom-generation-job';
 
 const log = createLogger('Home');
 
@@ -317,6 +317,7 @@ function HomePage() {
     setError(null);
 
     try {
+      const settings = useSettingsStore.getState();
       const userProfile = useUserProfileStore.getState();
       const requirements: UserRequirements = {
         requirement: form.requirement,
@@ -326,60 +327,81 @@ function HomePage() {
         webSearch: form.webSearch || undefined,
       };
 
-      let pdfStorageKey: string | undefined;
-      let pdfFileName: string | undefined;
-      let pdfProviderId: string | undefined;
-      let pdfProviderConfig: { apiKey?: string; baseUrl?: string } | undefined;
-      let documentType: 'pdf' | 'text' | undefined;
+      let pdfText = '';
 
       if (form.pdfFile) {
         const detectedDocumentType = getSupportedDocumentType(form.pdfFile);
         if (!detectedDocumentType) {
           throw new Error('Unsupported file type');
         }
-        documentType = detectedDocumentType;
 
-        if (documentType === 'text') {
+        if (detectedDocumentType === 'text') {
           const content = await readTextFileContent(form.pdfFile);
           if (!content.trim()) {
             toast.error(t('upload.emptyFile'));
             return;
           }
-        }
-
-        pdfStorageKey = await storePdfBlob(form.pdfFile);
-        pdfFileName = form.pdfFile.name;
-
-        if (documentType === 'pdf') {
-          const settings = useSettingsStore.getState();
-          pdfProviderId = settings.pdfProviderId;
+          pdfText = content;
+        } else {
           const providerCfg = settings.pdfProvidersConfig?.[settings.pdfProviderId];
-          if (providerCfg) {
-            pdfProviderConfig = {
-              apiKey: providerCfg.apiKey,
-              baseUrl: providerCfg.baseUrl,
-            };
+          const parseFormData = new FormData();
+          parseFormData.append('pdf', form.pdfFile);
+          parseFormData.append('providerId', settings.pdfProviderId);
+          if (providerCfg?.apiKey?.trim()) {
+            parseFormData.append('apiKey', providerCfg.apiKey);
           }
+          if (providerCfg?.baseUrl?.trim()) {
+            parseFormData.append('baseUrl', providerCfg.baseUrl);
+          }
+
+          const parseResponse = await fetch('/api/parse-pdf', {
+            method: 'POST',
+            body: parseFormData,
+          });
+          const parseBody = (await parseResponse.json().catch(() => ({}))) as {
+            success?: boolean;
+            data?: { text?: string };
+            error?: string;
+          };
+
+          if (!parseResponse.ok || !parseBody.success) {
+            throw new Error(parseBody.error || t('generation.pdfParseFailed'));
+          }
+
+          pdfText = String(parseBody.data?.text || '');
         }
       }
 
-      const sessionState = {
-        sessionId: nanoid(),
-        requirements,
-        pdfText: '',
-        pdfImages: [],
-        imageStorageIds: [],
-        pdfStorageKey,
-        pdfFileName,
-        documentType,
-        pdfProviderId,
-        pdfProviderConfig,
-        sceneOutlines: null,
-        currentStep: 'generating' as const,
-      };
-      sessionStorage.setItem('generationSession', JSON.stringify(sessionState));
+      const modelConfig = getCurrentModelConfig();
+      const webSearchProviderConfig =
+        settings.webSearchProvidersConfig?.[settings.webSearchProviderId];
+      const createdJob = await createClassroomGenerationJob(
+        {
+          requirement: requirements.requirement,
+          requirements,
+          language: requirements.language,
+          pdfContent: pdfText ? { text: pdfText, images: [] } : undefined,
+          enableWebSearch: requirements.webSearch ?? false,
+          webSearchProviderId: settings.webSearchProviderId,
+          webSearchApiKey: webSearchProviderConfig?.apiKey || undefined,
+          baiduSubSources:
+            settings.webSearchProviderId === 'baidu' ? settings.baiduSubSources : undefined,
+          enableImageGeneration: settings.imageGenerationEnabled,
+          enableVideoGeneration: settings.videoGenerationEnabled,
+          enableTTS: settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts',
+          agentMode: settings.agentMode === 'auto' ? 'generate' : 'default',
+          modelConfig: {
+            modelString: modelConfig.modelString,
+            apiKey: modelConfig.apiKey || undefined,
+            baseUrl: modelConfig.baseUrl || undefined,
+            providerType: modelConfig.providerType,
+            requiresApiKey: modelConfig.requiresApiKey,
+          },
+        },
+        t('upload.generateFailed'),
+      );
 
-      router.push('/generation-preview');
+      router.push(createdJob.previewUrl);
     } catch (err) {
       log.error('Error preparing generation:', err);
       setError(err instanceof Error ? err.message : t('upload.generateFailed'));

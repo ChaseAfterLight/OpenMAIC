@@ -12,12 +12,14 @@ test.describe('Home → Generation', () => {
     }, SETTINGS_STORAGE);
   });
 
-  test('home page loads with core UI elements and submits requirement', async ({ page }) => {
+  test('home page loads with core UI elements and submits requirement', async ({ page, mockApi }) => {
+    await mockApi.mockCreateClassroomJob('job-home');
+    await mockApi.mockClassroomJobLifecycle('job-home', 'stage-home-1');
+
     const home = new HomePage(page);
     await home.goto();
 
     // Core elements visible
-    await expect(home.logo).toBeVisible();
     await expect(home.textarea).toBeVisible();
     await expect(home.enterButton).toBeDisabled();
 

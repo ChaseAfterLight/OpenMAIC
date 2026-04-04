@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store';
+import type { ClassroomGenerationJobSnapshot } from '@/lib/types/classroom-job';
 import type { Scene } from '@/lib/types/stage';
 import type { Slide } from '@/lib/types/slides';
 import {
@@ -73,6 +74,15 @@ const detailCopy = {
     sceneCount: '内容页',
     restoreCurrent: '恢复此版本',
     retry: '重试',
+    retryGeneration: '重新生成',
+    refreshStatus: '刷新状态',
+    generationInProgress: '后台生成中',
+    generationFailed: '生成失败',
+    generationReady: '生成完成',
+    generationHint: '你可以离开这个页面，后台任务会继续进行，详情页会自动同步最新进度。',
+    generationFailedHint: '当前任务已保留失败原因和阶段产物，可以直接在这里重试。',
+    generationReadyHint: '备课包内容已经同步到详情页和编辑器，可以继续编辑或导出。',
+    currentProgress: '当前进度',
     slideType: '演示',
     quizType: '测验',
     interactiveType: '互动',
@@ -110,6 +120,15 @@ const detailCopy = {
     sceneCount: 'scenes',
     restoreCurrent: 'Restore this version',
     retry: 'Retry',
+    retryGeneration: 'Retry Generation',
+    refreshStatus: 'Refresh Status',
+    generationInProgress: 'Generating in background',
+    generationFailed: 'Generation failed',
+    generationReady: 'Generation complete',
+    generationHint: 'You can leave this page. The background job will keep running and this detail page will stay in sync.',
+    generationFailedHint: 'The failure reason and completed artifacts were preserved, so you can retry here.',
+    generationReadyHint: 'The lesson pack is now synced into this detail view and the editor.',
+    currentProgress: 'Progress',
     slideType: 'Slide',
     quizType: 'Quiz',
     interactiveType: 'Interactive',
@@ -123,6 +142,10 @@ function formatDate(locale: 'zh-CN' | 'en-US', timestamp: number) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function canEditClassroomFromStage(stage: { lessonPack?: { status?: string } }) {
+  return stage.lessonPack?.status === 'ready';
 }
 
 export function LessonPackDetailClient() {
@@ -142,6 +165,11 @@ export function LessonPackDetailClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [versionNote, setVersionNote] = useState('');
+  const [jobSnapshot, setJobSnapshot] = useState<ClassroomGenerationJobSnapshot | null>(null);
+  const [jobLoading, setJobLoading] = useState(false);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const [retryingJob, setRetryingJob] = useState(false);
+  const [jobRefreshTick, setJobRefreshTick] = useState(0);
   const { exporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const previousExporting = useRef(false);
 
@@ -190,6 +218,76 @@ export function LessonPackDetailClient() {
     void loadPack();
   }, [loadPack]);
 
+  const generationJobId = stage?.lessonPack?.generationJobId;
+
+  useEffect(() => {
+    if (!generationJobId) {
+      setJobSnapshot(null);
+      setJobError(null);
+      setJobLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setJobLoading(true);
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/generate-classroom/${encodeURIComponent(generationJobId)}`, {
+          cache: 'no-store',
+        });
+        const body = (await response.json()) as
+          | ({ success: true } & ClassroomGenerationJobSnapshot)
+          | { success: false; error?: string };
+
+        if (cancelled) return;
+
+        if (!response.ok || !body.success) {
+          throw new Error(body.success ? copy.failed : body.error || copy.failed);
+        }
+
+        const snapshot: ClassroomGenerationJobSnapshot = {
+          jobId: body.jobId,
+          status: body.status,
+          step: body.step,
+          progress: body.progress,
+          message: body.message,
+          pollUrl: body.pollUrl,
+          pollIntervalMs: body.pollIntervalMs,
+          scenesGenerated: body.scenesGenerated,
+          totalScenes: body.totalScenes,
+          result: body.result,
+          error: body.error,
+          artifacts: body.artifacts,
+          inputSummary: body.inputSummary,
+          done: body.done,
+        };
+
+        setJobSnapshot(snapshot);
+        setJobError(null);
+        setJobLoading(false);
+
+        if (snapshot.done) {
+          await loadPack();
+          return;
+        }
+
+        timer = setTimeout(poll, snapshot.pollIntervalMs || 5000);
+      } catch (pollError) {
+        if (cancelled) return;
+        setJobLoading(false);
+        setJobError(pollError instanceof Error ? pollError.message : String(pollError));
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [copy.failed, generationJobId, jobRefreshTick, loadPack]);
+
   useEffect(() => {
     if (previousExporting.current && !exporting) {
       void loadPack();
@@ -232,6 +330,46 @@ export function LessonPackDetailClient() {
     toast.success(copy.restored);
     await loadPack();
   };
+
+  const handleRetryGeneration = async () => {
+    if (!generationJobId) return;
+    setRetryingJob(true);
+    try {
+      const response = await fetch(`/api/generate-classroom/${encodeURIComponent(generationJobId)}`, {
+        method: 'POST',
+      });
+      const body = (await response.json()) as { success: boolean; error?: string };
+      if (!response.ok || !body.success) {
+        throw new Error(body.error || copy.failed);
+      }
+      setJobError(null);
+      setJobRefreshTick((value) => value + 1);
+      await loadPack();
+    } catch (retryError) {
+      setJobError(retryError instanceof Error ? retryError.message : String(retryError));
+    } finally {
+      setRetryingJob(false);
+    }
+  };
+
+  const isGenerationPending = stage?.lessonPack?.status === 'in_progress' && !!generationJobId;
+  const isGenerationFailed =
+    stage?.lessonPack?.generationJobStatus === 'failed' ||
+    stage?.lessonPack?.generationJobStatus === 'expired';
+  const generationStatusTitle = isGenerationFailed
+    ? copy.generationFailed
+    : isGenerationPending
+      ? copy.generationInProgress
+      : jobSnapshot?.status === 'succeeded'
+        ? copy.generationReady
+        : null;
+  const generationStatusHint = isGenerationFailed
+    ? copy.generationFailedHint
+    : isGenerationPending
+      ? copy.generationHint
+      : jobSnapshot?.status === 'succeeded'
+        ? copy.generationReadyHint
+        : null;
 
   // --- 全屏 Loading 态优化 ---
   if (loading) {
@@ -313,6 +451,14 @@ export function LessonPackDetailClient() {
                   <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">
                     {stage.lessonPack?.exportStatus === 'exported' ? copy.exported : copy.notExported}
                   </Badge>
+                  {generationStatusTitle ? (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                    >
+                      {generationStatusTitle}
+                    </Badge>
+                  ) : null}
                   {stage.lessonPack?.grade ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">{stage.lessonPack.grade}</Badge> : null}
                   {stage.lessonPack?.subject ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">{stage.lessonPack.subject}</Badge> : null}
                   {stage.lessonPack?.lessonType ? <Badge className="bg-white border-slate-200 text-slate-600 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-400" variant="outline">{stage.lessonPack.lessonType}</Badge> : null}
@@ -345,6 +491,7 @@ export function LessonPackDetailClient() {
                 size="lg" 
                 className="w-full rounded-xl bg-indigo-600 text-base font-semibold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 sm:w-auto" 
                 onClick={() => router.push(`/classroom/${packId}`)}
+                disabled={!canEditClassroomFromStage(stage)}
               >
                 <ExternalLink className="mr-2 size-5" />
                 {copy.continueEdit}
@@ -362,6 +509,72 @@ export function LessonPackDetailClient() {
             </div>
           </div>
         </div>
+
+        {generationJobId ? (
+          <Card className="rounded-3xl border-white/60 bg-white/80 shadow-sm backdrop-blur-md dark:border-white/5 dark:bg-slate-900/70">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Sparkles className="size-5 text-indigo-500" />
+                {generationStatusTitle ?? copy.generationInProgress}
+              </CardTitle>
+              <CardDescription className="text-base">
+                {jobError || jobSnapshot?.error || generationStatusHint}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+                  <span>{jobSnapshot?.message || stage.lessonPack?.generationMessage || copy.currentProgress}</span>
+                  <span>{jobSnapshot?.progress ?? stage.lessonPack?.generationProgress ?? 0}%</span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500 transition-all"
+                    style={{
+                      width: `${Math.max(jobSnapshot?.progress ?? stage.lessonPack?.generationProgress ?? 4, 4)}%`,
+                    }}
+                  />
+                </div>
+                {jobSnapshot?.totalScenes ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {jobSnapshot.scenesGenerated}/{jobSnapshot.totalScenes}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                {isGenerationFailed ? (
+                  <Button onClick={() => void handleRetryGeneration()} disabled={retryingJob}>
+                    {retryingJob ? (
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 size-4" />
+                    )}
+                    {copy.retryGeneration}
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  onClick={() => setJobRefreshTick((value) => value + 1)}
+                  disabled={jobLoading}
+                >
+                  {jobLoading ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 size-4" />
+                  )}
+                  {copy.refreshStatus}
+                </Button>
+                {jobSnapshot?.status === 'succeeded' && jobSnapshot.result?.url ? (
+                  <Button variant="secondary" onClick={() => router.push(jobSnapshot.result!.url)}>
+                    <ExternalLink className="mr-2 size-4" />
+                    {copy.continueEdit}
+                  </Button>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* ================= 主体内容区：Tabs ================= */}
         <Tabs value={currentTab} onValueChange={setTab} className="flex flex-col gap-6">
@@ -577,7 +790,7 @@ export function LessonPackDetailClient() {
                       size="lg"
                       className="h-16 flex-1 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 text-lg font-semibold text-white shadow-lg shadow-indigo-500/25 hover:from-violet-700 hover:to-indigo-700 hover:shadow-xl" 
                       onClick={exportPPTX} 
-                      disabled={exporting || slideScenes.length === 0}
+                      disabled={exporting || slideScenes.length === 0 || !canEditClassroomFromStage(stage)}
                     >
                       {exporting ? <Loader2 className="mr-3 size-6 animate-spin" /> : <Presentation className="mr-3 size-6" />}
                       {copy.pptx}
@@ -587,7 +800,7 @@ export function LessonPackDetailClient() {
                       variant="outline" 
                       className="h-16 flex-1 rounded-2xl border-2 border-slate-200 bg-white text-lg font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900" 
                       onClick={exportResourcePack} 
-                      disabled={exporting || slideScenes.length === 0}
+                      disabled={exporting || slideScenes.length === 0 || !canEditClassroomFromStage(stage)}
                     >
                       {exporting ? <Loader2 className="mr-3 size-6 animate-spin" /> : <PackageOpen className="mr-3 size-6" />}
                       {copy.resourcePack}
