@@ -25,6 +25,7 @@ export interface GenerationSessionState {
   pdfProviderId?: string;
   pdfProviderConfig?: { apiKey?: string; baseUrl?: string };
   selectedTextbookResources?: K12TextbookResource[];
+  selectedTextbookResourcesParsed?: boolean;
   // Web search context
   researchContext?: string;
   researchSources?: Array<{ title: string; url: string }>;
@@ -85,7 +86,14 @@ export const ALL_STEPS: GenerationStep[] = [
 
 export const getActiveSteps = (session: GenerationSessionState | null) => {
   return ALL_STEPS.filter((step) => {
-    if (step.id === 'pdf-analysis') return !!session?.pdfStorageKey;
+    if (step.id === 'pdf-analysis') {
+      const hasSelectedPdfResources = Boolean(
+        session?.selectedTextbookResources?.some(
+          (resource) => resource.type === 'pdf' && Boolean(resource.url),
+        ),
+      );
+      return !!session?.pdfStorageKey || hasSelectedPdfResources;
+    }
     if (step.id === 'web-search') return !!session?.requirements?.webSearch;
     if (step.id === 'agent-generation') return useSettingsStore.getState().agentMode === 'auto';
     return true;

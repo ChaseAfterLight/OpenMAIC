@@ -131,9 +131,6 @@ export async function deleteStageData(stageId: string): Promise<void> {
   try {
     const storage = getStorageAdapter();
 
-    // Delete stage
-    await storage.deleteStageRecord(stageId);
-
     // Delete scenes
     await storage.deleteScenesByStageId(stageId);
 
@@ -143,6 +140,10 @@ export async function deleteStageData(stageId: string): Promise<void> {
     await storage.deleteStageOutlinesRecord(stageId);
     await storage.deleteLessonPackVersionsByStageId(stageId);
     await storage.deleteMediaFilesByStageId(stageId);
+
+    // Delete the stage row last so server-side access checks still pass
+    // for the related cleanup calls above.
+    await storage.deleteStageRecord(stageId);
 
     log.info(`Deleted stage: ${stageId}`);
   } catch (error) {

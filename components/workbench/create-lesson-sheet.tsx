@@ -237,6 +237,7 @@ export function CreateLessonSheet({
           pdfProviderId,
           pdfProviderConfig,
           selectedTextbookResources: requirements.k12?.chapterResources,
+          selectedTextbookResourcesParsed: false,
           sceneOutlines: null,
           currentStep: 'generating' as const,
         }),

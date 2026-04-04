@@ -207,7 +207,7 @@ export async function generateSceneContent(
  * rather than a base64 data URL or actual URL
  *
  * This function distinguishes between:
- * - Image IDs: "img_1", "img_2", etc. → returns true
+ * - Image IDs: "img_1", "resourceA-img_1", etc. → returns true
  * - Base64 data URLs: "data:image/..." → returns false
  * - HTTP URLs: "http://...", "https://..." → returns false
  * - Relative paths: "/images/..." → returns false
@@ -218,8 +218,8 @@ function isImageIdReference(value: string): boolean {
   if (value.startsWith('data:')) return false;
   if (value.startsWith('http://') || value.startsWith('https://')) return false;
   if (value.startsWith('/')) return false; // Relative paths
-  // Match image ID format: img_1, img_2, etc.
-  return /^img_\d+$/i.test(value);
+  // Match PDF image ID formats such as img_1 or resource-prefix-img_1.
+  return /(?:^|-)img_\d+$/i.test(value);
 }
 
 /**
@@ -257,14 +257,16 @@ function resolveImageIds(
         }
         const src = el.src as string;
 
-        // If src is an image ID reference, replace with actual URL
-        if (isImageIdReference(src)) {
-          if (!imageMapping || !imageMapping[src]) {
-            log.warn(`No mapping for image ID: ${src}, removing element`);
-            return null; // Remove invalid image elements
-          }
+        // Prefer direct lookup in imageMapping so prefixed IDs also resolve.
+        if (imageMapping && imageMapping[src]) {
           log.debug(`Resolved image ID "${src}" to base64 URL`);
           return { ...el, src: imageMapping[src] };
+        }
+
+        // If src looks like an image ID reference but no mapping exists, drop it.
+        if (isImageIdReference(src)) {
+          log.warn(`No mapping for image ID: ${src}, removing element`);
+          return null; // Remove invalid image elements
         }
 
         // Generated image reference — keep as placeholder for async backfill

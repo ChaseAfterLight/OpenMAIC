@@ -36,6 +36,7 @@ import {
 import { getModuleById } from '@/lib/module-host/runtime';
 import {
   type K12ModulePresets,
+  type K12TextbookResource,
   type SupportedLocale,
 } from '@/lib/module-host/types';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
@@ -73,6 +74,111 @@ function mergeSelectedTextbookResourcesIntoPdfText(
   return {
     ...session,
     pdfText: nextPdfText,
+  };
+}
+
+type ParsedPdfAsset = {
+  text: string;
+  images: PdfImage[];
+};
+
+function getSelectedTextbookPdfResources(
+  session: GenerationSessionState,
+): Array<K12TextbookResource & { url: string }> {
+  return (session.selectedTextbookResources ?? []).filter(
+    (resource): resource is K12TextbookResource & { url: string } =>
+      resource.type === 'pdf' && typeof resource.url === 'string' && resource.url.trim().length > 0,
+  );
+}
+
+function inferTextbookResourceFilename(resource: K12TextbookResource, index: number) {
+  const baseName = resource.title?.trim() || `textbook-resource-${index + 1}`;
+  return baseName.toLowerCase().endsWith('.pdf') ? baseName : `${baseName}.pdf`;
+}
+
+function appendPdfSectionText(args: {
+  baseText: string;
+  sectionTitle: string;
+  sectionText: string;
+  locale: SupportedLocale;
+}) {
+  const { baseText, sectionTitle, sectionText, locale } = args;
+  const normalizedText = sectionText.trim();
+  if (!normalizedText) {
+    return baseText;
+  }
+
+  const heading =
+    locale === 'zh-CN'
+      ? `教材章节 PDF《${sectionTitle}》解析内容：`
+      : `Parsed textbook chapter PDF "${sectionTitle}":`;
+
+  return [baseText, `${heading}\n${normalizedText}`].filter(Boolean).join('\n\n');
+}
+
+async function parsePdfFileToAsset(args: {
+  file: File;
+  providerId?: string;
+  providerConfig?: { apiKey?: string; baseUrl?: string };
+  signal: AbortSignal;
+}): Promise<ParsedPdfAsset> {
+  const { file, providerId, providerConfig, signal } = args;
+  const parseFormData = new FormData();
+  parseFormData.append('pdf', file);
+
+  if (providerId) {
+    parseFormData.append('providerId', providerId);
+  }
+  if (providerConfig?.apiKey?.trim()) {
+    parseFormData.append('apiKey', providerConfig.apiKey);
+  }
+  if (providerConfig?.baseUrl?.trim()) {
+    parseFormData.append('baseUrl', providerConfig.baseUrl);
+  }
+
+  const parseResponse = await fetch('/api/parse-pdf', {
+    method: 'POST',
+    body: parseFormData,
+    signal,
+  });
+
+  if (!parseResponse.ok) {
+    const errorData = await parseResponse.json().catch(() => ({}));
+    throw new Error(String(errorData.error || 'PDF parse failed'));
+  }
+
+  const parseResult = await parseResponse.json();
+  if (!parseResult.success || !parseResult.data) {
+    throw new Error('PDF parse failed');
+  }
+
+  const images = parseResult.data.metadata?.pdfImages
+    ? parseResult.data.metadata.pdfImages.map(
+        (img: {
+          id: string;
+          src?: string;
+          pageNumber?: number;
+          description?: string;
+          width?: number;
+          height?: number;
+        }) => ({
+          id: img.id,
+          src: img.src || '',
+          pageNumber: img.pageNumber || 1,
+          description: img.description,
+          width: img.width,
+          height: img.height,
+        }),
+      )
+    : (parseResult.data.images as string[]).map((src: string, i: number) => ({
+        id: `img_${i + 1}`,
+        src,
+        pageNumber: 1,
+      }));
+
+  return {
+    text: String(parseResult.data.text || ''),
+    images,
   };
 }
 
@@ -251,9 +357,14 @@ function GenerationPreviewContent() {
     try {
       // Compute active steps for this session (recomputed after session mutations)
       let activeSteps = getActiveSteps(currentSession);
+      const selectedTextbookPdfResources = getSelectedTextbookPdfResources(currentSession);
 
       // Determine if we need the document analysis step
-      const hasDocumentToAnalyze = !!currentSession.pdfStorageKey && !currentSession.pdfText;
+      const hasDeferredUploadToAnalyze = Boolean(currentSession.pdfStorageKey);
+      const hasSelectedTextbookPdfToAnalyze =
+        selectedTextbookPdfResources.length > 0 && !currentSession.selectedTextbookResourcesParsed;
+      const hasDocumentToAnalyze =
+        hasDeferredUploadToAnalyze || hasSelectedTextbookPdfToAnalyze;
       // If no stored document to analyze, skip to the next available step
       if (!hasDocumentToAnalyze) {
         const firstNonPdfIdx = activeSteps.findIndex((s) => s.id !== 'pdf-analysis');
@@ -262,138 +373,136 @@ function GenerationPreviewContent() {
 
       // Step 0: Parse deferred document if needed
       if (hasDocumentToAnalyze) {
-        const pdfBlob = await loadPdfBlob(currentSession.pdfStorageKey!);
-        if (!pdfBlob) {
-          throw new Error(t('generation.pdfLoadFailed'));
-        }
-
-        // Ensure pdfBlob is a valid Blob with content
-        if (!(pdfBlob instanceof Blob) || pdfBlob.size === 0) {
-          log.error('Invalid PDF blob:', {
-            type: typeof pdfBlob,
-            size: pdfBlob instanceof Blob ? pdfBlob.size : 'N/A',
-          });
-          throw new Error(t('generation.pdfLoadFailed'));
-        }
-
         const warnings: string[] = [];
-        let pdfText = '';
-        let pdfImages: PdfImage[] = [];
-        let imageStorageIds: string[] = [];
+        let mergedPdfText = currentSession.pdfText ?? '';
+        const collectedImages: PdfImage[] = [];
 
-        if (currentSession.documentType === 'text') {
-          log.debug('=== Generation Preview: Reading text document ===');
-          const rawText = await pdfBlob.text();
-          pdfText = rawText.substring(0, MAX_PDF_CONTENT_CHARS);
-
-          if (rawText.length > MAX_PDF_CONTENT_CHARS) {
-            warnings.push(
-              t('generation.textTruncated').replace('{n}', String(MAX_PDF_CONTENT_CHARS)),
-            );
-          }
-        } else {
-          log.debug('=== Generation Preview: Parsing PDF ===');
-
-          // Wrap as a File to guarantee multipart/form-data with correct content-type
-          const pdfFile = new File([pdfBlob], currentSession.pdfFileName || 'document.pdf', {
-            type: 'application/pdf',
-          });
-
-          const parseFormData = new FormData();
-          parseFormData.append('pdf', pdfFile);
-
-          if (currentSession.pdfProviderId) {
-            parseFormData.append('providerId', currentSession.pdfProviderId);
-          }
-          if (currentSession.pdfProviderConfig?.apiKey?.trim()) {
-            parseFormData.append('apiKey', currentSession.pdfProviderConfig.apiKey);
-          }
-          if (currentSession.pdfProviderConfig?.baseUrl?.trim()) {
-            parseFormData.append('baseUrl', currentSession.pdfProviderConfig.baseUrl);
+        if (hasDeferredUploadToAnalyze) {
+          const pdfBlob = await loadPdfBlob(currentSession.pdfStorageKey!);
+          if (!pdfBlob) {
+            throw new Error(t('generation.pdfLoadFailed'));
           }
 
-          const parseResponse = await fetch('/api/parse-pdf', {
-            method: 'POST',
-            body: parseFormData,
-            signal,
-          });
-
-          if (!parseResponse.ok) {
-            const errorData = await parseResponse.json();
-            throw new Error(errorData.error || t('generation.pdfParseFailed'));
+          if (!(pdfBlob instanceof Blob) || pdfBlob.size === 0) {
+            log.error('Invalid PDF blob:', {
+              type: typeof pdfBlob,
+              size: pdfBlob instanceof Blob ? pdfBlob.size : 'N/A',
+            });
+            throw new Error(t('generation.pdfLoadFailed'));
           }
 
-          const parseResult = await parseResponse.json();
-          if (!parseResult.success || !parseResult.data) {
-            throw new Error(t('generation.pdfParseFailed'));
-          }
+          if (currentSession.documentType === 'text') {
+            log.debug('=== Generation Preview: Reading text document ===');
+            const rawText = await pdfBlob.text();
+            mergedPdfText = [mergedPdfText, rawText].filter(Boolean).join('\n\n');
 
-          const rawPdfText = parseResult.data.text as string;
-          pdfText = rawPdfText.substring(0, MAX_PDF_CONTENT_CHARS);
+            if (rawText.length > MAX_PDF_CONTENT_CHARS) {
+              warnings.push(
+                t('generation.textTruncated').replace('{n}', String(MAX_PDF_CONTENT_CHARS)),
+              );
+            }
+          } else {
+            log.debug('=== Generation Preview: Parsing uploaded PDF ===');
+            const pdfFile = new File([pdfBlob], currentSession.pdfFileName || 'document.pdf', {
+              type: 'application/pdf',
+            });
 
-          // Create image metadata and store images
-          // Prefer metadata.pdfImages (both parsers now return this)
-          const images = parseResult.data.metadata?.pdfImages
-            ? parseResult.data.metadata.pdfImages.map(
-                (img: {
-                  id: string;
-                  src?: string;
-                  pageNumber?: number;
-                  description?: string;
-                  width?: number;
-                  height?: number;
-                }) => ({
-                  id: img.id,
-                  src: img.src || '',
-                  pageNumber: img.pageNumber || 1,
-                  description: img.description,
-                  width: img.width,
-                  height: img.height,
-                }),
-              )
-            : (parseResult.data.images as string[]).map((src: string, i: number) => ({
-                id: `img_${i + 1}`,
-                src,
-                pageNumber: 1,
-              }));
+            const parsedUploadedPdf = await parsePdfFileToAsset({
+              file: pdfFile,
+              providerId: currentSession.pdfProviderId,
+              providerConfig: currentSession.pdfProviderConfig,
+              signal,
+            });
 
-          imageStorageIds = await storeImages(images);
-
-          pdfImages = images.map(
-            (
-              img: {
-                id: string;
-                src: string;
-                pageNumber: number;
-                description?: string;
-                width?: number;
-                height?: number;
-              },
-              i: number,
-            ) => ({
-              id: img.id,
-              src: '',
-              pageNumber: img.pageNumber,
-              description: img.description,
-              width: img.width,
-              height: img.height,
-              storageId: imageStorageIds[i],
-            }),
-          );
-
-          if (rawPdfText.length > MAX_PDF_CONTENT_CHARS) {
-            warnings.push(
-              t('generation.textTruncated').replace('{n}', String(MAX_PDF_CONTENT_CHARS)),
-            );
-          }
-          if (images.length > MAX_VISION_IMAGES) {
-            warnings.push(
-              t('generation.imageTruncated')
-                .replace('{total}', String(images.length))
-                .replace('{max}', String(MAX_VISION_IMAGES)),
-            );
+            mergedPdfText = [mergedPdfText, parsedUploadedPdf.text].filter(Boolean).join('\n\n');
+            collectedImages.push(...parsedUploadedPdf.images);
           }
         }
+
+        if (hasSelectedTextbookPdfToAnalyze) {
+          log.debug('=== Generation Preview: Parsing textbook resource PDFs ===');
+
+          for (const [resourceIndex, resource] of selectedTextbookPdfResources.entries()) {
+            try {
+              const resourceResponse = await fetch(resource.url, {
+                cache: 'no-store',
+                signal,
+              });
+
+              if (!resourceResponse.ok) {
+                throw new Error(`HTTP ${resourceResponse.status}`);
+              }
+
+              const resourceBlob = await resourceResponse.blob();
+              if (!(resourceBlob instanceof Blob) || resourceBlob.size === 0) {
+                throw new Error('Empty resource blob');
+              }
+
+              const resourceFile = new File(
+                [resourceBlob],
+                inferTextbookResourceFilename(resource, resourceIndex),
+                { type: resourceBlob.type || 'application/pdf' },
+              );
+
+              const parsedResourcePdf = await parsePdfFileToAsset({
+                file: resourceFile,
+                providerId: currentSession.pdfProviderId,
+                providerConfig: currentSession.pdfProviderConfig,
+                signal,
+              });
+
+              mergedPdfText = appendPdfSectionText({
+                baseText: mergedPdfText,
+                sectionTitle: resource.title,
+                sectionText: parsedResourcePdf.text,
+                locale: currentSession.requirements.language === 'en-US' ? 'en-US' : 'zh-CN',
+              });
+
+              collectedImages.push(
+                ...parsedResourcePdf.images.map((image) => ({
+                  ...image,
+                  id: `${resource.id}-${image.id}`,
+                })),
+              );
+            } catch (resourceError) {
+              log.warn(`Failed to parse textbook resource PDF: ${resource.title}`, resourceError);
+              warnings.push(
+                currentSession.requirements.language === 'en-US'
+                  ? `Skipped textbook PDF "${resource.title}" because it could not be parsed.`
+                  : `教材 PDF《${resource.title}》解析失败，已跳过。`,
+              );
+            }
+          }
+        }
+
+        const pdfText = mergedPdfText.substring(0, MAX_PDF_CONTENT_CHARS);
+        if (mergedPdfText.length > MAX_PDF_CONTENT_CHARS) {
+          warnings.push(
+            t('generation.textTruncated').replace('{n}', String(MAX_PDF_CONTENT_CHARS)),
+          );
+        }
+
+        const boundedImages = collectedImages.slice(0, MAX_VISION_IMAGES);
+        if (collectedImages.length > MAX_VISION_IMAGES) {
+          warnings.push(
+            t('generation.imageTruncated')
+              .replace('{total}', String(collectedImages.length))
+              .replace('{max}', String(MAX_VISION_IMAGES)),
+          );
+        }
+
+        const imageStorageIds =
+          boundedImages.length > 0 ? await storeImages(boundedImages) : [];
+
+        const pdfImages = boundedImages.map((img, i) => ({
+          id: img.id,
+          src: '',
+          pageNumber: img.pageNumber,
+          description: img.description,
+          width: img.width,
+          height: img.height,
+          storageId: imageStorageIds[i],
+        }));
 
         const updatedSession = mergeSelectedTextbookResourcesIntoPdfText({
           ...currentSession,
@@ -401,6 +510,7 @@ function GenerationPreviewContent() {
           pdfImages,
           imageStorageIds,
           pdfStorageKey: undefined, // Clear so we don't re-parse
+          selectedTextbookResourcesParsed: true,
         });
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
