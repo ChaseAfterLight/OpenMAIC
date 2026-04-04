@@ -73,6 +73,9 @@ const detailCopy = {
     sceneCount: '内容页',
     restoreCurrent: '恢复此版本',
     retry: '重试',
+    slideType: '演示',
+    quizType: '测验',
+    interactiveType: '互动',
   },
   'en-US': {
     back: 'Back to workbench',
@@ -107,6 +110,9 @@ const detailCopy = {
     sceneCount: 'scenes',
     restoreCurrent: 'Restore this version',
     retry: 'Retry',
+    slideType: 'Slide',
+    quizType: 'Quiz',
+    interactiveType: 'Interactive',
   },
 } as const;
 
@@ -461,7 +467,7 @@ export function LessonPackDetailClient() {
                     {scenes.length === 0 ? (
                       <div className="col-span-full py-12 text-center text-slate-500">{copy.empty}</div>
                     ) : (
-                      scenes.map((scene, index) => <VisualSceneTile key={scene.id} index={index} scene={scene} />)
+                      scenes.map((scene, index) => <VisualSceneTile key={scene.id} index={index} scene={scene} copy={copy} packId={packId} />)
                     )}
                   </div>
                 </CardContent>
@@ -483,7 +489,7 @@ export function LessonPackDetailClient() {
                     </div>
                   ) : (
                     <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                      {practiceScenes.map((scene, index) => <VisualSceneTile key={scene.id} index={index} scene={scene} />)}
+                      {practiceScenes.map((scene, index) => <VisualSceneTile key={scene.id} index={index} scene={scene} copy={copy} packId={packId} />)}
                     </div>
                   )}
                 </CardContent>
@@ -605,11 +611,33 @@ export function LessonPackDetailClient() {
 }
 
 // 可视化幻灯片占位卡片组件
-function VisualSceneTile({ index, scene }: { index: number; scene: Scene }) {
+function VisualSceneTile({
+  index,
+  scene,
+  copy,
+  packId,
+}: {
+  index: number;
+  scene: Scene;
+  copy: { slideType: string; quizType: string; interactiveType: string };
+  packId: string;
+}) {
+  const router = useRouter();
   const isInteractive = scene.content.type === 'quiz' || scene.content.type === 'interactive';
-  
+  const typeLabel = scene.content.type === 'slide' ? copy.slideType
+    : scene.content.type === 'quiz' ? copy.quizType
+    : copy.interactiveType;
+
+  const handleClick = () => {
+    // 跳转到编辑器，并通过 URL 参数指定场景和来源
+    router.push(`/classroom/${packId}?scene=${scene.id}&fromPack=${packId}`);
+  };
+
   return (
-    <div className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md dark:border-slate-800 dark:bg-slate-950">
+    <div
+      onClick={handleClick}
+      className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md dark:border-slate-800 dark:bg-slate-950 cursor-pointer"
+    >
       {/* 模拟 16:9 画布区域 */}
       <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${isInteractive ? 'bg-gradient-to-br from-orange-50 to-rose-50 dark:from-orange-950/40 dark:to-rose-950/40' : 'bg-gradient-to-br from-slate-50 to-indigo-50/50 dark:from-slate-900 dark:to-indigo-950/30'}`}>
         <div className="absolute left-3 top-3 flex size-6 items-center justify-center rounded-full bg-white/80 text-xs font-bold text-slate-700 shadow-sm backdrop-blur dark:bg-slate-800/80 dark:text-slate-300">
@@ -621,7 +649,7 @@ function VisualSceneTile({ index, scene }: { index: number; scene: Scene }) {
           <Presentation className="size-10 text-indigo-200 dark:text-indigo-800" />
         )}
       </div>
-      
+
       {/* 信息区域 */}
       <div className="flex flex-col gap-2 p-4">
         <h3 className="line-clamp-2 min-h-[40px] text-sm font-semibold leading-relaxed text-slate-900 dark:text-slate-100">
@@ -629,7 +657,7 @@ function VisualSceneTile({ index, scene }: { index: number; scene: Scene }) {
         </h3>
         <div className="mt-auto pt-2">
           <Badge variant={isInteractive ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${isInteractive ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}`}>
-            {scene.content.type}
+            {typeLabel}
           </Badge>
         </div>
       </div>

@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
 import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
@@ -18,9 +18,19 @@ const log = createLogger('Classroom');
 
 export default function ClassroomDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const classroomId = params?.id as string;
+  const targetSceneId = searchParams.get('scene');
 
-  const { loadFromStorage } = useStageStore();
+  // 记录来源：如果是从详情页跳转，存储 packId
+  useEffect(() => {
+    const fromPack = searchParams.get('fromPack');
+    if (fromPack) {
+      sessionStorage.setItem(`classroom-${classroomId}-fromPack`, fromPack);
+    }
+  }, [classroomId, searchParams]);
+
+  const { loadFromStorage, setCurrentSceneId } = useStageStore();
   const { t } = useI18n();
   const [authReady, setAuthReady] = useState(false);
 
@@ -126,6 +136,21 @@ export default function ClassroomDetailPage() {
           .setSelectedAgentIds(
             cleanIds && cleanIds.length > 0 ? cleanIds : ['default-1', 'default-2', 'default-3'],
           );
+      }
+
+      // 如果 URL 指定了场景 ID，跳转到对应场景
+      if (targetSceneId) {
+        const state = useStageStore.getState();
+        const sceneExists = state.scenes.some((s) => s.id === targetSceneId);
+        if (sceneExists) {
+          setCurrentSceneId(targetSceneId);
+        }
+      }
+
+      // 如果没有 fromPack 参数，但存在 sessionStorage 中的记录，说明是从详情页返回
+      const storedFromPack = sessionStorage.getItem(`classroom-${classroomId}-fromPack`);
+      if (storedFromPack && !targetSceneId) {
+        // 已经在详情页上下文中，不需要额外操作
       }
     } catch (error) {
       log.error('Failed to load classroom:', error);
