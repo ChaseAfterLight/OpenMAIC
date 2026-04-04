@@ -22,8 +22,8 @@ import type {
 } from '@/lib/server/textbook-library-types';
 
 const log = createLogger('TextbookPdfImportParser');
-const DEFAULT_AI_TIMEOUT_MS = 12_000;
-const DEFAULT_AI_MAX_PAGES = 8;
+const DEFAULT_AI_TIMEOUT_MS = 30_000;
+const DEFAULT_AI_MAX_PAGES = 12;
 const LOW_CONFIDENCE_THRESHOLD = 0.72;
 
 interface Marker {
@@ -72,14 +72,12 @@ type CreateCanvasFn = (width: number, height: number) => CanvasLike;
 let cachedCreateCanvas: CreateCanvasFn | null | undefined;
 
 const aiTocExtractionSchema = z.object({
-  tocCandidatePages: z.array(z.number().int().positive()).max(5).default([]),
   pageAnchors: z
     .array(
       z.object({
         printedPage: z.number().int().positive(),
         rawPage: z.number().int().positive(),
         confidence: z.number().min(0).max(1).default(0.8),
-        source: z.literal('ai').default('ai'),
       }),
     )
     .max(16)
@@ -89,21 +87,18 @@ const aiTocExtractionSchema = z.object({
       z.object({
         title: z.string().trim().min(1),
         confidence: z.number().min(0).max(1).default(0.8),
-        source: z.literal('ai').default('ai'),
         chapters: z
           .array(
             z.object({
               title: z.string().trim().min(1),
               printedPage: z.number().int().positive().nullable().optional(),
               confidence: z.number().min(0).max(1).default(0.8),
-              source: z.literal('ai').default('ai'),
             }),
           )
           .default([]),
       }),
     )
     .default([]),
-  notes: z.array(z.string().trim().min(1)).max(12).default([]),
 });
 
 type AiTocExtraction = z.infer<typeof aiTocExtractionSchema>;
@@ -132,10 +127,6 @@ function compactWhitespace(text: string): string {
 
 function normalizeHeadingText(text: string): string {
   return compactWhitespace(text).replace(/[。！？!?；;：:、]+$/, '').trim();
-}
-
-function normalizeLooseText(text: string): string {
-  return compactWhitespace(text).toLowerCase();
 }
 
 function isLikelyStandaloneHeading(text: string): boolean {
@@ -995,10 +986,8 @@ async function runAiTocExtraction(
   const promptPayload = {
     task: '识别教材 PDF 前几页中的目录候选、目录层级、印刷页码锚点',
     outputRequirements: {
-      tocCandidatePages: '目录候选 PDF 原始页码数组',
       pageAnchors: '印刷页码 printedPage 与 PDF 原始页码 rawPage 的映射锚点',
       units: '单元列表，每个单元包含章节列表与 printedPage',
-      notes: '简短提示，最多 12 条',
     },
     sampledPages: context.sampledPages,
   };
@@ -1006,24 +995,20 @@ async function runAiTocExtraction(
   const systemPrompt =
     '你是教材 PDF 目录解析器。你只能返回合法 JSON，不要输出解释、Markdown、注释或多余文本。若信息不确定，请降低 confidence，不要编造缺失页码。';
 
-  const userPrompt = `请根据下面的教材前几页 OCR / 文本抽取结果，识别目录候选页、目录层级和页码锚点。
+  const userPrompt = `请根据下面的教材前几页 OCR / 文本抽取结果，识别目录层级和页码锚点。
 
 返回 JSON，字段严格限制为：
 {
-  "tocCandidatePages": number[],
-  "pageAnchors": [{ "printedPage": number, "rawPage": number, "confidence": number, "source": "ai" }],
+  "pageAnchors": [{ "printedPage": number, "rawPage": number, "confidence": number }],
   "units": [{
     "title": string,
     "confidence": number,
-    "source": "ai",
     "chapters": [{
       "title": string,
       "printedPage": number | null,
-      "confidence": number,
-      "source": "ai"
+      "confidence": number
     }]
-  }],
-  "notes": string[]
+  }]
 }
 
 要求：
@@ -1069,7 +1054,7 @@ ${JSON.stringify(promptPayload, null, 2)}`;
     const repaired = jsonrepair(stripCodeFences(result.text));
     const parsed = aiTocExtractionSchema.parse(JSON.parse(repaired));
     log.info(
-      `教材 PDF AI 解析成功: tocCandidates=${parsed.tocCandidatePages.length}, anchors=${parsed.pageAnchors.length}, units=${parsed.units.length}, notes=${parsed.notes.length}`,
+      `教材 PDF AI 解析成功: anchors=${parsed.pageAnchors.length}, units=${parsed.units.length}`,
     );
     return {
       extraction: parsed,
@@ -1108,98 +1093,6 @@ ${JSON.stringify(promptPayload, null, 2)}`;
       }),
     };
   }
-}
-
-function collectRuleChapters(units: TextbookPdfImportUnitDraft[]) {
-  return units.flatMap((unit) =>
-    unit.chapters.map((chapter) => ({
-      unitTitle: unit.title,
-      unitSource: unit.source,
-      chapter,
-    })),
-  );
-}
-
-function matchRuleChapter(
-  chapterTitle: string,
-  printedPage: number | undefined,
-  ruleChapters: ReturnType<typeof collectRuleChapters>,
-) {
-  const normalizedTarget = normalizeLooseText(chapterTitle);
-  let bestMatch: (typeof ruleChapters)[number] | null = null;
-  let bestScore = Number.NEGATIVE_INFINITY;
-
-  for (const ruleChapter of ruleChapters) {
-    let score = 0;
-    const normalizedRuleTitle = normalizeLooseText(ruleChapter.chapter.title);
-    if (normalizedRuleTitle === normalizedTarget) {
-      score += 10;
-    } else if (
-      normalizedRuleTitle.includes(normalizedTarget) ||
-      normalizedTarget.includes(normalizedRuleTitle)
-    ) {
-      score += 6;
-    }
-
-    if (typeof printedPage === 'number') {
-      const distance = Math.abs(ruleChapter.chapter.pageStart - printedPage);
-      score += Math.max(0, 4 - distance);
-    }
-
-    score += clampConfidence(ruleChapter.chapter.confidence) * 2;
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = ruleChapter;
-    }
-  }
-
-  return bestScore >= 4 ? bestMatch : null;
-}
-
-function mergePageAnchors(
-  aiAnchors: TextbookPdfImportPageAnchor[],
-  ruleAnchors: TextbookPdfImportPageAnchor[],
-  conflictNotes: TextbookPdfImportConflictNote[],
-): TextbookPdfImportPageAnchor[] {
-  const anchorMap = new Map<number, TextbookPdfImportPageAnchor>();
-
-  for (const ruleAnchor of ruleAnchors) {
-    anchorMap.set(ruleAnchor.printedPage, ruleAnchor);
-  }
-
-  for (const aiAnchor of aiAnchors) {
-    const existing = anchorMap.get(aiAnchor.printedPage);
-    if (!existing) {
-      anchorMap.set(aiAnchor.printedPage, aiAnchor);
-      continue;
-    }
-
-    if (existing.rawPage === aiAnchor.rawPage) {
-      anchorMap.set(aiAnchor.printedPage, {
-        printedPage: aiAnchor.printedPage,
-        rawPage: aiAnchor.rawPage,
-        confidence: clampConfidence(Math.max(existing.confidence, aiAnchor.confidence) + 0.08),
-        source: 'merged',
-      });
-      continue;
-    }
-
-    const preferred = aiAnchor.confidence >= existing.confidence ? aiAnchor : existing;
-    anchorMap.set(aiAnchor.printedPage, {
-      ...preferred,
-      source: 'merged',
-      confidence: clampConfidence(Math.max(existing.confidence, aiAnchor.confidence) - 0.05),
-    });
-    conflictNotes.push(
-      createConflictNote(
-        'structure-conflict',
-        `印刷页 ${aiAnchor.printedPage} 的页码锚点存在冲突，建议人工核对`,
-        { page: preferred.rawPage, source: 'merged' },
-      ),
-    );
-  }
-
-  return [...anchorMap.values()].sort((left, right) => left.printedPage - right.printedPage);
 }
 
 function buildPageMapper(
@@ -1245,7 +1138,7 @@ function buildPageMapper(
       return {
         rawPage: printedPage + dominantOffset,
         confidence: clampConfidence(Math.max(0.55, dominantOffsetConfidence)),
-        source: 'merged' as const,
+        source: 'ai' as const,
       };
     }
     return null;
@@ -1255,21 +1148,16 @@ function buildPageMapper(
 function buildAiProposal(
   pageTexts: string[],
   extraction: AiTocExtraction,
-  ruleProposal: ProposalResult,
   aiModel?: string,
 ): ProposalResult | null {
-  const conflictNotes = extraction.notes.map((note) =>
-    createConflictNote('mapping-low-confidence', note, { source: 'ai' }),
-  );
-  const ruleChapters = collectRuleChapters(ruleProposal.units);
   const aiAnchors: TextbookPdfImportPageAnchor[] = extraction.pageAnchors.map((anchor) => ({
     printedPage: anchor.printedPage,
     rawPage: anchor.rawPage,
     confidence: clampConfidence(anchor.confidence, 0.8),
     source: 'ai',
   }));
-  const mergedAnchors = mergePageAnchors(aiAnchors, ruleProposal.pageAnchors, conflictNotes);
-  const mapPrintedPage = buildPageMapper(mergedAnchors, conflictNotes);
+  const conflictNotes: TextbookPdfImportConflictNote[] = [];
+  const mapPrintedPage = buildPageMapper(aiAnchors, conflictNotes);
   const units: TextbookPdfImportUnitDraft[] = [];
   const pageCount = Math.max(1, pageTexts.length);
 
@@ -1277,42 +1165,15 @@ function buildAiProposal(
     const chapters: TextbookPdfImportChapterDraft[] = [];
     for (const [chapterIndex, aiChapter] of aiUnit.chapters.entries()) {
       const mapped = mapPrintedPage(aiChapter.printedPage ?? undefined);
-      const matchedRuleChapter = matchRuleChapter(
-        aiChapter.title,
-        aiChapter.printedPage ?? undefined,
-        ruleChapters,
-      );
 
-      let rawPage = mapped?.rawPage;
-      let confidence = averageConfidence([
+      const rawPage = mapped?.rawPage;
+      const confidence = averageConfidence([
         clampConfidence(aiUnit.confidence, 0.8),
         clampConfidence(aiChapter.confidence, 0.8),
         mapped?.confidence ?? 0,
       ]);
-      let source: Exclude<TextbookPdfImportProposalSource, 'fallback' | 'manual'> = 'ai';
-      let needsReview = confidence < LOW_CONFIDENCE_THRESHOLD;
-
-      if (!rawPage && matchedRuleChapter) {
-        rawPage = matchedRuleChapter.chapter.pageStart;
-        confidence = averageConfidence([
-          clampConfidence(aiUnit.confidence, 0.8),
-          clampConfidence(aiChapter.confidence, 0.8),
-          clampConfidence(matchedRuleChapter.chapter.confidence, 0.65),
-        ]);
-        source = 'merged';
-        needsReview = true;
-        conflictNotes.push(
-          createConflictNote(
-            'mapping-low-confidence',
-            `章节“${aiChapter.title}”缺少稳定页码映射，已借用规则识别结果`,
-            {
-              page: rawPage,
-              chapterTitle: aiChapter.title,
-              source: 'merged',
-            },
-          ),
-        );
-      }
+      const source: Exclude<TextbookPdfImportProposalSource, 'fallback' | 'manual'> = 'ai';
+      const needsReview = confidence < LOW_CONFIDENCE_THRESHOLD;
 
       if (!rawPage) {
         conflictNotes.push(
@@ -1368,95 +1229,8 @@ function buildAiProposal(
   return finalizeProposal(pageCount, {
     units,
     proposalSource: 'ai',
-    tocCandidatePages: [...extraction.tocCandidatePages, ...ruleProposal.tocCandidatePages],
-    pageAnchors: mergedAnchors,
-    conflictNotes,
-    aiModel,
-  });
-}
-
-function mergeProposalResults(
-  pageTexts: string[],
-  ruleProposal: ProposalResult,
-  aiProposal: ProposalResult | null,
-  aiNote?: TextbookPdfImportConflictNote,
-  aiModel?: string,
-): ProposalResult {
-  if (!aiProposal) {
-    return finalizeProposal(Math.max(1, pageTexts.length), {
-      ...ruleProposal,
-      conflictNotes: aiNote ? [...ruleProposal.conflictNotes, aiNote] : ruleProposal.conflictNotes,
-      aiModel,
-    });
-  }
-
-  const conflictNotes = [
-    ...ruleProposal.conflictNotes,
-    ...aiProposal.conflictNotes,
-    ...(aiNote ? [aiNote] : []),
-  ];
-  const ruleChapters = collectRuleChapters(ruleProposal.units);
-  const mergedUnits: TextbookPdfImportUnitDraft[] = aiProposal.units.map((unit, unitIndex) => ({
-    ...unit,
-    order: unitIndex,
-    source: unit.source === 'ai' ? 'merged' : unit.source,
-    chapters: unit.chapters.map((chapter, chapterIndex) => {
-      const matchedRuleChapter = matchRuleChapter(
-        chapter.title,
-        chapter.printedPage,
-        ruleChapters,
-      );
-      if (!matchedRuleChapter) {
-        return {
-          ...chapter,
-          order: chapterIndex,
-          source: chapter.source === 'ai' ? 'ai' : chapter.source,
-        };
-      }
-
-      const pageDistance = Math.abs(chapter.pageStart - matchedRuleChapter.chapter.pageStart);
-      const titleMatches =
-        normalizeLooseText(chapter.title) === normalizeLooseText(matchedRuleChapter.chapter.title);
-      const confidence = clampConfidence(
-        pageDistance <= 1 && titleMatches
-          ? Math.max(chapter.confidence, matchedRuleChapter.chapter.confidence) + 0.08
-          : averageConfidence([chapter.confidence, matchedRuleChapter.chapter.confidence]) - 0.06,
-      );
-      const needsReview =
-        Boolean(chapter.needsReview) ||
-        Boolean(matchedRuleChapter.chapter.needsReview) ||
-        confidence < LOW_CONFIDENCE_THRESHOLD ||
-        pageDistance > 1;
-
-      if (pageDistance > 1) {
-        conflictNotes.push(
-          createConflictNote(
-            'structure-conflict',
-            `章节“${chapter.title}”的起始页在 AI 与规则识别间存在偏差（AI=${chapter.pageStart}, 规则=${matchedRuleChapter.chapter.pageStart}）`,
-            {
-              page: chapter.pageStart,
-              chapterTitle: chapter.title,
-              source: 'merged',
-            },
-          ),
-        );
-      }
-
-      return {
-        ...chapter,
-        order: chapterIndex,
-        confidence,
-        source: 'merged',
-        needsReview,
-      };
-    }),
-  }));
-
-  return finalizeProposal(Math.max(1, pageTexts.length), {
-    units: mergedUnits,
-    proposalSource: 'merged',
-    tocCandidatePages: [...aiProposal.tocCandidatePages, ...ruleProposal.tocCandidatePages],
-    pageAnchors: mergePageAnchors(aiProposal.pageAnchors, ruleProposal.pageAnchors, conflictNotes),
+    tocCandidatePages: findTocCandidatePages(pageTexts),
+    pageAnchors: aiAnchors,
     conflictNotes,
     aiModel,
   });
@@ -1477,31 +1251,31 @@ async function buildImportProposal(
   log.info(
     `开始生成教材 PDF 导入提议: pages=${pageTexts.length}, aiEnabled=${isAiImportEnabled()}, aiModel=${process.env.TEXTBOOK_PDF_IMPORT_AI_MODEL?.trim() || process.env.DEFAULT_MODEL || 'gpt-4o-mini'}`,
   );
-  const ruleProposal = buildRuleProposal(pageTexts);
-  log.info(
-    `规则提议完成: source=${ruleProposal.proposalSource}, units=${ruleProposal.units.length}, chapters=${ruleProposal.units.reduce((total, unit) => total + unit.chapters.length, 0)}, anchors=${ruleProposal.pageAnchors.length}, lowConfidencePages=${ruleProposal.lowConfidencePages.length}`,
-  );
   const aiAttempt = await runAiTocExtraction(pageTexts, pdf);
   if (aiAttempt.note) {
     log.info(`AI 解析提示: ${aiAttempt.note.code} - ${aiAttempt.note.message}`);
   }
   const aiProposal = aiAttempt.extraction
-    ? buildAiProposal(pageTexts, aiAttempt.extraction, ruleProposal, aiAttempt.modelString)
+    ? buildAiProposal(pageTexts, aiAttempt.extraction, aiAttempt.modelString)
     : null;
   if (aiProposal) {
     log.info(
       `AI 提议完成: source=${aiProposal.proposalSource}, units=${aiProposal.units.length}, chapters=${aiProposal.units.reduce((total, unit) => total + unit.chapters.length, 0)}, anchors=${aiProposal.pageAnchors.length}, conflicts=${aiProposal.conflictNotes.length}, lowConfidencePages=${aiProposal.lowConfidencePages.length}`,
     );
+    return aiProposal;
   }
-  const merged = mergeProposalResults(
-    pageTexts,
-    ruleProposal,
-    aiProposal,
-    aiAttempt.note,
-    aiAttempt.modelString,
-  );
+
+  const ruleProposal = buildRuleProposal(pageTexts);
   log.info(
-    `教材 PDF 导入提议已合并: source=${merged.proposalSource}, confidence=${Math.round(merged.proposalConfidence * 100)}%, units=${merged.units.length}, chapters=${merged.units.reduce((total, unit) => total + unit.chapters.length, 0)}, unboundPages=${merged.unboundPages.length}, anchors=${merged.pageAnchors.length}, conflicts=${merged.conflictNotes.length}, lowConfidencePages=${merged.lowConfidencePages.length}`,
+    `规则回退完成: source=${ruleProposal.proposalSource}, units=${ruleProposal.units.length}, chapters=${ruleProposal.units.reduce((total, unit) => total + unit.chapters.length, 0)}, anchors=${ruleProposal.pageAnchors.length}, lowConfidencePages=${ruleProposal.lowConfidencePages.length}`,
+  );
+  const merged = finalizeProposal(Math.max(1, pageTexts.length), {
+    ...ruleProposal,
+    conflictNotes: aiAttempt.note ? [...ruleProposal.conflictNotes, aiAttempt.note] : ruleProposal.conflictNotes,
+    aiModel: aiAttempt.modelString,
+  });
+  log.info(
+    `教材 PDF 导入提议已回退: source=${merged.proposalSource}, confidence=${Math.round(merged.proposalConfidence * 100)}%, units=${merged.units.length}, chapters=${merged.units.reduce((total, unit) => total + unit.chapters.length, 0)}, unboundPages=${merged.unboundPages.length}, anchors=${merged.pageAnchors.length}, conflicts=${merged.conflictNotes.length}, lowConfidencePages=${merged.lowConfidencePages.length}`,
   );
   log.debug('教材 PDF 导入提议详情', {
     tocCandidatePages: merged.tocCandidatePages,
@@ -1593,5 +1367,4 @@ export const __testables = {
   buildRuleProposal,
   buildImportProposal,
   buildProposal: buildRuleProposal,
-  mergeProposalResults,
 };

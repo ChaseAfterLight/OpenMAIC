@@ -4,6 +4,7 @@ import { requireApiRole } from '@/lib/server/auth-guards';
 import type { AuthPublicUser } from '@/lib/server/auth-types';
 import { runTextbookAttachmentProcessing } from '@/lib/server/textbook-library-parser';
 import { runTextbookPdfImportProcessing } from '@/lib/server/textbook-pdf-import-parser';
+import { getDocumentProxy } from 'unpdf';
 import {
   canManageTextbookLibrary,
   canReadTextbookAttachment,
@@ -37,6 +38,15 @@ import {
   updateTextbookAttachmentProcessing,
 } from '@/lib/server/textbook-library-repository';
 
+type CanvasLike = {
+  getContext: (contextId: '2d') => object;
+  toBuffer: (type?: string) => Buffer;
+};
+
+type CreateCanvasFn = (width: number, height: number) => CanvasLike;
+
+let cachedCreateCanvas: CreateCanvasFn | null | undefined;
+
 function inferAttachmentType(mimeType: string): TextbookAttachmentType {
   if (mimeType === 'application/pdf') return 'pdf';
   if (
@@ -49,6 +59,44 @@ function inferAttachmentType(mimeType: string): TextbookAttachmentType {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType === 'text/html') return 'html';
   return 'other';
+}
+
+async function getCreateCanvas(): Promise<CreateCanvasFn | null> {
+  if (cachedCreateCanvas !== undefined) {
+    return cachedCreateCanvas;
+  }
+
+  try {
+    const canvasModule = (await import('@napi-rs/canvas')) as {
+      createCanvas?: CreateCanvasFn;
+    };
+    cachedCreateCanvas =
+      typeof canvasModule.createCanvas === 'function' ? canvasModule.createCanvas : null;
+    return cachedCreateCanvas;
+  } catch {
+    cachedCreateCanvas = null;
+    return null;
+  }
+}
+
+async function renderPdfPageAsPng(
+  pdfBuffer: Buffer,
+  pageNumber: number,
+  scale = 1.6,
+): Promise<Buffer> {
+  const createCanvas = await getCreateCanvas();
+  if (!createCanvas) {
+    throw new Error('PDF page rendering is unavailable');
+  }
+
+  const pdf = await getDocumentProxy(new Uint8Array(pdfBuffer));
+  const clampedPageNumber = Math.max(1, Math.min(pdf.numPages, pageNumber));
+  const page = await pdf.getPage(clampedPageNumber);
+  const viewport = page.getViewport({ scale });
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+  const context = canvas.getContext('2d');
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas.toBuffer('image/png');
 }
 
 function resolveRequestedView(user: AuthPublicUser, requestedView?: 'draft' | 'published') {
@@ -440,6 +488,41 @@ export async function GET(request: NextRequest) {
           'Content-Type': blob.mimeType,
           'Cache-Control': 'no-store',
           'Content-Disposition': `inline; filename="${encodeURIComponent(blob.filename)}"`,
+        },
+      });
+    }
+
+    if (action === 'downloadImportDraftPage' && resourceId) {
+      const importDraft = await getTextbookPdfImportDraft(resourceId);
+      if (!importDraft) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Import draft not found');
+      }
+      if (!canReadTextbookPdfImportDraft(auth.user, importDraft)) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden import draft access');
+      }
+
+      const pageNumber = Number(request.nextUrl.searchParams.get('page'));
+      if (!Number.isFinite(pageNumber) || pageNumber < 1) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid page number');
+      }
+
+      const scaleParam = Number(request.nextUrl.searchParams.get('scale'));
+      const scale = Number.isFinite(scaleParam) && scaleParam > 0
+        ? Math.min(3, Math.max(0.75, scaleParam))
+        : 1.6;
+
+      const blob = await readTextbookPdfImportDraftBlob(resourceId);
+      if (!blob) {
+        return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Import draft blob not found');
+      }
+
+      const pngBuffer = await renderPdfPageAsPng(blob.buffer, Math.floor(pageNumber), scale);
+      return new NextResponse(new Uint8Array(pngBuffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'image/png',
+          'Cache-Control': 'no-store',
+          'Content-Disposition': `inline; filename="${encodeURIComponent(importDraft.filename)}-page-${Math.floor(pageNumber)}.png"`,
         },
       });
     }
