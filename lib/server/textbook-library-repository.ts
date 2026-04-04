@@ -1308,7 +1308,7 @@ export async function confirmTextbookPdfImportDraft(
             uploadedAt: Date.now(),
             updatedAt: Date.now(),
             status: 'ready' as const,
-            externalUrl: `/api/textbook-libraries?action=downloadImportDraftSource&id=${encodeURIComponent(draft.id)}#page=${chapter.pageStart}`,
+            externalUrl: `/api/textbook-libraries?action=downloadAttachment&id=${encodeURIComponent(attachmentId)}`,
             extractedSummary: undefined,
             sourcePdf: {
               importDraftId: draft.id,

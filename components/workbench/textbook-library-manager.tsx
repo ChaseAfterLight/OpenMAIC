@@ -47,6 +47,9 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 function getAttachmentDownloadUrl(attachment: TextbookChapterRecord['attachments'][number]) {
+  if (attachment.sourcePdf?.importDraftId) {
+    return `/api/textbook-libraries?action=downloadAttachment&id=${encodeURIComponent(attachment.id)}`;
+  }
   return (
     attachment.externalUrl ??
     `/api/textbook-libraries?action=downloadAttachment&id=${encodeURIComponent(attachment.id)}`
@@ -1076,7 +1079,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                                 size="icon"
                                 variant="ghost"
                                 className="h-6 w-6 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 -mr-1 -mt-1"
-                                onClick={() => void downloadTextbookFile(getAttachmentDownloadUrl(att), att.filename)}
+                                onClick={() => void downloadTextbookFile(getAttachmentDownloadUrl(att), att.title || att.filename)}
                                 title="下载附件"
                               >
                                 <Download className="w-3.5 h-3.5" />

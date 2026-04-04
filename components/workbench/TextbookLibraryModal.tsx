@@ -127,7 +127,9 @@ function buildAttachmentResources(library: TextbookLibraryRecord, chapterId: str
         type: attachment.type,
         description: attachment.description ?? attachment.extractedSummary,
         url:
-          attachment.externalUrl ??
+          (attachment.sourcePdf?.importDraftId
+            ? `/api/textbook-libraries?action=downloadAttachment&id=${encodeURIComponent(attachment.id)}`
+            : attachment.externalUrl) ??
           `/api/textbook-libraries?action=downloadAttachment&id=${encodeURIComponent(attachment.id)}`,
       })) satisfies K12TextbookResource[];
     }

@@ -2,6 +2,7 @@ import { after, type NextRequest, NextResponse } from 'next/server';
 import { apiError, apiSuccess, API_ERROR_CODES } from '@/lib/server/api-response';
 import { requireApiRole } from '@/lib/server/auth-guards';
 import type { AuthPublicUser } from '@/lib/server/auth-types';
+import { PDFDocument } from 'pdf-lib';
 import { runTextbookAttachmentProcessing } from '@/lib/server/textbook-library-parser';
 import { runTextbookPdfImportProcessing } from '@/lib/server/textbook-pdf-import-parser';
 import { getDocumentProxy } from 'unpdf';
@@ -38,8 +39,10 @@ import {
   updateTextbookAttachmentProcessing,
 } from '@/lib/server/textbook-library-repository';
 
+type CanvasContextLike = object;
+
 type CanvasLike = {
-  getContext: (contextId: '2d') => CanvasRenderingContext2D;
+  getContext: (contextId: '2d') => CanvasContextLike;
   toBuffer: (type?: string) => Buffer;
 };
 
@@ -67,7 +70,7 @@ async function getCreateCanvas(): Promise<CreateCanvasFn | null> {
   }
 
   try {
-    const canvasModule = (await import('@napi-rs/canvas')) as {
+    const canvasModule = (await import('@napi-rs/canvas')) as unknown as {
       createCanvas?: CreateCanvasFn;
     };
     cachedCreateCanvas =
@@ -95,8 +98,37 @@ async function renderPdfPageAsPng(
   const viewport = page.getViewport({ scale });
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
   const context = canvas.getContext('2d');
-  await page.render({ canvasContext: context, viewport }).promise;
+  await page.render({
+    canvas: canvas as unknown as HTMLCanvasElement,
+    canvasContext: context as unknown as CanvasRenderingContext2D,
+    viewport,
+  }).promise;
   return canvas.toBuffer('image/png');
+}
+
+async function slicePdfPages(
+  pdfBuffer: Buffer,
+  pageStart: number,
+  pageEnd: number,
+): Promise<Buffer> {
+  const sourcePdf = await PDFDocument.load(pdfBuffer);
+  const totalPages = sourcePdf.getPageCount();
+  const start = Math.max(1, Math.min(totalPages, Math.floor(pageStart)));
+  const end = Math.max(start, Math.min(totalPages, Math.floor(pageEnd)));
+  const pageIndices = Array.from({ length: end - start + 1 }, (_, index) => start - 1 + index);
+
+  const slicedPdf = await PDFDocument.create();
+  const copiedPages = await slicedPdf.copyPages(sourcePdf, pageIndices);
+  for (const page of copiedPages) {
+    slicedPdf.addPage(page);
+  }
+
+  return Buffer.from(await slicedPdf.save());
+}
+
+function ensurePdfFilename(filename: string) {
+  const trimmed = filename.trim() || 'chapter';
+  return trimmed.toLowerCase().endsWith('.pdf') ? trimmed : `${trimmed}.pdf`;
 }
 
 function resolveRequestedView(user: AuthPublicUser, requestedView?: 'draft' | 'published') {
@@ -456,6 +488,32 @@ export async function GET(request: NextRequest) {
       if (!canReadTextbookAttachment(auth.user, location)) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden attachment access');
       }
+
+      if (location.attachment.sourcePdf?.importDraftId) {
+        const sourcePdf = location.attachment.sourcePdf;
+        const blob = await readTextbookPdfImportDraftBlob(sourcePdf.importDraftId);
+        if (!blob) {
+          return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Import draft blob not found');
+        }
+
+        const slicedPdfBuffer = await slicePdfPages(
+          blob.buffer,
+          sourcePdf.pageStart,
+          sourcePdf.pageEnd,
+        );
+
+        return new NextResponse(new Uint8Array(slicedPdfBuffer), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Cache-Control': 'no-store',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(
+              ensurePdfFilename(location.attachment.title || location.attachment.filename),
+            )}"`,
+          },
+        });
+      }
+
       const blob = await readTextbookAttachmentBlob(resourceId);
       if (!blob) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Attachment blob not found');
