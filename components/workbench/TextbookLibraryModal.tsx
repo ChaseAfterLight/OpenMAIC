@@ -8,9 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { getK12TextbookSelection } from '@/lib/module-host/k12';
 import {
-  resolveLocalizedText,
   type K12ModulePresets,
   type K12StructuredInput,
   type K12TextbookResource,
@@ -89,8 +87,6 @@ interface TextbookLibraryModalProps {
 
 const DEFAULT_LOCALE: SupportedLocale = 'zh-CN';
 
-type TextbookUnits = K12ModulePresets['textbookEditions'][number]['volumes'][number]['units'];
-
 function getBookGradient(id: string) {
   const gradients = [
     'from-blue-500 to-cyan-400',
@@ -113,20 +109,6 @@ function matchesLookupValue(candidate: string | undefined, filter: string) {
     return true;
   }
   return normalizeLookupValue(candidate ?? '') === normalizedFilter;
-}
-
-function buildPresetChapterTree(units: TextbookUnits) {
-  return units.map((unit) => ({
-    id: unit.id,
-    title: unit.title,
-    children: unit.chapters.map((chapter) => ({
-      id: chapter.id,
-      title: chapter.title,
-      summary: chapter.summary,
-      keywords: chapter.keywords,
-      resources: chapter.sourceDocuments,
-    })),
-  }));
 }
 
 function buildAttachmentResources(library: TextbookLibraryRecord, chapterId: string) {
@@ -287,7 +269,7 @@ function sourceLabel(locale: SupportedLocale, source: 'all' | 'official' | 'pers
 export function TextbookLibraryModal({
   open,
   onOpenChange,
-  presets,
+  presets: _presets,
   value,
   locale = DEFAULT_LOCALE,
   onSelect,
@@ -302,44 +284,6 @@ export function TextbookLibraryModal({
   const [editionFilter, setEditionFilter] = useState('全部');
   const [remoteCards, setRemoteCards] = useState<TextbookCard[]>([]);
   const [isLoadingRemote, setIsLoadingRemote] = useState(false);
-
-  const currentSelection = useMemo(() => {
-    if (!presets || !value) return undefined;
-    return getK12TextbookSelection(presets, value);
-  }, [presets, value]);
-
-  const presetCards = useMemo<TextbookCard[]>(() => {
-    if (!presets || !currentSelection) return [];
-
-    return currentSelection.editions.flatMap((edition) =>
-      edition.volumes
-        .filter(
-          (volume) =>
-            volume.gradeId === value?.gradeId && volume.subjectId === value?.subjectId,
-        )
-        .map((volume) => {
-          const subject = presets.subjects.find((option) => option.id === volume.subjectId);
-          const grade = presets.grades.find((option) => option.id === volume.gradeId);
-
-          return {
-            id: `preset:${volume.id}`,
-            source: 'preset',
-            name: resolveLocalizedText(volume.label, locale),
-            edition: resolveLocalizedText(edition.label, locale),
-            subject: subject ? subject.label[locale] : volume.subjectId,
-            publisher: edition.publisher,
-            grade: grade ? grade.label[locale] : volume.gradeId,
-            editionId: edition.id,
-            volumeId: volume.id,
-            volumeLabel: resolveLocalizedText(volume.label, locale),
-            gradeId: volume.gradeId,
-            gradeLabel: grade ? grade.label[locale] : volume.gradeId,
-            subjectId: volume.subjectId,
-            units: buildPresetChapterTree(volume.units),
-          };
-        }),
-    );
-  }, [currentSelection, locale, presets, value?.gradeId, value?.subjectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -414,9 +358,10 @@ export function TextbookLibraryModal({
     return () => {
       cancelled = true;
     };
-  }, [locale, open, value?.gradeId, value?.subjectId]);
+  }, [open, value?.gradeId, value?.subjectId]);
 
-  const textbookCards = remoteCards.length > 0 ? remoteCards : presetCards;
+  const textbookCards = remoteCards;
+  const isInitialLoading = open && isLoadingRemote && remoteCards.length === 0;
 
   const sourceOptions = useMemo(() => {
     const sources = new Set<'official' | 'personal' | 'preset'>();
@@ -496,24 +441,41 @@ export function TextbookLibraryModal({
     }
   }, [activeBook, open, textbookCards]);
 
+  useEffect(() => {
+    if (!open || isLoadingRemote || activeBook || textbookCards.length === 0) return;
+
+    const currentBook =
+      textbookCards.find(
+        (book) =>
+          book.volumeId === value?.volumeId ||
+          (book.libraryId && book.libraryId === value?.textbookLibraryId),
+      ) ??
+      filteredBooks[0] ??
+      textbookCards[0] ??
+      null;
+
+    setActiveBook(currentBook);
+    if (value?.unitId && value.chapterId && currentBook) {
+      setActiveChapterPath([value.unitId, value.chapterId]);
+    }
+  }, [
+    activeBook,
+    filteredBooks,
+    isLoadingRemote,
+    open,
+    textbookCards,
+    value?.chapterId,
+    value?.textbookLibraryId,
+    value?.unitId,
+    value?.volumeId,
+  ]);
+
   const handleDialogOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
-      const currentBook =
-        textbookCards.find(
-          (book) =>
-            book.volumeId === value?.volumeId ||
-            (book.libraryId && book.libraryId === value?.textbookLibraryId),
-        ) ??
-        filteredBooks[0] ??
-        textbookCards[0] ??
-        null;
-
-      setActiveBook(currentBook);
-      if (value?.unitId && value.chapterId && currentBook) {
-        setActiveChapterPath([value.unitId, value.chapterId]);
-      } else {
-        setActiveChapterPath([]);
-      }
+      setIsLoadingRemote(true);
+      setRemoteCards([]);
+      setActiveBook(null);
+      setActiveChapterPath([]);
     } else {
       setActiveBook(null);
       setActiveChapterPath([]);
@@ -559,13 +521,7 @@ export function TextbookLibraryModal({
   };
 
   const emptyText =
-    isLoadingRemote && remoteCards.length === 0 && presetCards.length === 0
-      ? locale === 'en-US'
-        ? 'Loading textbook libraries...'
-        : '正在加载教材库...'
-      : locale === 'en-US'
-        ? 'No textbooks found'
-        : '没有找到符合条件的教材';
+    locale === 'en-US' ? 'No textbooks found' : '没有找到符合条件的教材';
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
@@ -717,9 +673,12 @@ export function TextbookLibraryModal({
             </div>
 
             <div className="flex-1 overflow-y-auto p-6">
-              {isLoadingRemote && remoteCards.length === 0 && presetCards.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-slate-400">
+              {isInitialLoading ? (
+                <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
                   <Loader2 className="size-5 animate-spin" />
+                  <p className="text-sm">
+                    {locale === 'en-US' ? 'Loading textbook libraries...' : '正在加载教材库...'}
+                  </p>
                 </div>
               ) : filteredBooks.length > 0 ? (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
@@ -804,7 +763,14 @@ export function TextbookLibraryModal({
           </div>
 
           <div className="flex-[3] min-w-[320px] max-w-[400px] border-l border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-slate-900 flex flex-col">
-            {activeBook ? (
+            {isInitialLoading ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 bg-slate-50/30 dark:bg-slate-900/30">
+                <Loader2 className="size-5 animate-spin" />
+                <p className="text-sm">
+                  {locale === 'en-US' ? 'Loading textbook details...' : '正在加载教材详情...'}
+                </p>
+              </div>
+            ) : activeBook ? (
               <>
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
                   <div className="flex items-start gap-4">

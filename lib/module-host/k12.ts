@@ -18,6 +18,10 @@ const FALLBACK_K12_INPUT: K12StructuredInput = {
   durationMinutes: 40,
 };
 
+function usesPresetTextbookSnapshot(input: K12StructuredInput | undefined): boolean {
+  return !input?.textbookSource || input.textbookSource === 'preset';
+}
+
 function resolveOption<T extends ModuleOption>(options: T[] | undefined, id: string | undefined): T | undefined {
   if (!options?.length || !id) return undefined;
   return options.find((option) => option.id === id);
@@ -197,17 +201,19 @@ export function buildK12RequirementText(args: {
 }): string {
   const { input, presets, locale, supplementaryPdfName } = args;
   const freeform = args.freeform.trim();
-  const selection = getK12TextbookSelection(presets, input);
+  const selection = usesPresetTextbookSnapshot(input)
+    ? getK12TextbookSelection(presets, input)
+    : undefined;
   const lessonTypeLabel =
     getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale) ?? input.lessonTypeId;
-  const editionLabel = selection.edition
+  const editionLabel = selection?.edition
     ? resolveLocalizedText(selection.edition.label, locale)
     : input.textbookEditionLabel;
-  const volumeLabel = selection.volume
+  const volumeLabel = selection?.volume
     ? resolveLocalizedText(selection.volume.label, locale)
     : input.volumeLabel;
-  const unitTitle = selection.unit?.title ?? input.unitTitle;
-  const chapterTitle = selection.chapter?.title ?? input.chapterTitle;
+  const unitTitle = selection?.unit?.title ?? input.unitTitle;
+  const chapterTitle = selection?.chapter?.title ?? input.chapterTitle;
   const chapterKeywords = input.chapterKeywords ?? [];
   const chapterResources = input.chapterResources ?? [];
   const chapterResourceReference = buildK12TextbookResourceReferenceText({
@@ -263,18 +269,20 @@ export function buildK12StructuredContext(
 ): string {
   if (!input) return '';
 
-  const selection = getK12TextbookSelection(presets, input);
+  const selection = usesPresetTextbookSnapshot(input)
+    ? getK12TextbookSelection(presets, input)
+    : undefined;
   const gradeLabel = getK12OptionLabel(presets?.grades, input.gradeId, locale);
   const subjectLabel = getK12OptionLabel(presets?.subjects, input.subjectId, locale);
   const lessonTypeLabel = getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale);
-  const editionLabel = selection.edition
+  const editionLabel = selection?.edition
     ? resolveLocalizedText(selection.edition.label, locale)
     : input.textbookEditionLabel;
-  const volumeLabel = selection.volume
+  const volumeLabel = selection?.volume
     ? resolveLocalizedText(selection.volume.label, locale)
     : input.volumeLabel;
-  const unitTitle = selection.unit?.title ?? input.unitTitle;
-  const chapterTitle = selection.chapter?.title ?? input.chapterTitle;
+  const unitTitle = selection?.unit?.title ?? input.unitTitle;
+  const chapterTitle = selection?.chapter?.title ?? input.chapterTitle;
   const chapterResourceReference = buildK12TextbookResourceReferenceText({
     resources: input.chapterResources ?? [],
     locale,
@@ -339,13 +347,15 @@ export function buildK12LessonPackTitle(args: {
     return truncateText(fallbackRequirement || '未命名备课包', 40);
   }
 
-  const selection = getK12TextbookSelection(presets, input);
+  const selection = usesPresetTextbookSnapshot(input)
+    ? getK12TextbookSelection(presets, input)
+    : undefined;
   const lessonTypeLabel =
     getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale) ?? input.lessonTypeId;
-  const chapterTitle = selection.chapter?.title
+  const chapterTitle = selection?.chapter?.title
     ? collapseWhitespace(selection.chapter.title)
     : collapseWhitespace(input.chapterTitle ?? '');
-  const unitTitle = selection.unit?.title
+  const unitTitle = selection?.unit?.title
     ? collapseWhitespace(selection.unit.title)
     : collapseWhitespace(input.unitTitle ?? '');
   const chapterSummary = input.chapterSummary ? collapseWhitespace(input.chapterSummary) : '';
@@ -381,19 +391,21 @@ export function resolveK12LessonPackMetadata(args: {
   const { input, presets, locale } = args;
   if (!input) return {};
 
-  const selection = getK12TextbookSelection(presets, input);
+  const selection = usesPresetTextbookSnapshot(input)
+    ? getK12TextbookSelection(presets, input)
+    : undefined;
 
   return {
     grade: getK12OptionLabel(presets?.grades, input.gradeId, locale),
     subject: getK12OptionLabel(presets?.subjects, input.subjectId, locale),
     lessonType: getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale),
     durationMinutes: input.durationMinutes,
-    textbookEdition: selection.edition
+    textbookEdition: selection?.edition
       ? resolveLocalizedText(selection.edition.label, locale)
       : input.textbookEditionLabel,
-    volume: selection.volume ? resolveLocalizedText(selection.volume.label, locale) : input.volumeLabel,
-    unit: selection.unit?.title ?? input.unitTitle,
-    chapter: selection.chapter?.title ?? input.chapterTitle,
-    chapterId: selection.chapter?.id ?? input.chapterId,
+    volume: selection?.volume ? resolveLocalizedText(selection.volume.label, locale) : input.volumeLabel,
+    unit: selection?.unit?.title ?? input.unitTitle,
+    chapter: selection?.chapter?.title ?? input.chapterTitle,
+    chapterId: selection?.chapter?.id ?? input.chapterId,
   };
 }
