@@ -404,7 +404,6 @@ function GenerationPreviewContent() {
         });
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
-
         if (warnings.length > 0) {
           setTruncationWarnings(warnings);
         } else {
