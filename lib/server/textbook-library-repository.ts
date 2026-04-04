@@ -1031,6 +1031,16 @@ export async function createTextbookPdfImportDraft(
     throw new Error('TEXTBOOK_VOLUME_NOT_FOUND');
   }
 
+  const existingDraft = store.pdfImportDrafts.find(
+    (draft) =>
+      draft.scope === input.scope &&
+      draft.libraryId === input.libraryId &&
+      draft.volumeId === input.volumeId,
+  );
+  if (existingDraft) {
+    throw new Error('TEXTBOOK_IMPORT_DRAFT_ALREADY_EXISTS');
+  }
+
   const draftId = randomUUID();
   const now = Date.now();
   let storageKey = '';

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, FileUp, Plus, RefreshCw, Save, Send, Trash2,
   Layers, FileText, Settings2, Folder, X, PanelRightClose,
-  Search, BookDashed, BookOpen, GripVertical, ChevronRight, FileArchive
+  Search, BookDashed, BookOpen, ChevronRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -169,6 +169,22 @@ function getBookGradient(id: string) {
   return gradients[index % gradients.length];
 }
 
+function getImportDraftStatusLabel(status: TextbookPdfImportDraftRecord['status']) {
+  switch (status) {
+    case 'uploaded':
+    case 'parsing':
+      return '解析中';
+    case 'ready':
+      return '可审核';
+    case 'confirmed':
+      return '已确认';
+    case 'failed':
+      return '解析失败';
+    default:
+      return status;
+  }
+}
+
 function computeImportBindingDiagnostics(importDraft: TextbookPdfImportDraftRecord | null) {
   if (!importDraft?.pageCount) return { unboundPages: [] as number[], overlappingPages: [] as number[] };
   const coveredPages = new Map<number, number>();
@@ -248,6 +264,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [importDrafts, setImportDrafts] = useState<TextbookPdfImportDraftRecord[]>([]);
   const [activeImportDraftId, setActiveImportDraftId] = useState<string | null>(null);
+  const [pendingImportDraftId, setPendingImportDraftId] = useState<string | null>(null);
   const [publisherMode, setPublisherMode] = useState<PublisherMode>('preset');
   const [subjectMode, setSubjectMode] = useState<FieldMode>('preset');
   const [gradeMode, setGradeMode] = useState<FieldMode>('preset');
@@ -285,6 +302,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   }, [draft, selectedChapterId]);
 
   const activeImportDraft = useMemo(() => importDrafts.find((item) => item.id === activeImportDraftId) ?? null, [importDrafts, activeImportDraftId]);
+  const pendingImportDraft = useMemo(() => importDrafts.find((item) => item.id === pendingImportDraftId) ?? null, [importDrafts, pendingImportDraftId]);
   const importBindingDiagnostics = useMemo(() => computeImportBindingDiagnostics(activeImportDraft), [activeImportDraft]);
 
   const selectedPublisherValue = publisherMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetPublisher(draft?.publisher ?? '') ? draft?.publisher ?? '' : CUSTOM_PUBLISHER_VALUE);
@@ -330,6 +348,43 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
     } catch (error) { toast.error(error instanceof Error ? error.message : '加载导入草稿失败'); }
   }, [scope]);
 
+  useEffect(() => {
+    const draftId = draft?.id;
+    if (!draftId || !pendingImportDraftId) {
+      return;
+    }
+
+    const refreshPendingDrafts = () => {
+      void loadImportDrafts(draftId);
+    };
+
+    refreshPendingDrafts();
+    const timer = window.setInterval(refreshPendingDrafts, 2000);
+    return () => window.clearInterval(timer);
+  }, [loadImportDrafts, pendingImportDraftId, draft?.id]);
+
+  useEffect(() => {
+    if (!pendingImportDraftId) {
+      return;
+    }
+
+    if (!pendingImportDraft) {
+      return;
+    }
+
+    if (pendingImportDraft.status === 'ready' && !activeImportDraftId) {
+      setActiveImportDraftId(pendingImportDraft.id);
+      setPendingImportDraftId(null);
+      toast.success('PDF 解析完成，已打开审核页面');
+      return;
+    }
+
+    if (pendingImportDraft.status === 'failed') {
+      setPendingImportDraftId(null);
+      toast.error('PDF 解析失败，请检查文件后重试');
+    }
+  }, [activeImportDraftId, pendingImportDraft, pendingImportDraftId]);
+
   const loadLibraries = useCallback(async (nextSelectedId?: string | null) => {
     setLoading(true);
     try {
@@ -353,6 +408,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
         }
       } else {
         setImportDrafts([]); setActiveImportDraftId(null);
+        setPendingImportDraftId(null);
       }
     } catch (error) { toast.error(error instanceof Error ? error.message : '加载失败'); } 
     finally { setLoading(false); }
@@ -367,6 +423,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
     setGradeMode(isPresetOption(library.gradeId, GRADE_OPTIONS) ? 'preset' : 'custom');
     setSelectedChapterId(null); setUploadFile(null); setUploadTitle(''); setUploadDescription('');
     setActiveImportDraftId(null);
+    setPendingImportDraftId(null);
     void loadImportDrafts(library.id);
     setViewMode('studio'); setActiveTab('settings');
   }
@@ -549,10 +606,10 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
       const response = await fetch('/api/textbook-libraries', { method: 'POST', body: formData });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success || !data.importDraft) throw new Error(data.error || '导入失败');
-      toast.success('PDF 已开始解析');
-      await loadImportDrafts(savedLibrary.id, data.importDraft.id);
-      setActiveImportDraftId(data.importDraft.id);
-      setActiveTab('structure');
+      toast.success('PDF 已开始解析，完成后会自动打开审核页面');
+      setActiveImportDraftId(null);
+      setPendingImportDraftId(data.importDraft.id);
+      await loadImportDrafts(savedLibrary.id);
     } catch (error) { toast.error(error instanceof Error ? error.message : '导入失败'); } 
     finally { setImportSaving(false); setImportingVolumeId(null); if (importFileInputRef.current) importFileInputRef.current.value = ''; }
   }
@@ -594,6 +651,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
       if (!response.ok || !data.success) throw new Error(data.error || '删除导入草稿失败');
       await loadImportDrafts(draft.id, activeImportDraftId === draftId ? null : activeImportDraftId);
       if (activeImportDraftId === draftId) setActiveImportDraftId(null);
+      if (pendingImportDraftId === draftId) setPendingImportDraftId(null);
       toast.success('导入草稿已删除');
     } catch (error) { toast.error(error instanceof Error ? error.message : '删除导入草稿失败'); }
   }
@@ -827,40 +885,64 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                             <Input value={vol.label} onChange={e => updateVolume(vol.id, { label: e.target.value })} className="text-lg font-bold border-none bg-transparent hover:bg-white focus-visible:ring-1 md:max-w-[200px]" placeholder="册次名称" />
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline" size="sm" className="bg-white shadow-sm h-8" disabled={importSaving}
-                              onClick={() => { setImportingVolumeId(vol.id); importFileInputRef.current?.click(); }}
-                            >
-                              <FileUp className="mr-1.5 h-4 w-4" /> 从 PDF 导入
-                            </Button>
+                            {volumeImportDrafts.length === 0 ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="bg-white shadow-sm h-8"
+                                disabled={importSaving}
+                                onClick={() => {
+                                  setImportingVolumeId(vol.id);
+                                  importFileInputRef.current?.click();
+                                }}
+                              >
+                                <FileUp className="mr-1.5 h-4 w-4" /> 从 PDF 导入
+                              </Button>
+                            ) : (
+                              <Badge variant="secondary" className="h-8 rounded-full bg-amber-100 px-3 text-[11px] font-semibold text-amber-700">
+                                已有导入草稿
+                              </Badge>
+                            )}
                             <Button variant="ghost" size="icon" className="text-slate-400 hover:text-rose-500 h-8 w-8" onClick={() => removeVolume(vol.id)}><X className="w-4 h-4"/></Button>
                           </div>
                         </div>
 
                         {/* 册次内部内容区 */}
                         <div className="p-4 md:p-6">
-                          
-                          {/* >>> 优化点：醒目的草稿任务横幅 <<< */}
                           {volumeImportDrafts.length > 0 && (
-                            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 overflow-hidden shadow-sm animate-in fade-in">
-                              <div className="bg-amber-100/50 px-4 py-2.5 text-xs font-bold text-amber-800 flex items-center justify-between border-b border-amber-200/50">
-                                <span className="flex items-center gap-1.5"><FileArchive className="h-3.5 w-3.5" /> 发现待处理的 PDF 导入草稿</span>
-                                <span className="font-normal opacity-80">点击继续审核以绑定目录</span>
-                              </div>
-                              <div className="p-3 space-y-2">
-                                {volumeImportDrafts.map((item) => (
-                                  <div key={item.id} className="flex flex-wrap sm:flex-nowrap items-center justify-between bg-white border border-amber-100 p-3 rounded-lg shadow-sm">
-                                    <div className="flex flex-col mb-2 sm:mb-0">
-                                      <span className="text-sm font-bold text-slate-800">{item.filename}</span>
-                                      <span className="text-xs text-slate-500 mt-1">状态: {item.status} {item.pageCount ? ` · 共 ${item.pageCount} 页` : ''}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <Button variant="ghost" size="sm" className="text-slate-400 hover:text-rose-500 hover:bg-rose-50" onClick={() => removeImportDraft(item.id)}>放弃</Button>
-                                      <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white shadow-sm" onClick={() => setActiveImportDraftId(item.id)}>继续审核</Button>
-                                    </div>
+                            <div className="mb-4 flex flex-wrap items-center gap-2">
+                              {volumeImportDrafts.map((item) => {
+                                const canReview = item.status === 'ready';
+                                const statusLabel = getImportDraftStatusLabel(item.status);
+
+                                return (
+                                  <div key={item.id} className="flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2">
+                                    <span className="max-w-[220px] truncate text-xs font-medium text-slate-700">{item.filename}</span>
+                                    <Badge variant="secondary" className="h-5 rounded-full bg-slate-100 px-2 text-[10px] font-semibold text-slate-600">
+                                      {statusLabel}
+                                    </Badge>
+                                    {item.status !== 'confirmed' ? (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 rounded-full px-2 text-[11px] text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                                        onClick={() => removeImportDraft(item.id)}
+                                      >
+                                        删除
+                                      </Button>
+                                    ) : null}
+                                    {canReview ? (
+                                      <Button
+                                        size="sm"
+                                        className="h-6 rounded-full bg-amber-500 px-2.5 text-[11px] text-white shadow-sm hover:bg-amber-600"
+                                        onClick={() => setActiveImportDraftId(item.id)}
+                                      >
+                                        审核
+                                      </Button>
+                                    ) : null}
                                   </div>
-                                ))}
-                              </div>
+                                );
+                              })}
                             </div>
                           )}
 

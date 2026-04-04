@@ -241,8 +241,19 @@ async function handleJsonAction(body: TextbookLibraryJsonAction, user: AuthPubli
       if (!canManageTextbookLibrary(user, currentDraft.scope, currentDraft.ownerUserId)) {
         return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import delete');
       }
-      await deleteTextbookPdfImportDraft(body.draftId);
-      return apiSuccess({ ok: true });
+      try {
+        await deleteTextbookPdfImportDraft(body.draftId);
+        return apiSuccess({ ok: true });
+      } catch (error) {
+        if (error instanceof Error && error.message === 'TEXTBOOK_IMPORT_DRAFT_IN_USE') {
+          return apiError(
+            API_ERROR_CODES.INVALID_REQUEST,
+            409,
+            '该导入草稿已经绑定到教材，不能删除',
+          );
+        }
+        throw error;
+      }
     }
 
     case 'retryAttachmentProcessing': {
@@ -328,17 +339,29 @@ async function handleFormDataAction(formData: FormData, user: AuthPublicUser) {
     return apiError(API_ERROR_CODES.INVALID_REQUEST, 403, 'Forbidden textbook import upload');
   }
 
-  const importDraft = await createTextbookPdfImportDraft({
-    scope: metadata.scope,
-    view,
-    libraryId: metadata.libraryId,
-    volumeId: metadata.volumeId,
-    ownerUserId: library.scope === 'personal' ? library.ownerUserId : undefined,
-    filename: file.name,
-    mimeType: file.type || 'application/pdf',
-    size: file.size,
-    buffer: Buffer.from(await file.arrayBuffer()),
-  });
+  let importDraft;
+  try {
+    importDraft = await createTextbookPdfImportDraft({
+      scope: metadata.scope,
+      view,
+      libraryId: metadata.libraryId,
+      volumeId: metadata.volumeId,
+      ownerUserId: library.scope === 'personal' ? library.ownerUserId : undefined,
+      filename: file.name,
+      mimeType: file.type || 'application/pdf',
+      size: file.size,
+      buffer: Buffer.from(await file.arrayBuffer()),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'TEXTBOOK_IMPORT_DRAFT_ALREADY_EXISTS') {
+      return apiError(
+        API_ERROR_CODES.INVALID_REQUEST,
+        409,
+        '该册已存在导入草稿，请先删除后再重新导入',
+      );
+    }
+    throw error;
+  }
   after(() => runTextbookPdfImportProcessing(importDraft.id));
   return apiSuccess({ ok: true, importDraft });
 }

@@ -22,6 +22,22 @@ import type { TextbookPdfImportDraftRecord } from '@/lib/server/textbook-library
 type ImportUnitDraft = TextbookPdfImportDraftRecord['units'][number];
 type ImportChapterDraft = ImportUnitDraft['chapters'][number];
 
+function getImportDraftStatusLabel(status: TextbookPdfImportDraftRecord['status']) {
+  switch (status) {
+    case 'uploaded':
+    case 'parsing':
+      return '解析中';
+    case 'ready':
+      return '可审核';
+    case 'confirmed':
+      return '已确认';
+    case 'failed':
+      return '解析失败';
+    default:
+      return status;
+  }
+}
+
 interface ImportBindingDiagnostics {
   unboundPages: number[];
   overlappingPages: number[];
@@ -78,7 +94,9 @@ export function TextbookPdfImportReviewPanel({
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-slate-900">{importDraft.filename}</h1>
-              <Badge variant="secondary" className="bg-slate-100 text-[10px] uppercase tracking-wider">{importDraft.status}</Badge>
+              <Badge variant="secondary" className="bg-slate-100 text-[10px] uppercase tracking-wider">
+                {getImportDraftStatusLabel(importDraft.status)}
+              </Badge>
             </div>
             <p className="text-xs text-slate-500">
               共 {importDraft.pageCount || '-'} 页 • 请核对左侧提取的目录与右侧 PDF 是否匹配
@@ -86,9 +104,11 @@ export function TextbookPdfImportReviewPanel({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 rounded-full" onClick={onDeleteDraft}>
-            <Trash2 className="mr-1.5 h-4 w-4" /> 放弃解析
-          </Button>
+          {importDraft.status !== 'confirmed' ? (
+            <Button variant="ghost" className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 rounded-full" onClick={onDeleteDraft}>
+              <Trash2 className="mr-1.5 h-4 w-4" /> 放弃解析
+            </Button>
+          ) : null}
           <Button variant="outline" className="rounded-full shadow-sm" onClick={onSaveDraftReview} disabled={importSaving}>
             {importSaving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} 保存草稿
           </Button>
