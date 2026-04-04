@@ -44,6 +44,11 @@ export interface TextbookSelection {
   chapterKeywords?: string[];
   chapterResources?: K12TextbookResource[];
   publisher?: string;
+  // Add gradeId, gradeLabel, subjectId, subjectLabel for lesson pack metadata
+  gradeId?: string;
+  gradeLabel?: string;
+  subjectId?: string;
+  subjectLabel?: string;
 }
 
 interface Chapter {
@@ -514,6 +519,11 @@ export function TextbookLibraryModal({
       chapterKeywords: activeChapter.keywords,
       chapterResources: activeChapter.resources,
       publisher: activeBook.publisher,
+      // Pass gradeId, gradeLabel, subjectId, subjectLabel from the selected textbook
+      gradeId: activeBook.gradeId,
+      gradeLabel: activeBook.gradeLabel,
+      subjectId: activeBook.subjectId,
+      subjectLabel: activeBook.subjectLabel,
     });
     onOpenChange(false);
   };

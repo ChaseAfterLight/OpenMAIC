@@ -396,8 +396,9 @@ export function resolveK12LessonPackMetadata(args: {
     : undefined;
 
   return {
-    grade: getK12OptionLabel(presets?.grades, input.gradeId, locale),
-    subject: getK12OptionLabel(presets?.subjects, input.subjectId, locale),
+    // Use label from presets first, fallback to input's saved label
+    grade: getK12OptionLabel(presets?.grades, input.gradeId, locale) ?? input.gradeLabel,
+    subject: getK12OptionLabel(presets?.subjects, input.subjectId, locale) ?? input.subjectLabel,
     lessonType: getK12OptionLabel(presets?.lessonTypes, input.lessonTypeId, locale),
     durationMinutes: input.durationMinutes,
     textbookEdition: selection?.edition

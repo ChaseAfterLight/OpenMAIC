@@ -50,7 +50,9 @@ export interface K12TextbookEdition {
 
 export interface K12StructuredInput {
   gradeId: string;
+  gradeLabel?: string;
   subjectId: string;
+  subjectLabel?: string;
   lessonTypeId: string;
   durationMinutes: number;
   textbookSource?: 'preset' | 'official' | 'personal';

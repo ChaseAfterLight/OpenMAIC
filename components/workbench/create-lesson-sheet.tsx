@@ -15,7 +15,6 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   TextbookLibraryModal,
   type Textbook,
-  type TextbookSelection,
 } from '@/components/workbench/TextbookLibraryModal';
 import {
   Sheet,
@@ -73,9 +72,6 @@ interface CreateLessonSheetProps {
 
 const sheetCopy = {
   'zh-CN': {
-    promptTitle: '你想怎么上这堂课？',
-    promptHint: '把需求写得更具体，生成结果会更聚焦。',
-    promptKeyboard: '支持 Ctrl/⌘ + Enter 立即生成',
     libraryTitle: '关联教材与章节',
     libraryHint: '从资源库里挑一份教材，作为这节课的章节锚点。',
     libraryPlaceholder: '从资源中心选择教材与章节...',
@@ -83,15 +79,15 @@ const sheetCopy = {
     libraryPick: '去选择',
     libraryChapterLabel: '已选章节：',
     libraryNoChapter: '尚未选择章节',
+    promptTitle: '你想怎么上这堂课？',
+    promptHint: '把需求写得更具体，生成结果会更聚焦。',
+    promptKeyboard: '支持 Ctrl/⌘ + Enter 立即生成',
     k12Title: '基础教学信息',
     k12Hint: '这里只保留课型和时长，教材章节已经放在上方。',
     configTitle: '高级配置与参考',
     configHint: '语言、联网和 PDF 都放在这里。',
   },
   'en-US': {
-    promptTitle: 'How do you want to teach this lesson?',
-    promptHint: 'More specific prompts lead to sharper results.',
-    promptKeyboard: 'Press Ctrl/⌘ + Enter to generate',
     libraryTitle: 'Link textbook chapter',
     libraryHint: 'Pick a textbook from the resource library as the chapter anchor.',
     libraryPlaceholder: 'Choose a textbook chapter from the library...',
@@ -99,6 +95,9 @@ const sheetCopy = {
     libraryPick: 'Select',
     libraryChapterLabel: 'Selected chapter:',
     libraryNoChapter: 'No chapter selected yet',
+    promptTitle: 'How do you want to teach this lesson?',
+    promptHint: 'More specific prompts lead to sharper results.',
+    promptKeyboard: 'Press Ctrl/⌘ + Enter to generate',
     k12Title: 'Core lesson details',
     k12Hint: 'Only lesson type and duration remain here. The textbook chapter is already linked above.',
     configTitle: 'Advanced settings and references',
@@ -279,61 +278,6 @@ export function CreateLessonSheet({
 
           <div className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(79,70,229,0.07),_transparent_44%)] px-6 py-6">
             <div className="space-y-6">
-              <section className="space-y-3">
-                <div className="space-y-1.5">
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    {text.promptTitle}
-                  </h3>
-                  <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                    {text.promptHint}
-                  </p>
-                </div>
-
-                <div className="group rounded-[28px] bg-white/88 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition-all duration-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-500/35 dark:bg-slate-900/68 dark:ring-slate-800/70 dark:focus-within:bg-slate-900">
-                  <Textarea
-                    value={form.requirement}
-                    onChange={(e) => updateForm('requirement', e.target.value)}
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void handleGenerate();
-                    }}
-                    placeholder={modulePlaceholder}
-                    className="min-h-[160px] resize-none border-0 bg-transparent px-0 py-0 text-base leading-6 placeholder:text-slate-400 focus-visible:ring-0 dark:placeholder:text-slate-500"
-                  />
-
-                  <div className="mt-4 flex flex-col gap-3 border-t border-slate-200/70 pt-3 dark:border-slate-800/70 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs text-slate-400 dark:text-slate-500">
-                      {text.promptKeyboard}
-                    </p>
-                    <SpeechButton
-                      size="md"
-                      onTranscription={(textValue) =>
-                        updateForm(
-                          'requirement',
-                          form.requirement ? `${form.requirement}\n${textValue}` : textValue,
-                        )
-                      }
-                      className="h-9 w-9 rounded-full bg-indigo-50 text-indigo-600 shadow-sm transition-colors hover:bg-indigo-100 hover:text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300 dark:hover:bg-indigo-500/25"
-                    />
-                  </div>
-                </div>
-
-                {quickPrompts.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    {quickPrompts.slice(0, 4).map((prompt) => (
-                      <button
-                        key={prompt}
-                        type="button"
-                        onClick={() => updateForm('requirement', prompt)}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3.5 py-2 text-[13px] font-medium text-indigo-700 shadow-sm transition-colors hover:bg-indigo-100 hover:text-indigo-800 dark:bg-indigo-500/10 dark:text-indigo-300 dark:hover:bg-indigo-500/20 dark:hover:text-indigo-200"
-                      >
-                        <ArrowRight className="size-3.5 opacity-60" />
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-
               {isK12Module && k12Presets ? (
                 <section className="space-y-3">
                   <div className="flex items-start gap-3">
@@ -403,6 +347,61 @@ export function CreateLessonSheet({
                   </div>
                 </section>
               ) : null}
+
+              <section className="space-y-3">
+                <div className="space-y-1.5">
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {text.promptTitle}
+                  </h3>
+                  <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                    {text.promptHint}
+                  </p>
+                </div>
+
+                <div className="group rounded-[28px] bg-white/88 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition-all duration-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-500/35 dark:bg-slate-900/68 dark:ring-slate-800/70 dark:focus-within:bg-slate-900">
+                  <Textarea
+                    value={form.requirement}
+                    onChange={(e) => updateForm('requirement', e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void handleGenerate();
+                    }}
+                    placeholder={modulePlaceholder}
+                    className="min-h-[160px] resize-none border-0 bg-transparent px-0 py-0 text-base leading-6 placeholder:text-slate-400 focus-visible:ring-0 dark:placeholder:text-slate-500"
+                  />
+
+                  <div className="mt-4 flex flex-col gap-3 border-t border-slate-200/70 pt-3 dark:border-slate-800/70 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-slate-400 dark:text-slate-500">
+                      {text.promptKeyboard}
+                    </p>
+                    <SpeechButton
+                      size="md"
+                      onTranscription={(textValue) =>
+                        updateForm(
+                          'requirement',
+                          form.requirement ? `${form.requirement}\n${textValue}` : textValue,
+                        )
+                      }
+                      className="h-9 w-9 rounded-full bg-indigo-50 text-indigo-600 shadow-sm transition-colors hover:bg-indigo-100 hover:text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300 dark:hover:bg-indigo-500/25"
+                    />
+                  </div>
+                </div>
+
+                {quickPrompts.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {quickPrompts.slice(0, 4).map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => updateForm('requirement', prompt)}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3.5 py-2 text-[13px] font-medium text-indigo-700 shadow-sm transition-colors hover:bg-indigo-100 hover:text-indigo-800 dark:bg-indigo-500/10 dark:text-indigo-300 dark:hover:bg-indigo-500/20 dark:hover:text-indigo-200"
+                      >
+                        <ArrowRight className="size-3.5 opacity-60" />
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
 
               {isK12Module && k12Presets ? (
                 <section className="space-y-3">
@@ -492,7 +491,7 @@ export function CreateLessonSheet({
         presets={k12Presets}
         value={k12Form}
         locale={activeLocale}
-        onSelect={(selection: TextbookSelection) => {
+        onSelect={(selection) => {
           setSelectedTextbook(selection.textbook);
           setSelectedChapterTitle(
             selection.chapterTitlePath.join(' · ') || selection.chapterPath.join(' · '),
@@ -504,6 +503,11 @@ export function CreateLessonSheet({
             textbookPublisher: selection.publisher,
             textbookEditionId: selection.editionId,
             textbookEditionLabel: selection.textbook.edition,
+            // Update gradeId, gradeLabel, subjectId, subjectLabel from the selected textbook
+            gradeId: selection.gradeId ?? current.gradeId,
+            gradeLabel: selection.gradeLabel ?? current.gradeLabel,
+            subjectId: selection.subjectId ?? current.subjectId,
+            subjectLabel: selection.subjectLabel ?? current.subjectLabel,
             volumeId: selection.volumeId,
             volumeLabel: selection.volumeLabel,
             unitId: selection.unitId,
