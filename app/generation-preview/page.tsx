@@ -39,6 +39,10 @@ import {
   type K12TextbookResource,
   type SupportedLocale,
 } from '@/lib/module-host/types';
+import {
+  startClassroomJobStream,
+  type ClassroomJobStreamState,
+} from '@/lib/client/classroom-job-stream';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
 import { StepVisualizer } from './components/visualizers';
 
@@ -213,13 +217,14 @@ function GenerationPreviewContent() {
   const { t } = useI18n();
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const serverJobStreamCloseRef = useRef<(() => void) | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
   const [session, setSession] = useState<GenerationSessionState | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [isComplete] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [streamingOutlines, setStreamingOutlines] = useState<SceneOutline[] | null>(null);
   const [truncationWarnings, setTruncationWarnings] = useState<string[]>([]);
@@ -293,6 +298,7 @@ function GenerationPreviewContent() {
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
+      serverJobStreamCloseRef.current?.();
     };
   }, []);
 
@@ -325,6 +331,166 @@ function GenerationPreviewContent() {
     };
   };
 
+  const runServerGeneration = async (
+    sessionSnapshot: GenerationSessionState,
+    sessionActiveSteps: ReturnType<typeof getActiveSteps>,
+    generationSignal: AbortSignal,
+  ) => {
+    const settings = useSettingsStore.getState();
+    const imageIds = (sessionSnapshot.pdfImages || [])
+      .map((img) => img.storageId || img.id)
+      .filter(Boolean);
+    const hasPdfContent = Boolean(sessionSnapshot.pdfText || imageIds.length > 0);
+
+    const serverPayload = {
+      requirement: sessionSnapshot.requirements.requirement,
+      pdfContent: hasPdfContent
+        ? {
+            text: sessionSnapshot.pdfText || '',
+            images: imageIds,
+          }
+        : undefined,
+      language: sessionSnapshot.requirements.language,
+      enableWebSearch: Boolean(sessionSnapshot.requirements.webSearch),
+      webSearchProviderId: settings.webSearchProviderId,
+      webSearchApiKey:
+        settings.webSearchProvidersConfig?.[settings.webSearchProviderId]?.apiKey || undefined,
+      baiduSubSources:
+        settings.webSearchProviderId === 'baidu' ? settings.baiduSubSources : undefined,
+      enableImageGeneration: Boolean(settings.imageGenerationEnabled),
+      enableVideoGeneration: Boolean(settings.videoGenerationEnabled),
+      enableTTS: Boolean(settings.ttsEnabled),
+      agentMode: settings.agentMode === 'auto' ? ('generate' as const) : ('default' as const),
+    };
+
+    const mapServerStepToIndex = (step: ClassroomJobStreamState['step']) => {
+      const indices = {
+        pdf: sessionActiveSteps.findIndex((s) => s.id === 'pdf-analysis'),
+        web: sessionActiveSteps.findIndex((s) => s.id === 'web-search'),
+        agent: sessionActiveSteps.findIndex((s) => s.id === 'agent-generation'),
+        outline: sessionActiveSteps.findIndex((s) => s.id === 'outline'),
+        content: sessionActiveSteps.findIndex((s) => s.id === 'slide-content'),
+        actions: sessionActiveSteps.findIndex((s) => s.id === 'actions'),
+      };
+
+      switch (step) {
+        case 'initializing':
+          return indices.pdf >= 0 ? indices.pdf : 0;
+        case 'researching':
+          return indices.web >= 0 ? indices.web : indices.agent >= 0 ? indices.agent : 0;
+        case 'generating_outlines':
+          return indices.outline >= 0 ? indices.outline : 0;
+        case 'generating_scenes':
+          return indices.content >= 0 ? indices.content : 0;
+        case 'generating_media':
+        case 'generating_tts':
+        case 'persisting':
+          return indices.actions >= 0 ? indices.actions : sessionActiveSteps.length - 1;
+        case 'completed':
+          return sessionActiveSteps.length - 1;
+        default:
+          return 0;
+      }
+    };
+
+    const persistServerSession = (job: ClassroomJobStreamState) => {
+      const updatedServerSession = {
+        ...sessionSnapshot,
+        serverJob: {
+          jobId: job.jobId,
+          pollUrl: job.pollUrl,
+          eventsUrl: job.eventsUrl,
+        },
+        currentStep: 'generating' as const,
+      };
+      setSession(updatedServerSession);
+      sessionStorage.setItem('generationSession', JSON.stringify(updatedServerSession));
+      setStatusMessage(job.message);
+      setCurrentStepIndex(mapServerStepToIndex(job.step));
+    };
+
+    const finalizeServerJob = (job: ClassroomJobStreamState) => {
+      if (job.status === 'succeeded') {
+        setIsComplete(true);
+        setStatusMessage(job.message);
+        sessionStorage.removeItem('generationSession');
+        const targetUrl =
+          job.result?.url || (job.result?.classroomId ? `/classroom/${job.result.classroomId}` : '');
+        if (targetUrl) {
+          router.push(targetUrl);
+          return;
+        }
+        router.push('/');
+        return;
+      }
+
+      const message = job.error || job.message || t('generation.generationFailed');
+      setError(message);
+      sessionStorage.removeItem('generationSession');
+    };
+
+    const monitorServerJob = (job: ClassroomJobStreamState) => {
+      serverJobStreamCloseRef.current?.();
+      persistServerSession(job);
+      const stream = startClassroomJobStream({
+        job,
+        signal: generationSignal,
+        onUpdate: (nextJob) => {
+          persistServerSession(nextJob);
+        },
+        onTerminal: (nextJob) => {
+          persistServerSession(nextJob);
+          finalizeServerJob(nextJob);
+        },
+        onError: (message) => {
+          log.warn('[GenerationPreview] Server job stream issue:', message);
+        },
+      });
+      serverJobStreamCloseRef.current = stream.close;
+    };
+
+    const initialJob = sessionSnapshot.serverJob
+      ? await fetch(sessionSnapshot.serverJob.pollUrl, { cache: 'no-store' }).then(async (res) => {
+          if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(data.error || t('generation.generationFailed'));
+          }
+          const data = (await res.json()) as { success?: boolean; error?: string };
+          if (!data.success) {
+            throw new Error(data.error || t('generation.generationFailed'));
+          }
+          return data as unknown as ClassroomJobStreamState;
+        })
+      : await fetch('/api/generate-classroom', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(serverPayload),
+          signal: generationSignal,
+        }).then(async (res) => {
+          const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
+          if (!res.ok || !data.success) {
+            throw new Error(data.error || t('generation.generationFailed'));
+          }
+          const job = data as unknown as ClassroomJobStreamState;
+          const updatedServerSession = {
+            ...sessionSnapshot,
+            serverJob: {
+              jobId: job.jobId,
+              pollUrl: job.pollUrl,
+              eventsUrl: job.eventsUrl,
+            },
+            currentStep: 'generating' as const,
+          };
+          setSession(updatedServerSession);
+          sessionStorage.setItem('generationSession', JSON.stringify(updatedServerSession));
+          return job;
+        });
+
+    monitorServerJob(initialJob);
+  };
+
   // Auto-start generation when session is loaded
   useEffect(() => {
     if (session && !hasStartedRef.current) {
@@ -343,6 +509,7 @@ function GenerationPreviewContent() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     const signal = controller.signal;
+    const settings = useSettingsStore.getState();
 
     // Use a local mutable copy so we can update it after PDF parsing
     let currentSession = mergeSelectedTextbookResourcesIntoPdfText(session);
@@ -352,6 +519,7 @@ function GenerationPreviewContent() {
     }
 
     setError(null);
+    setIsComplete(false);
     setCurrentStepIndex(0);
 
     try {
@@ -523,6 +691,16 @@ function GenerationPreviewContent() {
         // Reassign local reference for subsequent steps
         currentSession = updatedSession;
         activeSteps = getActiveSteps(currentSession);
+
+        if (true) {
+          await runServerGeneration(currentSession, activeSteps, signal);
+          return;
+        }
+      }
+
+      if (true) {
+        await runServerGeneration(currentSession, activeSteps, signal);
+        return;
       }
 
       // Step: Web Search (if enabled)
@@ -531,7 +709,7 @@ function GenerationPreviewContent() {
         setCurrentStepIndex(webSearchStepIdx);
         setWebSearchSources([]);
 
-        const wsSettings = useSettingsStore.getState();
+        const wsSettings = settings;
         const wsApiKey =
           wsSettings.webSearchProvidersConfig?.[wsSettings.webSearchProviderId]?.apiKey;
         const res = await fetch('/api/web-search', {
@@ -573,19 +751,19 @@ function GenerationPreviewContent() {
 
       // Load imageMapping early (needed for both outline and scene generation)
       let imageMapping: ImageMapping = {};
-      if (currentSession.imageStorageIds && currentSession.imageStorageIds.length > 0) {
+      const currentImageStorageIds = currentSession.imageStorageIds ?? [];
+      if (currentImageStorageIds.length > 0) {
         log.debug('Loading images from IndexedDB');
-        imageMapping = await loadImageMapping(currentSession.imageStorageIds);
-      } else if (
-        currentSession.imageMapping &&
-        Object.keys(currentSession.imageMapping).length > 0
-      ) {
-        log.debug('Using imageMapping from session (old format)');
-        imageMapping = currentSession.imageMapping;
+        imageMapping = await loadImageMapping(currentImageStorageIds);
+      } else {
+        const currentImageMapping = currentSession.imageMapping ?? {};
+        if (Object.keys(currentImageMapping).length > 0) {
+          log.debug('Using imageMapping from session (old format)');
+          imageMapping = currentImageMapping;
+        }
       }
 
       // ── Agent generation (before outlines so persona can influence structure) ──
-      const settings = useSettingsStore.getState();
       let agents: Array<{
         id: string;
         name: string;
@@ -763,11 +941,11 @@ function GenerationPreviewContent() {
       }
 
       // ── Generate outlines (with agent personas for teacher context) ──
-      let outlines = currentSession.sceneOutlines;
+      let outlines: SceneOutline[] = currentSession.sceneOutlines ?? [];
 
       const outlineStepIdx = activeSteps.findIndex((s) => s.id === 'outline');
       setCurrentStepIndex(outlineStepIdx >= 0 ? outlineStepIdx : 0);
-      if (!outlines || outlines.length === 0) {
+      if (outlines.length === 0) {
         log.debug('=== Generating outlines (SSE) ===');
         setStreamingOutlines([]);
 
@@ -866,7 +1044,7 @@ function GenerationPreviewContent() {
 
       // Move to scene generation step
       setStatusMessage('');
-      if (!outlines || outlines.length === 0) {
+      if (outlines.length === 0) {
         throw new Error(t('generation.outlineEmptyResponse'));
       }
 
@@ -1012,6 +1190,7 @@ function GenerationPreviewContent() {
 
   const goBackToHome = () => {
     abortControllerRef.current?.abort();
+    serverJobStreamCloseRef.current?.();
     sessionStorage.removeItem('generationSession');
     router.push('/');
   };

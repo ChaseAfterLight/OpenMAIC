@@ -27,6 +27,7 @@
     "configureProvider": "Set up model",
     "configureProviderHint": "Configure at least one model provider to generate courses",
     "enterClassroom": "Enter Classroom",
+    "enterClassroomServer": "Server Generate",
     "advancedSettings": "Advanced Settings",
     "ttsTitle": "Text-to-Speech",
     "ttsHint": "Choose a voice for the AI teacher",

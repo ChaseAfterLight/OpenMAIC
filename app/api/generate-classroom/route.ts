@@ -4,6 +4,7 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { type GenerateClassroomInput } from '@/lib/server/classroom-generation';
 import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
+import { buildClassroomJobUrls } from '@/lib/server/classroom-job-response';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { requireApiRole } from '@/lib/server/auth-guards';
 import { createLogger } from '@/lib/logger';
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     const baseUrl = buildRequestOrigin(req);
     const jobId = nanoid(10);
     const job = await createClassroomGenerationJob(jobId, body);
-    const pollUrl = `${baseUrl}/api/generate-classroom/${jobId}`;
+    const urls = buildClassroomJobUrls(req, jobId);
 
     after(() => runClassroomGenerationJob(jobId, body, baseUrl));
 
@@ -58,7 +59,8 @@ export async function POST(req: NextRequest) {
         status: job.status,
         step: job.step,
         message: job.message,
-        pollUrl,
+        pollUrl: urls.pollUrl,
+        eventsUrl: urls.eventsUrl,
         pollIntervalMs: 5000,
       },
       202,

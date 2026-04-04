@@ -606,7 +606,7 @@ function HomePage() {
 
               {/* Send button */}
               <button
-                onClick={handleGenerate}
+                onClick={() => handleGenerate()}
                 disabled={!canGenerate}
                 className={cn(
                   'shrink-0 h-8 rounded-lg flex items-center justify-center gap-1.5 transition-all px-3',
@@ -615,7 +615,7 @@ function HomePage() {
                     : 'bg-muted text-muted-foreground/40 cursor-not-allowed',
                 )}
               >
-                <span className="text-xs font-medium">{t('toolbar.enterClassroom')}</span>
+                <span className="text-xs font-medium">{t('toolbar.enterClassroomServer')}</span>
                 <ArrowUp className="size-3.5" />
               </button>
             </div>

@@ -16,6 +16,11 @@ export interface GenerationSessionState {
   pdfImages?: PdfImage[];
   imageStorageIds?: string[];
   imageMapping?: ImageMapping;
+  serverJob?: {
+    jobId: string;
+    pollUrl: string;
+    eventsUrl: string;
+  };
   sceneOutlines?: SceneOutline[] | null;
   currentStep: 'generating' | 'complete';
   // PDF deferred parsing fields
