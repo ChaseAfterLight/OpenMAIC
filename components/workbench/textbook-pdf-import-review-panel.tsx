@@ -22,6 +22,38 @@ import type { TextbookPdfImportDraftRecord } from '@/lib/server/textbook-library
 type ImportUnitDraft = TextbookPdfImportDraftRecord['units'][number];
 type ImportChapterDraft = ImportUnitDraft['chapters'][number];
 
+function getProposalSourceLabel(source: TextbookPdfImportDraftRecord['proposalSource']) {
+  switch (source) {
+    case 'ai':
+      return 'AI 提议';
+    case 'rules':
+      return '规则提议';
+    case 'merged':
+      return 'AI + 规则';
+    case 'fallback':
+      return '规则回退';
+    default:
+      return '待生成';
+  }
+}
+
+function getChapterSourceLabel(source: ImportChapterDraft['source']) {
+  switch (source) {
+    case 'ai':
+      return 'AI';
+    case 'rules':
+      return '规则';
+    case 'merged':
+      return '合并';
+    case 'fallback':
+      return '回退';
+    case 'manual':
+      return '手改';
+    default:
+      return '未标记';
+  }
+}
+
 function getImportDraftStatusLabel(status: TextbookPdfImportDraftRecord['status']) {
   switch (status) {
     case 'uploaded':
@@ -81,6 +113,15 @@ export function TextbookPdfImportReviewPanel({
   const hasUnboundPages = bindingDiagnostics.unboundPages.length > 0;
   const hasOverlappingPages = bindingDiagnostics.overlappingPages.length > 0;
   const hasBlockingDiagnosticsError = hasOverlappingPages || Boolean(importDraft.parseError);
+  const overallConfidencePercent = Math.round(
+    Math.max(0, Math.min(1, Number(importDraft.proposalConfidence) || 0)) * 100,
+  );
+  const anchorPreview = importDraft.pageAnchors
+    .slice(0, 4)
+    .map((anchor) => `${anchor.printedPage}->${anchor.rawPage}`)
+    .join(' · ');
+  const lowConfidencePreview = importDraft.lowConfidencePages.slice(0, 12).join(', ');
+  const conflictNotes = importDraft.conflictNotes.slice(0, 4);
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white dark:bg-slate-950">
@@ -96,6 +137,9 @@ export function TextbookPdfImportReviewPanel({
               <h1 className="text-base font-bold text-slate-900">{importDraft.filename}</h1>
               <Badge variant="secondary" className="bg-slate-100 text-[10px] uppercase tracking-wider">
                 {getImportDraftStatusLabel(importDraft.status)}
+              </Badge>
+              <Badge variant="secondary" className="bg-indigo-50 text-[10px] tracking-wide text-indigo-700">
+                {getProposalSourceLabel(importDraft.proposalSource)}
               </Badge>
             </div>
             <p className="text-xs text-slate-500">
@@ -124,9 +168,35 @@ export function TextbookPdfImportReviewPanel({
         {/* 左侧：结构校对面板 */}
         <aside className="flex w-full min-h-0 flex-col border-r border-slate-200 bg-slate-50/50 md:w-[500px] lg:w-[600px] shrink-0">
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">提议来源</div>
+                <div className="mt-1 text-sm font-bold text-slate-900">{getProposalSourceLabel(importDraft.proposalSource)}</div>
+                <div className="mt-2 text-xs text-slate-500">
+                  整体置信度 {overallConfidencePercent}%{importDraft.aiModel ? ` · ${importDraft.aiModel}` : ''}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">目录候选页</div>
+                <div className="mt-1 text-sm font-bold text-slate-900">
+                  {importDraft.tocCandidatePages.length > 0 ? importDraft.tocCandidatePages.join(', ') : '未识别'}
+                </div>
+                <div className="mt-2 text-xs text-slate-500">优先核对这些页是否为目录或扉页</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">页码锚点</div>
+                <div className="mt-1 text-sm font-bold text-slate-900">{anchorPreview || '未识别'}</div>
+                <div className="mt-2 text-xs text-slate-500">格式为 书内页码 -&gt; PDF 原始页</div>
+              </div>
+            </div>
             
             {/* 诊断信息警告面板 */}
-            {(hasUnboundPages || hasOverlappingPages || importDraft.parseError) && (
+            {(hasUnboundPages ||
+              hasOverlappingPages ||
+              importDraft.parseError ||
+              importDraft.lowConfidencePages.length > 0 ||
+              conflictNotes.length > 0) && (
               <div className={`rounded-xl p-4 shadow-sm animate-in fade-in ${hasBlockingDiagnosticsError || importDraft.parseError ? 'border border-amber-200 bg-amber-50' : 'border border-sky-200 bg-sky-50'}`}>
                 <div className="flex items-start gap-3">
                   <AlertTriangle className={`h-5 w-5 shrink-0 mt-0.5 ${hasBlockingDiagnosticsError || importDraft.parseError ? 'text-amber-600' : 'text-sky-600'}`} />
@@ -137,7 +207,7 @@ export function TextbookPdfImportReviewPanel({
                     {importDraft.parseError && <p className="text-xs text-amber-700">{importDraft.parseError}</p>}
                     {!hasBlockingDiagnosticsError && !importDraft.parseError && (
                       <p className="text-xs text-sky-700">
-                        这些页通常可能是封面、扉页、目录、插图页或留白页，不一定需要绑定到章节。
+                        这些页通常可能是封面、扉页、目录、插图页或留白页，不一定需要绑定到章节。带“待复核”的章节也建议顺手核对。
                       </p>
                     )}
                     
@@ -154,6 +224,27 @@ export function TextbookPdfImportReviewPanel({
                         <div className="rounded-lg bg-white/60 p-2 border border-amber-100">
                           <span className="font-semibold text-amber-800 block mb-1">重叠冲突页</span>
                           <span className="text-amber-700 break-words">{bindingDiagnostics.overlappingPages.join(', ')}</span>
+                        </div>
+                      )}
+                      {importDraft.lowConfidencePages.length > 0 && (
+                        <div className={`rounded-lg p-2 ${hasBlockingDiagnosticsError ? 'bg-white/60 border border-amber-100' : 'bg-white/70 border border-sky-100'} `}>
+                          <span className={`font-semibold block mb-1 ${hasBlockingDiagnosticsError ? 'text-amber-800' : 'text-sky-800'}`}>低置信度页</span>
+                          <span className={hasBlockingDiagnosticsError ? 'text-amber-700' : 'text-sky-700'}>
+                            {lowConfidencePreview}
+                            {importDraft.lowConfidencePages.length > 12 ? ' ...' : ''}
+                          </span>
+                        </div>
+                      )}
+                      {conflictNotes.length > 0 && (
+                        <div className={`rounded-lg p-2 ${hasBlockingDiagnosticsError ? 'bg-white/60 border border-amber-100' : 'bg-white/70 border border-sky-100'} `}>
+                          <span className={`font-semibold block mb-1 ${hasBlockingDiagnosticsError ? 'text-amber-800' : 'text-sky-800'}`}>解析提示</span>
+                          <div className={`space-y-1 ${hasBlockingDiagnosticsError ? 'text-amber-700' : 'text-sky-700'}`}>
+                            {conflictNotes.map((note, index) => (
+                              <p key={`${note.code}-${note.page ?? index}`} className="break-words">
+                                {note.message}
+                              </p>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -250,6 +341,21 @@ export function TextbookPdfImportReviewPanel({
                                       style={{ width: `${confidencePercent}%` }}
                                     />
                                   </div>
+                                </div>
+                                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                                  <Badge variant="secondary" className="bg-white text-[10px] text-slate-600 shadow-sm">
+                                    {getChapterSourceLabel(chapter.source)}
+                                  </Badge>
+                                  {chapter.printedPage ? (
+                                    <Badge variant="secondary" className="bg-white text-[10px] text-slate-600 shadow-sm">
+                                      书页 {chapter.printedPage}
+                                    </Badge>
+                                  ) : null}
+                                  {chapter.needsReview ? (
+                                    <Badge variant="secondary" className="bg-amber-100 text-[10px] text-amber-700 shadow-sm">
+                                      待复核
+                                    </Badge>
+                                  ) : null}
                                 </div>
                               </div>
                               

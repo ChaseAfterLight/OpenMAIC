@@ -102,6 +102,10 @@ function createImportDraft(
     status,
     units: [],
     unboundPages: [],
+    tocCandidatePages: [],
+    pageAnchors: [],
+    conflictNotes: [],
+    lowConfidencePages: [],
   };
 }
 

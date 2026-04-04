@@ -208,7 +208,10 @@ function computeImportBindingDiagnostics(importDraft: TextbookPdfImportDraftReco
 function buildImportDraftReviewPayload(importDraft: TextbookPdfImportDraftRecord) {
   return {
     ...importDraft, pageTexts: undefined,
-    units: importDraft.units.map((unit) => ({ ...unit, chapters: unit.chapters.map((chapter) => { const { summary: _summary, keywords: _keywords, ...rest } = chapter; return rest; }) })),
+    units: importDraft.units.map((unit) => ({
+      ...unit,
+      chapters: unit.chapters.map((chapter) => ({ ...chapter })),
+    })),
   };
 }
 
@@ -1035,7 +1038,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                           <Input type="file" onChange={e => setUploadFile(e.target.files?.[0] ?? null)} className="file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer text-xs mb-3 w-full" />
                           {uploadFile && (
                             <div className="space-y-2 animate-in fade-in">
-                              <Input placeholder="附件标题 (选填)" bsSize="sm" value={uploadTitle} onChange={e => setUploadTitle(e.target.value)} className="text-xs h-8" />
+                              <Input placeholder="附件标题 (选填)" value={uploadTitle} onChange={e => setUploadTitle(e.target.value)} className="text-xs h-8" />
                               <Button size="sm" className="w-full h-8 text-xs bg-indigo-600 hover:bg-indigo-700" onClick={uploadAttachment}>确认上传</Button>
                             </div>
                           )}

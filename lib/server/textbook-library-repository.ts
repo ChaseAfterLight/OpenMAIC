@@ -253,6 +253,9 @@ function normalizeImportChapterDraft(
     pageStart: Math.max(1, Number(chapter.pageStart) || 1),
     pageEnd: Math.max(1, Number(chapter.pageEnd) || Number(chapter.pageStart) || 1),
     confidence: Math.max(0, Math.min(1, Number(chapter.confidence) || 0)),
+    printedPage: chapter.printedPage ? Math.max(1, Number(chapter.printedPage)) : undefined,
+    source: chapter.source ?? undefined,
+    needsReview: Boolean(chapter.needsReview),
   };
 }
 
@@ -261,6 +264,8 @@ function normalizeImportUnitDraft(unit: TextbookPdfImportUnitDraft, order: numbe
     ...unit,
     title: unit.title?.trim() || `单元 ${order + 1}`,
     order,
+    source: unit.source ?? undefined,
+    needsReview: Boolean(unit.needsReview),
     chapters: Array.isArray(unit.chapters)
       ? unit.chapters.map((chapter, chapterIndex) =>
           normalizeImportChapterDraft(chapter, chapter.order ?? chapterIndex),
@@ -293,6 +298,43 @@ function normalizePdfImportDraft(draft: TextbookPdfImportDraftRecord): TextbookP
       : [],
     unboundPages: Array.isArray(draft.unboundPages)
       ? [...new Set(draft.unboundPages.map((page) => Number(page)).filter((page) => page > 0))].sort(
+          (left, right) => left - right,
+        )
+      : [],
+    proposalSource: draft.proposalSource ?? undefined,
+    proposalConfidence:
+      typeof draft.proposalConfidence === 'number'
+        ? Math.max(0, Math.min(1, Number(draft.proposalConfidence) || 0))
+        : undefined,
+    aiModel: draft.aiModel?.trim() || undefined,
+    tocCandidatePages: Array.isArray(draft.tocCandidatePages)
+      ? [...new Set(draft.tocCandidatePages.map((page) => Number(page)).filter((page) => page > 0))].sort(
+          (left, right) => left - right,
+        )
+      : [],
+    pageAnchors: Array.isArray(draft.pageAnchors)
+      ? draft.pageAnchors
+          .map((anchor) => ({
+            printedPage: Math.max(1, Number(anchor.printedPage) || 1),
+            rawPage: Math.max(1, Number(anchor.rawPage) || 1),
+            confidence: Math.max(0, Math.min(1, Number(anchor.confidence) || 0)),
+            source: anchor.source ?? 'rules',
+          }))
+          .sort((left, right) => left.printedPage - right.printedPage)
+      : [],
+    conflictNotes: Array.isArray(draft.conflictNotes)
+      ? draft.conflictNotes
+          .map((note) => ({
+            code: note.code ?? 'ai-failed',
+            message: note.message?.trim() || '解析提示',
+            page: note.page ? Math.max(1, Number(note.page)) : undefined,
+            chapterTitle: note.chapterTitle?.trim() || undefined,
+            source: note.source ?? 'system',
+          }))
+          .filter((note) => Boolean(note.message))
+      : [],
+    lowConfidencePages: Array.isArray(draft.lowConfidencePages)
+      ? [...new Set(draft.lowConfidencePages.map((page) => Number(page)).filter((page) => page > 0))].sort(
           (left, right) => left - right,
         )
       : [],
@@ -1088,6 +1130,10 @@ export async function createTextbookPdfImportDraft(
     objectKey,
     units: [],
     unboundPages: [],
+    tocCandidatePages: [],
+    pageAnchors: [],
+    conflictNotes: [],
+    lowConfidencePages: [],
   });
   store.pdfImportDrafts = [...store.pdfImportDrafts, draft];
   await writeStore(store);
@@ -1140,6 +1186,13 @@ export async function updateTextbookPdfImportProcessing(
     extractedText: input.extractedText ?? current.extractedText,
     units: input.units ?? current.units,
     unboundPages: input.unboundPages ?? current.unboundPages,
+    proposalSource: input.proposalSource ?? current.proposalSource,
+    proposalConfidence: input.proposalConfidence ?? current.proposalConfidence,
+    aiModel: input.aiModel ?? current.aiModel,
+    tocCandidatePages: input.tocCandidatePages ?? current.tocCandidatePages,
+    pageAnchors: input.pageAnchors ?? current.pageAnchors,
+    conflictNotes: input.conflictNotes ?? current.conflictNotes,
+    lowConfidencePages: input.lowConfidencePages ?? current.lowConfidencePages,
     parseError: input.parseError,
     updatedAt: Date.now(),
   });
@@ -1239,6 +1292,8 @@ export async function confirmTextbookPdfImportDraft(
       return {
         id: chapterId,
         title: chapter.title,
+        summary: '',
+        keywords: [],
         order: chapterIndex,
         attachments: [
           {

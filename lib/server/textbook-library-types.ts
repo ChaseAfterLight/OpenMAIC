@@ -10,6 +10,35 @@ export type TextbookPdfImportDraftStatus =
   | 'ready'
   | 'failed'
   | 'confirmed';
+export type TextbookPdfImportProposalSource =
+  | 'ai'
+  | 'rules'
+  | 'merged'
+  | 'fallback'
+  | 'manual';
+
+export interface TextbookPdfImportPageAnchor {
+  printedPage: number;
+  rawPage: number;
+  confidence: number;
+  source: Exclude<TextbookPdfImportProposalSource, 'manual'>;
+}
+
+export interface TextbookPdfImportConflictNote {
+  code:
+    | 'ai-disabled'
+    | 'ai-unavailable'
+    | 'ai-timeout'
+    | 'ai-invalid-json'
+    | 'ai-failed'
+    | 'structure-conflict'
+    | 'mapping-low-confidence'
+    | 'low-confidence-page';
+  message: string;
+  page?: number;
+  chapterTitle?: string;
+  source?: TextbookPdfImportProposalSource | 'system';
+}
 
 export interface TextbookAttachmentSourcePdfBinding {
   importDraftId: string;
@@ -92,12 +121,17 @@ export interface TextbookPdfImportChapterDraft {
   pageStart: number;
   pageEnd: number;
   confidence: number;
+  printedPage?: number;
+  source?: TextbookPdfImportProposalSource;
+  needsReview?: boolean;
 }
 
 export interface TextbookPdfImportUnitDraft {
   id: string;
   title: string;
   order: number;
+  source?: TextbookPdfImportProposalSource;
+  needsReview?: boolean;
   chapters: TextbookPdfImportChapterDraft[];
 }
 
@@ -120,6 +154,13 @@ export interface TextbookPdfImportDraftRecord {
   extractedText?: string;
   units: TextbookPdfImportUnitDraft[];
   unboundPages: number[];
+  proposalSource?: Exclude<TextbookPdfImportProposalSource, 'manual'>;
+  proposalConfidence?: number;
+  aiModel?: string;
+  tocCandidatePages: number[];
+  pageAnchors: TextbookPdfImportPageAnchor[];
+  conflictNotes: TextbookPdfImportConflictNote[];
+  lowConfidencePages: number[];
   parseError?: string;
 }
 
@@ -209,6 +250,13 @@ export interface UpdateTextbookPdfImportProcessingInput {
   extractedText?: string;
   units?: TextbookPdfImportUnitDraft[];
   unboundPages?: number[];
+  proposalSource?: Exclude<TextbookPdfImportProposalSource, 'manual'>;
+  proposalConfidence?: number;
+  aiModel?: string;
+  tocCandidatePages?: number[];
+  pageAnchors?: TextbookPdfImportPageAnchor[];
+  conflictNotes?: TextbookPdfImportConflictNote[];
+  lowConfidencePages?: number[];
   parseError?: string;
 }
 
