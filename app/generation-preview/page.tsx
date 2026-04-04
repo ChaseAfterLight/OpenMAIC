@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, Sparkles, AlertCircle, AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -41,7 +41,6 @@ import {
 } from '@/lib/module-host/types';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
 import { StepVisualizer } from './components/visualizers';
-import type { ClassroomGenerationJobSnapshot } from '@/lib/types/classroom-job';
 
 const log = createLogger('GenerationPreview');
 
@@ -209,31 +208,8 @@ function buildLessonPackMetadata(session: GenerationSessionState, locale: Suppor
   };
 }
 
-function mapJobStepToPreviewStep(step: ClassroomGenerationJobSnapshot['step']) {
-  switch (step) {
-    case 'queued':
-    case 'initializing':
-      return 'agent-generation';
-    case 'researching':
-      return 'web-search';
-    case 'generating_outlines':
-      return 'outline';
-    case 'generating_scenes':
-      return 'slide-content';
-    case 'generating_media':
-    case 'generating_tts':
-    case 'persisting':
-    case 'completed':
-    case 'failed':
-    case 'expired':
-    default:
-      return 'actions';
-  }
-}
-
 function GenerationPreviewContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { t } = useI18n();
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -247,19 +223,6 @@ function GenerationPreviewContent() {
   const [statusMessage, setStatusMessage] = useState('');
   const [streamingOutlines, setStreamingOutlines] = useState<SceneOutline[] | null>(null);
   const [truncationWarnings, setTruncationWarnings] = useState<string[]>([]);
-
-  // Background job polling state
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [job, setJob] = useState<ClassroomGenerationJobSnapshot | null>(null);
-  const [jobLoading, setJobLoading] = useState(false);
-
-  useEffect(() => {
-    // Extract jobId from URL query params
-    const jobIdParam = searchParams?.get('jobId');
-    if (jobIdParam) {
-      setJobId(jobIdParam);
-    }
-  }, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,99 +270,11 @@ function GenerationPreviewContent() {
 
   // Compute active steps based on session state
   const activeSteps = getActiveSteps(session);
-  const isJobMode = Boolean(jobId);
-  const jobPreviewStepId = job ? mapJobStepToPreviewStep(job.step) : null;
-  const jobPreviewStep = ALL_STEPS.find((step) => step.id === jobPreviewStepId) ?? ALL_STEPS[0];
-  const jobPreviewOutlines: SceneOutline[] | null = job?.artifacts?.outlines
-    ? job.artifacts.outlines.map((outline) => ({
-        id: outline.id,
-        title: outline.title,
-        type: outline.type as SceneOutline['type'],
-        description: outline.title,
-        keyPoints: [],
-        order: outline.order,
-      }))
-    : null;
-  const activeStep =
-    activeSteps.length > 0
-      ? activeSteps[Math.min(currentStepIndex, activeSteps.length - 1)]
-      : ALL_STEPS[0];
 
-  // Load session from sessionStorage OR poll background job
+  // Load session from sessionStorage
   useEffect(() => {
     if (!authReady) return;
 
-    let cancelled = false;
-
-    // If jobId is provided, poll the background job API
-    if (jobId) {
-      setJobLoading(true);
-      setSessionLoaded(true); // Mark as loaded so we don't show "session not found"
-      let timer: ReturnType<typeof setTimeout> | undefined;
-
-      const pollJob = async () => {
-        try {
-          const response = await fetch(`/api/generate-classroom/${encodeURIComponent(jobId)}`, {
-            cache: 'no-store',
-          });
-          const body = (await response.json()) as
-            | ({ success: true } & ClassroomGenerationJobSnapshot)
-            | { success: false; error?: string };
-
-          if (cancelled) return;
-
-          if (!response.ok || !body.success) {
-            throw new Error(body.success ? 'Request failed' : body.error || 'Request failed');
-          }
-
-          const snapshot: ClassroomGenerationJobSnapshot = {
-            jobId: body.jobId,
-            status: body.status,
-            step: body.step,
-            progress: body.progress,
-            message: body.message,
-            pollUrl: body.pollUrl,
-            pollIntervalMs: body.pollIntervalMs,
-            scenesGenerated: body.scenesGenerated,
-            totalScenes: body.totalScenes,
-            result: body.result,
-            error: body.error,
-            artifacts: body.artifacts,
-            inputSummary: body.inputSummary,
-            done: body.done,
-          };
-
-          setJob(snapshot);
-          setError(null);
-          setJobLoading(false);
-
-          // If job succeeded, navigate to the result
-          if (snapshot.status === 'succeeded') {
-            if (snapshot.result?.url) {
-              router.push(snapshot.result.url);
-            }
-            return;
-          }
-
-          // Continue polling if not done
-          if (!snapshot.done) {
-            timer = setTimeout(pollJob, snapshot.pollIntervalMs || 5000);
-          }
-        } catch (pollError) {
-          if (cancelled) return;
-          setJobLoading(false);
-          setError(pollError instanceof Error ? pollError.message : String(pollError));
-        }
-      };
-
-      void pollJob();
-      return () => {
-        cancelled = true;
-        if (timer) clearTimeout(timer);
-      };
-    }
-
-    // Otherwise, load from sessionStorage for foreground generation
     cleanupOldImages(24).catch((e) => log.error(e));
 
     const saved = sessionStorage.getItem('generationSession');
@@ -412,10 +287,7 @@ function GenerationPreviewContent() {
       }
     }
     setSessionLoaded(true);
-    return () => {
-      cancelled = true;
-    };
-  }, [authReady, jobId, router]);
+  }, [authReady]);
 
   // Abort all in-flight requests on unmount
   useEffect(() => {
@@ -491,7 +363,8 @@ function GenerationPreviewContent() {
       const hasDeferredUploadToAnalyze = Boolean(currentSession.pdfStorageKey);
       const hasSelectedTextbookPdfToAnalyze =
         selectedTextbookPdfResources.length > 0 && !currentSession.selectedTextbookResourcesParsed;
-      const hasDocumentToAnalyze = hasDeferredUploadToAnalyze || hasSelectedTextbookPdfToAnalyze;
+      const hasDocumentToAnalyze =
+        hasDeferredUploadToAnalyze || hasSelectedTextbookPdfToAnalyze;
       // If no stored document to analyze, skip to the next available step
       if (!hasDocumentToAnalyze) {
         const firstNonPdfIdx = activeSteps.findIndex((s) => s.id !== 'pdf-analysis');
@@ -618,7 +491,8 @@ function GenerationPreviewContent() {
           );
         }
 
-        const imageStorageIds = boundedImages.length > 0 ? await storeImages(boundedImages) : [];
+        const imageStorageIds =
+          boundedImages.length > 0 ? await storeImages(boundedImages) : [];
 
         const pdfImages = boundedImages.map((img, i) => ({
           id: img.id,
@@ -732,9 +606,7 @@ function GenerationPreviewContent() {
         name: buildK12LessonPackTitle({
           input: currentSession.requirements.k12,
           presets: k12Presets,
-          locale: (currentSession.requirements.language === 'zh-CN'
-            ? 'zh-CN'
-            : 'en-US') as SupportedLocale,
+          locale: (currentSession.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale,
           requirement: currentSession.requirements.requirement,
         }),
         description: '',
@@ -1144,25 +1016,6 @@ function GenerationPreviewContent() {
     router.push('/');
   };
 
-  if (!authReady) {
-    return (
-      <div className="min-h-[100dvh] flex items-center justify-center">
-        <p className="text-sm text-muted-foreground">{t('auth.checkingSession')}</p>
-      </div>
-    );
-  }
-
-  if (isJobMode && jobLoading && !job) {
-    return (
-      <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex items-center justify-center p-4">
-        <div className="text-center text-muted-foreground">
-          <div className="size-8 border-2 border-current border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="mt-4 text-sm">{t('generation.loadingJob')}</p>
-        </div>
-      </div>
-    );
-  }
-
   // Still loading session from sessionStorage
   if (!sessionLoaded) {
     return (
@@ -1174,8 +1027,8 @@ function GenerationPreviewContent() {
     );
   }
 
-  // No session found (foreground generation mode only)
-  if (!session && !isJobMode) {
+  // No session found
+  if (!session) {
     return (
       <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex items-center justify-center p-4">
         <Card className="p-8 max-w-md w-full">
@@ -1193,18 +1046,18 @@ function GenerationPreviewContent() {
     );
   }
 
-  const previewSteps = isJobMode ? ALL_STEPS : activeSteps;
-  const previewStep = isJobMode ? jobPreviewStep : activeStep;
-  const previewCurrentStepIndex = Math.max(
-    0,
-    previewSteps.findIndex((step) => step.id === previewStep.id),
-  );
-  const previewOutlines = isJobMode ? jobPreviewOutlines : streamingOutlines;
-  const previewError = isJobMode ? job?.error || error : error;
-  const previewComplete = isJobMode ? job?.status === 'succeeded' : isComplete;
-  const previewStatusMessage = isJobMode
-    ? job?.message || t('generation.loadingJob')
-    : statusMessage || t(previewStep.description);
+  const activeStep =
+    activeSteps.length > 0
+      ? activeSteps[Math.min(currentStepIndex, activeSteps.length - 1)]
+      : ALL_STEPS[0];
+
+  if (!authReady) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">{t('auth.checkingSession')}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex flex-col items-center justify-center p-4 relative overflow-hidden text-center">
@@ -1242,14 +1095,14 @@ function GenerationPreviewContent() {
           <Card className="relative overflow-hidden border-muted/40 shadow-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl min-h-[400px] flex flex-col items-center justify-center p-8 md:p-12">
             {/* Progress Dots */}
             <div className="absolute top-6 left-0 right-0 flex justify-center gap-2">
-              {previewSteps.map((step, idx) => (
+              {activeSteps.map((step, idx) => (
                 <div
                   key={step.id}
                   className={cn(
                     'h-1.5 rounded-full transition-all duration-500',
-                    idx < previewCurrentStepIndex
+                    idx < currentStepIndex
                       ? 'w-1.5 bg-blue-500/30'
-                      : idx === previewCurrentStepIndex
+                      : idx === currentStepIndex
                         ? 'w-8 bg-blue-500'
                         : 'w-1.5 bg-muted/50',
                   )}
@@ -1262,7 +1115,7 @@ function GenerationPreviewContent() {
               {/* Icon / Visualizer Container */}
               <div className="relative size-48 flex items-center justify-center">
                 <AnimatePresence mode="popLayout">
-                  {previewError ? (
+                  {error ? (
                     <motion.div
                       key="error"
                       initial={{ scale: 0.5, opacity: 0 }}
@@ -1271,7 +1124,7 @@ function GenerationPreviewContent() {
                     >
                       <AlertCircle className="size-16 text-red-500" />
                     </motion.div>
-                  ) : previewComplete ? (
+                  ) : isComplete ? (
                     <motion.div
                       key="complete"
                       initial={{ scale: 0.5, opacity: 0 }}
@@ -1282,7 +1135,7 @@ function GenerationPreviewContent() {
                     </motion.div>
                   ) : (
                     <motion.div
-                      key={previewStep.id}
+                      key={activeStep.id}
                       initial={{ scale: 0.8, opacity: 0, filter: 'blur(10px)' }}
                       animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
                       exit={{ scale: 1.2, opacity: 0, filter: 'blur(10px)' }}
@@ -1290,8 +1143,8 @@ function GenerationPreviewContent() {
                       className="absolute inset-0 flex items-center justify-center"
                     >
                       <StepVisualizer
-                        stepId={previewStep.id}
-                        outlines={previewOutlines}
+                        stepId={activeStep.id}
+                        outlines={streamingOutlines}
                         webSearchSources={webSearchSources}
                       />
                     </motion.div>
@@ -1303,87 +1156,84 @@ function GenerationPreviewContent() {
               <div className="space-y-3 max-w-sm mx-auto">
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={previewError ? 'error' : previewComplete ? 'done' : previewStep.id}
+                    key={error ? 'error' : isComplete ? 'done' : activeStep.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     className="space-y-2"
                   >
                     <h2 className="text-2xl font-bold tracking-tight">
-                      {previewError
+                      {error
                         ? t('generation.generationFailed')
-                        : previewComplete
+                        : isComplete
                           ? t('generation.generationComplete')
-                          : t(previewStep.title)}
+                          : t(activeStep.title)}
                     </h2>
                     <p className="text-muted-foreground text-base">
-                      {previewError
-                        ? previewError
-                        : previewComplete
+                      {error
+                        ? error
+                        : isComplete
                           ? t('generation.classroomReady')
-                          : previewStatusMessage}
+                          : statusMessage || t(activeStep.description)}
                     </p>
                   </motion.div>
                 </AnimatePresence>
 
                 {/* Truncation warning indicator */}
                 <AnimatePresence>
-                  {truncationWarnings.length > 0 &&
-                    !previewError &&
-                    !previewComplete &&
-                    !isJobMode && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0 }}
-                        transition={{
-                          type: 'spring',
-                          stiffness: 500,
-                          damping: 30,
-                        }}
-                        className="flex justify-center"
-                      >
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <motion.button
-                              type="button"
-                              animate={{
-                                boxShadow: [
-                                  '0 0 0 0 rgba(251, 191, 36, 0), 0 0 0 0 rgba(251, 191, 36, 0)',
-                                  '0 0 16px 4px rgba(251, 191, 36, 0.12), 0 0 4px 1px rgba(251, 191, 36, 0.08)',
-                                  '0 0 0 0 rgba(251, 191, 36, 0), 0 0 0 0 rgba(251, 191, 36, 0)',
-                                ],
-                              }}
-                              transition={{
-                                duration: 3,
-                                repeat: Infinity,
-                                ease: 'easeInOut',
-                              }}
-                              className="relative size-7 rounded-full flex items-center justify-center cursor-default
+                  {truncationWarnings.length > 0 && !error && !isComplete && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0 }}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 500,
+                        damping: 30,
+                      }}
+                      className="flex justify-center"
+                    >
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <motion.button
+                            type="button"
+                            animate={{
+                              boxShadow: [
+                                '0 0 0 0 rgba(251, 191, 36, 0), 0 0 0 0 rgba(251, 191, 36, 0)',
+                                '0 0 16px 4px rgba(251, 191, 36, 0.12), 0 0 4px 1px rgba(251, 191, 36, 0.08)',
+                                '0 0 0 0 rgba(251, 191, 36, 0), 0 0 0 0 rgba(251, 191, 36, 0)',
+                              ],
+                            }}
+                            transition={{
+                              duration: 3,
+                              repeat: Infinity,
+                              ease: 'easeInOut',
+                            }}
+                            className="relative size-7 rounded-full flex items-center justify-center cursor-default
                                        bg-gradient-to-br from-amber-400/15 to-orange-400/10
                                        border border-amber-400/25 hover:border-amber-400/40
                                        hover:from-amber-400/20 hover:to-orange-400/15
                                        transition-colors duration-300
                                        focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30"
-                            >
-                              <AlertTriangle
-                                className="size-3.5 text-amber-500 dark:text-amber-400"
-                                strokeWidth={2.5}
-                              />
-                            </motion.button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom" sideOffset={6}>
-                            <div className="space-y-1 py-0.5">
-                              {truncationWarnings.map((w, i) => (
-                                <p key={i} className="text-xs leading-relaxed">
-                                  {w}
-                                </p>
-                              ))}
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </motion.div>
-                    )}
+                          >
+                            <AlertTriangle
+                              className="size-3.5 text-amber-500 dark:text-amber-400"
+                              strokeWidth={2.5}
+                            />
+                          </motion.button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" sideOffset={6}>
+                          <div className="space-y-1 py-0.5">
+                            {truncationWarnings.map((w, i) => (
+                              <p key={i} className="text-xs leading-relaxed">
+                                {w}
+                              </p>
+                            ))}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </motion.div>
+                  )}
                 </AnimatePresence>
               </div>
             </div>
@@ -1393,7 +1243,7 @@ function GenerationPreviewContent() {
         {/* Footer Action */}
         <div className="h-16 flex items-center justify-center w-full">
           <AnimatePresence>
-            {previewError ? (
+            {error ? (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1403,7 +1253,7 @@ function GenerationPreviewContent() {
                   {t('generation.goBackAndRetry')}
                 </Button>
               </motion.div>
-            ) : !previewComplete ? (
+            ) : !isComplete ? (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -1411,7 +1261,7 @@ function GenerationPreviewContent() {
               >
                 <Sparkles className="size-3 animate-pulse" />
                 {t('generation.aiWorking')}
-                {!isJobMode && generatedAgents.length > 0 && !showAgentReveal && (
+                {generatedAgents.length > 0 && !showAgentReveal && (
                   <button
                     onClick={() => setShowAgentReveal(true)}
                     className="ml-2 flex items-center gap-1.5 rounded-full border border-purple-300/30 bg-purple-500/10 px-3 py-1 text-xs font-medium normal-case tracking-normal text-purple-400 transition-colors hover:bg-purple-500/20 hover:text-purple-300"
@@ -1427,17 +1277,15 @@ function GenerationPreviewContent() {
       </div>
 
       {/* Agent Reveal Modal */}
-      {!isJobMode ? (
-        <AgentRevealModal
-          agents={generatedAgents}
-          open={showAgentReveal}
-          onClose={() => setShowAgentReveal(false)}
-          onAllRevealed={() => {
-            agentRevealResolveRef.current?.();
-            agentRevealResolveRef.current = null;
-          }}
-        />
-      ) : null}
+      <AgentRevealModal
+        agents={generatedAgents}
+        open={showAgentReveal}
+        onClose={() => setShowAgentReveal(false)}
+        onAllRevealed={() => {
+          agentRevealResolveRef.current?.();
+          agentRevealResolveRef.current = null;
+        }}
+      />
     </div>
   );
 }

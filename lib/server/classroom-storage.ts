@@ -1,11 +1,9 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { NextRequest } from 'next/server';
-import type { LessonPackMetadata, Scene, Stage } from '@/lib/types/stage';
-import { ensureStageLessonPack, normalizeLessonPackMetadata } from '@/lib/utils/lesson-pack';
+import type { Scene, Stage } from '@/lib/types/stage';
+import { ensureStageLessonPack } from '@/lib/utils/lesson-pack';
 import {
-  deleteScenesByStageId,
-  deleteStageRecord,
   getStageRecord,
   listScenesByStageId,
   replaceScenesByStageId,
@@ -145,97 +143,4 @@ export async function persistClassroom(
     ...classroomData,
     url: `${baseUrl}/classroom/${data.id}`,
   };
-}
-
-export async function createClassroomGenerationPlaceholder(args: {
-  id: string;
-  jobId: string;
-  ownerUserId?: string;
-  name: string;
-  language?: string;
-  lessonPack?: Partial<LessonPackMetadata>;
-}): Promise<Stage> {
-  const now = Date.now();
-  const stage: Stage = ensureStageLessonPack({
-    id: args.id,
-    ownerUserId: args.ownerUserId,
-    name: args.name,
-    description: undefined,
-    language: args.language,
-    style: 'interactive',
-    createdAt: now,
-    updatedAt: now,
-    lessonPack: {
-      ...args.lessonPack,
-      status: 'in_progress',
-      exportStatus: args.lessonPack?.exportStatus ?? 'not_exported',
-      generationJobId: args.jobId,
-      generationJobStatus: 'queued',
-      generationProgress: 0,
-      generationMessage: 'Classroom generation job queued',
-    },
-    agentIds: [],
-    whiteboard: undefined,
-  });
-
-  await saveStageRecord({
-    id: stage.id,
-    ownerUserId: stage.ownerUserId,
-    name: stage.name,
-    description: stage.description,
-    createdAt: stage.createdAt,
-    updatedAt: stage.updatedAt,
-    lessonPack: stage.lessonPack,
-    language: stage.language,
-    style: stage.style,
-    currentSceneId: undefined,
-    agentIds: stage.agentIds,
-    whiteboard: stage.whiteboard,
-  } as unknown as Stage);
-
-  return stage;
-}
-
-export async function syncClassroomGenerationPlaceholder(args: {
-  stageId: string;
-  lessonPackPatch?: Partial<LessonPackMetadata>;
-  stagePatch?: Partial<Stage>;
-}): Promise<Stage | null> {
-  const existing = await getStageRecord(args.stageId);
-  if (!existing) {
-    return null;
-  }
-
-  const normalized = ensureStageLessonPack(existing);
-  const updatedStage: Stage = ensureStageLessonPack({
-    ...normalized,
-    ...args.stagePatch,
-    lessonPack: normalizeLessonPackMetadata({
-      ...normalized.lessonPack,
-      ...args.lessonPackPatch,
-    }),
-    updatedAt: Date.now(),
-  });
-
-  await saveStageRecord({
-    id: updatedStage.id,
-    ownerUserId: updatedStage.ownerUserId,
-    name: updatedStage.name,
-    description: updatedStage.description,
-    createdAt: updatedStage.createdAt,
-    updatedAt: updatedStage.updatedAt,
-    lessonPack: updatedStage.lessonPack,
-    language: updatedStage.language,
-    style: updatedStage.style,
-    currentSceneId: existing.currentSceneId,
-    agentIds: updatedStage.agentIds,
-    whiteboard: updatedStage.whiteboard,
-  } as unknown as Stage);
-
-  return updatedStage;
-}
-
-export async function deleteClassroomGenerationPlaceholder(stageId: string): Promise<void> {
-  await deleteScenesByStageId(stageId);
-  await deleteStageRecord(stageId);
 }

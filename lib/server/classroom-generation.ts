@@ -17,7 +17,7 @@ import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatter
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
 import { parseModelString } from '@/lib/ai/providers';
-import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
+import { resolveApiKey, resolveWebSearchApiKey } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import { buildSearchQuery } from '@/lib/server/search-query-builder';
@@ -33,16 +33,13 @@ import {
 import type { UserRequirements } from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
-import type { LessonPackMetadata, Scene, Stage } from '@/lib/types/stage';
-import type { ClassroomGenerationArtifacts } from '@/lib/types/classroom-job';
+import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 
 const log = createLogger('Classroom');
 
 export interface GenerateClassroomInput {
-  stageId?: string;
   requirement: string;
-  requirements?: UserRequirements;
   pdfContent?: { text: string; images: string[] };
   language?: string;
   enableWebSearch?: boolean;
@@ -53,16 +50,6 @@ export interface GenerateClassroomInput {
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
   agentMode?: 'default' | 'generate';
-  ownerUserId?: string;
-  lessonPackTitle?: string;
-  lessonPackMetadata?: LessonPackMetadata;
-  modelConfig?: {
-    modelString?: string;
-    apiKey?: string;
-    baseUrl?: string;
-    providerType?: string;
-    requiresApiKey?: boolean;
-  };
 }
 
 export type ClassroomGenerationStep =
@@ -201,7 +188,6 @@ export async function generateClassroom(
   options: {
     baseUrl: string;
     onProgress?: (progress: ClassroomGenerationProgress) => Promise<void> | void;
-    onArtifacts?: (artifacts: Partial<ClassroomGenerationArtifacts>) => Promise<void> | void;
   },
 ): Promise<GenerateClassroomResult> {
   const { requirement, pdfContent } = input;
@@ -213,17 +199,13 @@ export async function generateClassroom(
     scenesGenerated: 0,
   });
 
-  const {
-    model: languageModel,
-    modelInfo,
-    modelString,
-    apiKey: resolvedApiKey,
-  } = resolveModel(input.modelConfig ?? {});
+  const { model: languageModel, modelInfo, modelString } = resolveModel({});
   log.info(`Using server-configured model: ${modelString}`);
 
   // Fail fast if the resolved provider has no API key configured
   const { providerId } = parseModelString(modelString);
-  if (!resolvedApiKey) {
+  const apiKey = resolveApiKey(providerId);
+  if (!apiKey) {
     throw new Error(
       `No API key configured for provider "${providerId}". ` +
         `Set the appropriate key in .env.local or server-providers.yml (e.g. ${providerId.toUpperCase()}_API_KEY).`,
@@ -262,7 +244,6 @@ export async function generateClassroom(
 
   const lang = normalizeLanguage(input.language);
   const requirements: UserRequirements = {
-    ...(input.requirements ?? {}),
     requirement,
     language: lang,
   };
@@ -375,15 +356,6 @@ export async function generateClassroom(
   const outlines = outlinesResult.data;
   log.info(`Generated ${outlines.length} scene outlines`);
 
-  await options.onArtifacts?.({
-    outlines: outlines.map((outline) => ({
-      id: outline.id,
-      title: outline.title,
-      type: outline.type,
-      order: outline.order,
-    })),
-  });
-
   await options.onProgress?.({
     step: 'generating_outlines',
     progress: 30,
@@ -392,21 +364,15 @@ export async function generateClassroom(
     totalScenes: outlines.length,
   });
 
-  const stageId = input.stageId || nanoid(10);
+  const stageId = nanoid(10);
   const stage: Stage = {
     id: stageId,
-    ownerUserId: input.ownerUserId,
-    name: input.lessonPackTitle || outlines[0]?.title || requirement.slice(0, 50),
+    name: outlines[0]?.title || requirement.slice(0, 50),
     description: undefined,
     language: lang,
     style: 'interactive',
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    lessonPack: {
-      ...input.lessonPackMetadata,
-      status: 'in_progress',
-      exportStatus: input.lessonPackMetadata?.exportStatus ?? 'not_exported',
-    },
     // Embed agent configs so API-generated classrooms can hydrate
     // the client-side agent registry without IndexedDB
     generatedAgentConfigs: agents.map((a, i) => ({
@@ -422,16 +388,6 @@ export async function generateClassroom(
 
   const store = createInMemoryStore(stage);
   const api = createStageAPI(store);
-
-  await persistClassroom(
-    {
-      id: stageId,
-      ownerUserId: input.ownerUserId,
-      stage,
-      scenes: [],
-    },
-    options.baseUrl,
-  );
 
   log.info('Stage 2: Generating scene content and actions...');
   let generatedScenes = 0;
@@ -473,18 +429,6 @@ export async function generateClassroom(
     }
 
     generatedScenes += 1;
-    await persistClassroom(
-      {
-        id: stageId,
-        ownerUserId: input.ownerUserId,
-        stage: {
-          ...store.getState().stage!,
-          updatedAt: Date.now(),
-        },
-        scenes: store.getState().scenes,
-      },
-      options.baseUrl,
-    );
     const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
@@ -501,16 +445,6 @@ export async function generateClassroom(
   if (scenes.length === 0) {
     throw new Error('No scenes were generated');
   }
-
-  await options.onArtifacts?.({
-    content: scenes.map((scene) => ({
-      id: scene.id,
-      title: scene.title,
-      type: scene.type,
-      order: scene.order,
-      actionCount: scene.actions?.length,
-    })),
-  });
 
   // Phase: Media generation (after all scenes generated)
   if (input.enableImageGeneration || input.enableVideoGeneration) {
@@ -560,31 +494,13 @@ export async function generateClassroom(
   const persisted = await persistClassroom(
     {
       id: stageId,
-      ownerUserId: input.ownerUserId,
-      stage: stage.lessonPack
-        ? {
-            ...stage,
-            lessonPack: {
-              ...stage.lessonPack,
-              status: 'ready',
-            },
-          }
-        : stage,
+      stage,
       scenes,
     },
     options.baseUrl,
   );
 
   log.info(`Classroom persisted: ${persisted.id}, URL: ${persisted.url}`);
-
-  await options.onArtifacts?.({
-    final: {
-      classroomId: persisted.id,
-      url: persisted.url,
-      scenesCount: scenes.length,
-      stageName: persisted.stage.name,
-    },
-  });
 
   await options.onProgress?.({
     step: 'completed',
@@ -597,7 +513,7 @@ export async function generateClassroom(
   return {
     id: persisted.id,
     url: persisted.url,
-    stage: persisted.stage,
+    stage,
     scenes,
     scenesCount: scenes.length,
     createdAt: persisted.createdAt,

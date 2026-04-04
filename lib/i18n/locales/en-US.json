@@ -369,10 +369,7 @@
     "outlineGenerateFailed": "Outline generation failed, please try again later",
     "webSearching": "Web Search",
     "webSearchingDesc": "Searching the web for up-to-date information",
-    "webSearchFailed": "Web search failed",
-    "loadingJob": "Loading background job...",
-    "pleaseRetry": "Task incomplete, please retry.",
-    "progress": "Progress"
+    "webSearchFailed": "Web search failed"
   },
   "settings": {
     "title": "Settings",

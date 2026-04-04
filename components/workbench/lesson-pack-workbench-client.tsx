@@ -89,14 +89,11 @@ const workbenchCopy = {
     ready: '就绪',
     draft: '草稿',
     inProgress: '进行中',
-    generationFailed: '生成失败',
-    generationQueued: '排队中',
     archived: '已归档',
     empty: '当前工作台还没有内容，快创建一个新备课包吧。',
     sceneCount: '内容页',
     openPack: '备课详情',
     continueEdit: '继续编辑',
-    resumeGeneration: '查看进度',
     export: '导出物料',
     rename: '重命名',
     duplicate: '复制',
@@ -139,14 +136,11 @@ const workbenchCopy = {
     ready: 'Ready',
     draft: 'Draft',
     inProgress: 'In progress',
-    generationFailed: 'Failed',
-    generationQueued: 'Queued',
     archived: 'Archived',
     empty: 'No lesson packs yet. Kick off a new one to get started.',
     sceneCount: 'scenes',
     openPack: 'Details',
     continueEdit: 'Continue Editing',
-    resumeGeneration: 'View Progress',
     export: 'Export',
     rename: 'Rename',
     duplicate: 'Duplicate',
@@ -181,26 +175,12 @@ function formatTimestamp(timestamp: number, locale: SupportedLocale) {
   });
 }
 
-function getStatusLabel(
-  status: StageListItem['lessonPack']['status'],
-  locale: SupportedLocale,
-  generationStatus?: StageListItem['lessonPack']['generationJobStatus'],
-) {
+function getStatusLabel(status: StageListItem['lessonPack']['status'], locale: SupportedLocale) {
   const copy = workbenchCopy[locale];
-  if (generationStatus === 'failed' || generationStatus === 'expired') return copy.generationFailed;
-  if (generationStatus === 'queued') return copy.generationQueued;
   if (status === 'ready') return copy.ready;
   if (status === 'in_progress') return copy.inProgress;
   if (status === 'archived') return copy.archived;
   return copy.draft;
-}
-
-function getPrimaryHref(classroom: StageListItem) {
-  return `/packs/${classroom.id}`;
-}
-
-function canEditClassroom(classroom: StageListItem) {
-  return classroom.lessonPack.status === 'ready';
 }
 
 export function LessonPackWorkbenchClient() {
@@ -488,7 +468,7 @@ export function LessonPackWorkbenchClient() {
               >
                 <button
                   type="button"
-                  onClick={() => router.push(getPrimaryHref(classroom))}
+                  onClick={() => router.push(`/packs/${classroom.id}`)}
                   className="relative block w-full overflow-hidden text-left"
                 >
                   <div className="relative aspect-[16/9] w-full bg-slate-100 dark:bg-slate-950">
@@ -515,11 +495,7 @@ export function LessonPackWorkbenchClient() {
                         variant="secondary"
                         className="bg-white/90 text-slate-700 shadow-sm backdrop-blur dark:bg-slate-900/90 dark:text-slate-300"
                       >
-                        {getStatusLabel(
-                          classroom.lessonPack.status,
-                          activeLocale,
-                          classroom.lessonPack.generationJobStatus,
-                        )}
+                        {getStatusLabel(classroom.lessonPack.status, activeLocale)}
                       </Badge>
                     </div>
                   </div>
@@ -541,14 +517,6 @@ export function LessonPackWorkbenchClient() {
                             .filter(Boolean)
                             .join(' · ')}
                         </p>
-                        {classroom.lessonPack.status === 'in_progress' &&
-                        classroom.lessonPack.generationMessage ? (
-                          <p className="truncate text-xs text-indigo-600 dark:text-indigo-400">
-                            {classroom.lessonPack.generationProgress != null
-                              ? `${classroom.lessonPack.generationProgress}% · ${classroom.lessonPack.generationMessage}`
-                              : classroom.lessonPack.generationMessage}
-                          </p>
-                        ) : null}
                       </div>
 
                       <DropdownMenu>
@@ -561,29 +529,23 @@ export function LessonPackWorkbenchClient() {
                             <MoreHorizontal className="size-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40 rounded-xl">
-                          <DropdownMenuItem onClick={() => router.push(getPrimaryHref(classroom))}>
+                        <DropdownMenuContent align="end" className="w-40 rounded-xl">
+                          <DropdownMenuItem onClick={() => router.push(`/packs/${classroom.id}`)}>
                             <ArrowUpRight className="mr-2 size-4" />
-                            {classroom.lessonPack.status === 'in_progress'
-                              ? copy.resumeGeneration
-                              : copy.openPack}
+                            {copy.openPack}
                           </DropdownMenuItem>
-                          {canEditClassroom(classroom) ? (
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/classroom/${classroom.id}`)}
-                            >
-                              <Pencil className="mr-2 size-4" />
-                              {copy.continueEdit}
-                            </DropdownMenuItem>
-                          ) : null}
-                          {canEditClassroom(classroom) ? (
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/packs/${classroom.id}?tab=export`)}
-                            >
-                              <FileOutput className="mr-2 size-4" />
-                              {copy.export}
-                            </DropdownMenuItem>
-                          ) : null}
+                          <DropdownMenuItem
+                            onClick={() => router.push(`/classroom/${classroom.id}`)}
+                          >
+                            <Pencil className="mr-2 size-4" />
+                            {copy.continueEdit}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => router.push(`/packs/${classroom.id}?tab=export`)}
+                          >
+                            <FileOutput className="mr-2 size-4" />
+                            {copy.export}
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={() => {

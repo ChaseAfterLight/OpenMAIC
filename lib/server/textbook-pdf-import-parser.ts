@@ -919,7 +919,10 @@ async function runAiTocExtraction(
   pdf?: {
     getPage: (pageNumber: number) => Promise<{
       getViewport: (params: { scale: number }) => { width: number; height: number };
-      render: (params: any) => { promise: Promise<unknown> };
+      render: (params: {
+        canvasContext: object;
+        viewport: { width: number; height: number };
+      }) => { promise: Promise<unknown> };
     }>;
   },
 ): Promise<AiExtractionAttemptResult> {
@@ -1238,7 +1241,10 @@ async function buildImportProposal(
   pdf?: {
     getPage: (pageNumber: number) => Promise<{
       getViewport: (params: { scale: number }) => { width: number; height: number };
-      render: (params: any) => { promise: Promise<unknown> };
+      render: (params: {
+        canvasContext: object;
+        viewport: { width: number; height: number };
+      }) => { promise: Promise<unknown> };
     }>;
   },
 ): Promise<ProposalResult> {

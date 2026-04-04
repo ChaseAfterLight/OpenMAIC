@@ -4,11 +4,7 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { type GenerateClassroomInput } from '@/lib/server/classroom-generation';
 import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
-import {
-  buildRequestOrigin,
-  createClassroomGenerationPlaceholder,
-  deleteClassroomGenerationPlaceholder,
-} from '@/lib/server/classroom-storage';
+import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { requireApiRole } from '@/lib/server/auth-guards';
 import { createLogger } from '@/lib/logger';
 
@@ -23,28 +19,13 @@ export async function POST(req: NextRequest) {
   }
 
   let requirementSnippet: string | undefined;
-  let placeholderStageId: string | undefined;
   try {
     const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;
-    const requirement = rawBody.requirements?.requirement || rawBody.requirement || '';
-    const language: 'zh-CN' | 'en-US' =
-      rawBody.requirements?.language === 'en-US' || rawBody.language === 'en-US'
-        ? 'en-US'
-        : 'zh-CN';
-    requirementSnippet = requirement.substring(0, 60);
+    requirementSnippet = rawBody.requirement?.substring(0, 60);
     const body: GenerateClassroomInput = {
-      requirement,
-      ...(rawBody.requirements
-        ? {
-            requirements: {
-              ...rawBody.requirements,
-              requirement,
-              language,
-            },
-          }
-        : {}),
+      requirement: rawBody.requirement || '',
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
-      language,
+      ...(rawBody.language ? { language: rawBody.language } : {}),
       ...(rawBody.enableWebSearch != null ? { enableWebSearch: rawBody.enableWebSearch } : {}),
       ...(rawBody.webSearchProviderId ? { webSearchProviderId: rawBody.webSearchProviderId } : {}),
       ...(rawBody.webSearchApiKey ? { webSearchApiKey: rawBody.webSearchApiKey } : {}),
@@ -57,11 +38,8 @@ export async function POST(req: NextRequest) {
         : {}),
       ...(rawBody.enableTTS != null ? { enableTTS: rawBody.enableTTS } : {}),
       ...(rawBody.agentMode ? { agentMode: rawBody.agentMode } : {}),
-      ...(rawBody.lessonPackTitle ? { lessonPackTitle: rawBody.lessonPackTitle } : {}),
-      ...(rawBody.lessonPackMetadata ? { lessonPackMetadata: rawBody.lessonPackMetadata } : {}),
-      ...(rawBody.modelConfig ? { modelConfig: rawBody.modelConfig } : {}),
-      ownerUserId: auth.user.id,
     };
+    const { requirement } = body;
 
     if (!requirement) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: requirement');
@@ -69,46 +47,23 @@ export async function POST(req: NextRequest) {
 
     const baseUrl = buildRequestOrigin(req);
     const jobId = nanoid(10);
-    const stageId = nanoid(10);
-    const jobInput: GenerateClassroomInput = {
-      ...body,
-      stageId,
-    };
-    const job = await createClassroomGenerationJob(jobId, jobInput);
-    await createClassroomGenerationPlaceholder({
-      id: stageId,
-      jobId,
-      ownerUserId: auth.user.id,
-      name: body.lessonPackTitle || requirement.substring(0, 50) || 'Untitled Stage',
-      language,
-      lessonPack: jobInput.lessonPackMetadata,
-    });
-    placeholderStageId = stageId;
+    const job = await createClassroomGenerationJob(jobId, body);
     const pollUrl = `${baseUrl}/api/generate-classroom/${jobId}`;
 
-    after(() => runClassroomGenerationJob(jobId, baseUrl));
+    after(() => runClassroomGenerationJob(jobId, body, baseUrl));
 
     return apiSuccess(
       {
         jobId,
-        stageId,
         status: job.status,
         step: job.step,
-        progress: job.progress,
         message: job.message,
         pollUrl,
-        previewUrl: `${baseUrl}/generation-preview?jobId=${jobId}`,
-        packUrl: `${baseUrl}/packs/${stageId}`,
         pollIntervalMs: 5000,
-        artifacts: job.artifacts,
-        inputSummary: job.inputSummary,
       },
       202,
     );
   } catch (error) {
-    if (placeholderStageId) {
-      await deleteClassroomGenerationPlaceholder(placeholderStageId).catch(() => {});
-    }
     log.error(
       `Classroom generation job creation failed [requirement="${requirementSnippet ?? 'unknown'}..."]:`,
       error,

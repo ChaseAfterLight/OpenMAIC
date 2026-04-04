@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type {
   ClassroomGenerationProgress,
+  ClassroomGenerationStep,
   GenerateClassroomInput,
   GenerateClassroomResult,
 } from '@/lib/server/classroom-generation';
@@ -10,39 +11,34 @@ import {
   ensureClassroomJobsDir,
   writeJsonFileAtomic,
 } from '@/lib/server/classroom-storage';
-import type {
-  ClassroomGenerationArtifacts,
-  ClassroomGenerationJobStatus,
-  ClassroomGenerationJobStep,
-  ClassroomGenerationResultSummary,
-} from '@/lib/types/classroom-job';
+
+export type ClassroomGenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export interface ClassroomGenerationJob {
   id: string;
   status: ClassroomGenerationJobStatus;
-  step: ClassroomGenerationJobStep;
+  step: ClassroomGenerationStep | 'queued' | 'failed';
   progress: number;
   message: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
-  retryCount: number;
-  input: GenerateClassroomInput;
   inputSummary: {
     requirementPreview: string;
     language: string;
     hasPdf: boolean;
     pdfTextLength: number;
     pdfImageCount: number;
-    enableWebSearch: boolean;
-    agentMode: 'default' | 'generate';
   };
   scenesGenerated: number;
   totalScenes?: number;
-  result?: ClassroomGenerationResultSummary;
+  result?: {
+    classroomId: string;
+    url: string;
+    scenesCount: number;
+  };
   error?: string;
-  artifacts: ClassroomGenerationArtifacts;
 }
 
 function jobFilePath(jobId: string) {
@@ -54,24 +50,9 @@ function buildInputSummary(input: GenerateClassroomInput): ClassroomGenerationJo
     requirementPreview:
       input.requirement.length > 200 ? `${input.requirement.slice(0, 197)}...` : input.requirement,
     language: input.language || 'zh-CN',
-    hasPdf: !!input.pdfContent?.text?.trim(),
+    hasPdf: !!input.pdfContent,
     pdfTextLength: input.pdfContent?.text.length || 0,
     pdfImageCount: input.pdfContent?.images.length || 0,
-    enableWebSearch: !!input.enableWebSearch,
-    agentMode: input.agentMode === 'generate' ? 'generate' : 'default',
-  };
-}
-
-function buildInitialArtifacts(input: GenerateClassroomInput): ClassroomGenerationArtifacts {
-  return {
-    requirement: {
-      requirementPreview:
-        input.requirement.length > 200 ? `${input.requirement.slice(0, 197)}...` : input.requirement,
-      language: input.language || 'zh-CN',
-      hasPdf: !!input.pdfContent?.text?.trim(),
-      lessonPackTitle: input.lessonPackTitle,
-      lessonPackMetadata: input.lessonPackMetadata,
-    },
   };
 }
 
@@ -94,38 +75,24 @@ async function withJobLock<T>(jobId: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Max age (ms) before a running job without progress is considered expired. */
-const STALE_JOB_TIMEOUT_MS = 30 * 60 * 1000;
+/** Max age (ms) before a "running" job without an active runner is considered stale. */
+const STALE_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 function markStaleIfNeeded(job: ClassroomGenerationJob): ClassroomGenerationJob {
   if (job.status !== 'running') return job;
   const updatedAt = new Date(job.updatedAt).getTime();
-  if (Date.now() - updatedAt <= STALE_JOB_TIMEOUT_MS) {
-    return job;
+  if (Date.now() - updatedAt > STALE_JOB_TIMEOUT_MS) {
+    return {
+      ...job,
+      status: 'failed',
+      step: 'failed',
+      message: 'Job appears stale (no progress update for 30 minutes)',
+      error: 'Stale job: process may have restarted during generation',
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
   }
-
-  const now = new Date().toISOString();
-  return {
-    ...job,
-    status: 'expired',
-    step: 'expired',
-    message: 'Classroom generation job expired while waiting for progress updates',
-    error: 'Job expired after 30 minutes without progress. Retry is required.',
-    completedAt: now,
-    updatedAt: now,
-  };
-}
-
-async function readJobFile(jobId: string): Promise<ClassroomGenerationJob | null> {
-  try {
-    const content = await fs.readFile(jobFilePath(jobId), 'utf-8');
-    return JSON.parse(content) as ClassroomGenerationJob;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    throw error;
-  }
+  return job;
 }
 
 export function isValidClassroomJobId(jobId: string): boolean {
@@ -145,11 +112,8 @@ export async function createClassroomGenerationJob(
     message: 'Classroom generation job queued',
     createdAt: now,
     updatedAt: now,
-    retryCount: 0,
-    input,
     inputSummary: buildInputSummary(input),
     scenesGenerated: 0,
-    artifacts: buildInitialArtifacts(input),
   };
 
   await ensureClassroomJobsDir();
@@ -160,8 +124,16 @@ export async function createClassroomGenerationJob(
 export async function readClassroomGenerationJob(
   jobId: string,
 ): Promise<ClassroomGenerationJob | null> {
-  const job = await readJobFile(jobId);
-  return job ? markStaleIfNeeded(job) : null;
+  try {
+    const content = await fs.readFile(jobFilePath(jobId), 'utf-8');
+    const job = JSON.parse(content) as ClassroomGenerationJob;
+    return markStaleIfNeeded(job);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function updateClassroomGenerationJob(
@@ -177,34 +149,6 @@ export async function updateClassroomGenerationJob(
     const updated: ClassroomGenerationJob = {
       ...existing,
       ...patch,
-      artifacts: {
-        ...existing.artifacts,
-        ...patch.artifacts,
-      },
-      updatedAt: new Date().toISOString(),
-    };
-
-    await writeJsonFileAtomic(jobFilePath(jobId), updated);
-    return updated;
-  });
-}
-
-export async function updateClassroomGenerationJobArtifacts(
-  jobId: string,
-  patch: Partial<ClassroomGenerationArtifacts>,
-): Promise<ClassroomGenerationJob> {
-  return withJobLock(jobId, async () => {
-    const existing = await readClassroomGenerationJob(jobId);
-    if (!existing) {
-      throw new Error(`Classroom generation job not found: ${jobId}`);
-    }
-
-    const updated: ClassroomGenerationJob = {
-      ...existing,
-      artifacts: {
-        ...existing.artifacts,
-        ...patch,
-      },
       updatedAt: new Date().toISOString(),
     };
 
@@ -225,12 +169,8 @@ export async function markClassroomGenerationJobRunning(
     const updated: ClassroomGenerationJob = {
       ...existing,
       status: 'running',
-      step: existing.step === 'queued' ? 'initializing' : existing.step,
-      startedAt: new Date().toISOString(),
-      completedAt: undefined,
-      message:
-        existing.retryCount > 0 ? 'Retrying classroom generation job' : 'Classroom generation started',
-      error: undefined,
+      startedAt: existing.startedAt || new Date().toISOString(),
+      message: 'Classroom generation started',
       updatedAt: new Date().toISOString(),
     };
 
@@ -264,19 +204,10 @@ export async function markClassroomGenerationJobSucceeded(
     message: 'Classroom generation completed',
     completedAt: new Date().toISOString(),
     scenesGenerated: result.scenesCount,
-    artifacts: {
-      final: {
-        classroomId: result.id,
-        url: result.url,
-        scenesCount: result.scenesCount,
-        stageName: result.stage.name,
-      },
-    },
     result: {
       classroomId: result.id,
       url: result.url,
       scenesCount: result.scenesCount,
-      stageName: result.stage.name,
     },
   });
 }
@@ -291,43 +222,5 @@ export async function markClassroomGenerationJobFailed(
     message: 'Classroom generation failed',
     completedAt: new Date().toISOString(),
     error,
-  });
-}
-
-export async function prepareClassroomGenerationJobRetry(
-  jobId: string,
-): Promise<ClassroomGenerationJob> {
-  return withJobLock(jobId, async () => {
-    const existing = await readClassroomGenerationJob(jobId);
-    if (!existing) {
-      throw new Error(`Classroom generation job not found: ${jobId}`);
-    }
-
-    if (existing.status === 'running' || existing.status === 'queued') {
-      throw new Error('Classroom generation job is already in progress');
-    }
-
-    if (existing.status === 'succeeded') {
-      throw new Error('Completed classroom generation jobs cannot be retried');
-    }
-
-    const now = new Date().toISOString();
-    const updated: ClassroomGenerationJob = {
-      ...existing,
-      status: 'queued',
-      step: 'queued',
-      progress: 0,
-      message: 'Classroom generation retry queued',
-      startedAt: undefined,
-      completedAt: undefined,
-      error: undefined,
-      retryCount: existing.retryCount + 1,
-      scenesGenerated: 0,
-      totalScenes: undefined,
-      updatedAt: now,
-    };
-
-    await writeJsonFileAtomic(jobFilePath(jobId), updated);
-    return updated;
   });
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sparkles, Loader2, ArrowRight, BookOpen, Search, ChevronRight } from 'lucide-react';
+import { nanoid } from 'nanoid';
 
 import { AgentBar } from '@/components/agent/agent-bar';
 import { SpeechButton } from '@/components/audio/speech-button';
@@ -26,9 +27,7 @@ import {
 import { getActiveModule } from '@/lib/module-host/runtime';
 import {
   buildK12RequirementText,
-  buildK12LessonPackTitle,
   getDefaultK12StructuredInput,
-  resolveK12LessonPackMetadata,
 } from '@/lib/module-host/k12';
 import {
   resolveLocalizedList,
@@ -39,9 +38,7 @@ import {
 } from '@/lib/module-host/types';
 import { useSettingsStore } from '@/lib/store/settings';
 import { useUserProfileStore } from '@/lib/store/user-profile';
-import { getCurrentModelConfig } from '@/lib/utils/model-config';
-import { getSupportedDocumentType, readTextFileContent } from '@/lib/utils/document-upload';
-import { createClassroomGenerationJob } from '@/lib/utils/classroom-generation-job';
+import { storePdfBlob } from '@/lib/utils/image-storage';
 import type { UserRequirements } from '@/lib/types/generation';
 
 const WEB_SEARCH_STORAGE_KEY = 'webSearchEnabled';
@@ -181,7 +178,6 @@ export function CreateLessonSheet({
     setIsGenerating(true);
 
     try {
-      const settings = useSettingsStore.getState();
       const userProfile = useUserProfileStore.getState();
       const textbookContext = selectedTextbook
         ? [
@@ -211,113 +207,46 @@ export function CreateLessonSheet({
         webSearch: form.webSearch || undefined,
       };
 
-      let pdfText = '';
+      let pdfStorageKey: string | undefined;
+      let pdfFileName: string | undefined;
+      let pdfProviderId: string | undefined;
+      let pdfProviderConfig: { apiKey?: string; baseUrl?: string } | undefined;
 
       if (form.pdfFile) {
-        const detectedDocumentType = getSupportedDocumentType(form.pdfFile);
-        if (!detectedDocumentType) {
-          throw new Error(activeLocale === 'zh-CN' ? '暂不支持该文件类型' : 'Unsupported file type');
-        }
-
-        if (detectedDocumentType === 'text') {
-          pdfText = await readTextFileContent(form.pdfFile);
-        } else {
-          const providerCfg = settings.pdfProvidersConfig?.[settings.pdfProviderId];
-          const parseFormData = new FormData();
-          parseFormData.append('pdf', form.pdfFile);
-          parseFormData.append('providerId', settings.pdfProviderId);
-          if (providerCfg?.apiKey?.trim()) {
-            parseFormData.append('apiKey', providerCfg.apiKey);
-          }
-          if (providerCfg?.baseUrl?.trim()) {
-            parseFormData.append('baseUrl', providerCfg.baseUrl);
-          }
-
-          const parseResponse = await fetch('/api/parse-pdf', {
-            method: 'POST',
-            body: parseFormData,
-          });
-
-          const parseBody = (await parseResponse.json().catch(() => ({}))) as {
-            success?: boolean;
-            data?: { text?: string };
-            error?: string;
-          };
-
-          if (!parseResponse.ok || !parseBody.success) {
-            throw new Error(
-              parseBody.error ||
-                (activeLocale === 'zh-CN' ? 'PDF 解析失败，请稍后重试' : 'Failed to parse PDF'),
-            );
-          }
-
-          pdfText = String(parseBody.data?.text || '');
+        pdfStorageKey = await storePdfBlob(form.pdfFile);
+        pdfFileName = form.pdfFile.name;
+        const settings = useSettingsStore.getState();
+        pdfProviderId = settings.pdfProviderId;
+        const providerCfg = settings.pdfProvidersConfig?.[settings.pdfProviderId];
+        if (providerCfg) {
+          pdfProviderConfig = { apiKey: providerCfg.apiKey, baseUrl: providerCfg.baseUrl };
         }
       }
 
-      const modelConfig = getCurrentModelConfig();
-      const lessonPackTitle = buildK12LessonPackTitle({
-        input: requirements.k12,
-        presets: k12Presets,
-        locale: activeLocale,
-        requirement: requirements.requirement,
-      });
-      const lessonPackMetadata =
-        requirements.k12 && activeModule.id === 'k12'
-          ? {
-              ...resolveK12LessonPackMetadata({
-                input: requirements.k12,
-                presets: k12Presets,
-                locale: activeLocale,
-              }),
-              status: 'draft' as const,
-              exportStatus: 'not_exported' as const,
-            }
-          : undefined;
-
-      const webSearchProviderConfig =
-        settings.webSearchProvidersConfig?.[settings.webSearchProviderId];
-      const createdJob = await createClassroomGenerationJob(
-        {
-          requirement: requirements.requirement,
+      sessionStorage.setItem(
+        'generationSession',
+        JSON.stringify({
+          sessionId: nanoid(),
           requirements,
-          language: requirements.language,
-          pdfContent: pdfText ? { text: pdfText, images: [] } : undefined,
-          enableWebSearch: requirements.webSearch ?? false,
-          webSearchProviderId: settings.webSearchProviderId,
-          webSearchApiKey: webSearchProviderConfig?.apiKey || undefined,
-          baiduSubSources:
-            settings.webSearchProviderId === 'baidu' ? settings.baiduSubSources : undefined,
-          enableImageGeneration: settings.imageGenerationEnabled,
-          enableVideoGeneration: settings.videoGenerationEnabled,
-          enableTTS: settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts',
-          agentMode: settings.agentMode === 'auto' ? 'generate' : 'default',
-          lessonPackTitle,
-          lessonPackMetadata,
-          modelConfig: {
-            modelString: modelConfig.modelString,
-            apiKey: modelConfig.apiKey || undefined,
-            baseUrl: modelConfig.baseUrl || undefined,
-            providerType: modelConfig.providerType,
-            requiresApiKey: modelConfig.requiresApiKey,
-          },
-        },
-        activeLocale === 'zh-CN'
-          ? '创建后台生成任务失败，请稍后重试'
-          : 'Failed to create generation job',
+          pdfText: '',
+          pdfImages: [],
+          imageStorageIds: [],
+          pdfStorageKey,
+          pdfFileName,
+          pdfProviderId,
+          pdfProviderConfig,
+          selectedTextbookResources: requirements.k12?.chapterResources,
+          selectedTextbookResourcesParsed: false,
+          sceneOutlines: null,
+          currentStep: 'generating' as const,
+        }),
       );
 
       onOpenChange(false);
-      router.push(createdJob.previewUrl);
+      router.push('/generation-preview');
     } catch (err) {
       console.error(err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : activeLocale === 'zh-CN'
-            ? '生成准备失败，请重试'
-            : 'Failed to prepare generation',
-      );
+      setError(activeLocale === 'zh-CN' ? '生成准备失败，请重试' : 'Failed to prepare generation');
       setIsGenerating(false);
     }
   };

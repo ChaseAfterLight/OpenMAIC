@@ -15,7 +15,7 @@ import type {
 const SYSTEM_PUBLISHER_ID = 'system-seed';
 
 function getK12Presets(): K12ModulePresets {
-  return k12ModuleManifest.presets as unknown as K12ModulePresets;
+  return k12ModuleManifest.presets as K12ModulePresets;
 }
 
 function inferAttachmentMimeType(type: TextbookAttachmentType): string {
