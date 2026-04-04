@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, FileUp, Plus, RefreshCw, Save, Send, Trash2,
   Layers, FileText, Settings2, Folder, X, PanelRightClose,
-  Search, BookDashed, BookOpen, ChevronRight
+  Search, BookDashed, BookOpen, ChevronRight, Download
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TextbookPdfImportReviewPanel } from './textbook-pdf-import-review-panel';
+import { downloadTextbookFile } from './textbook-download';
 import { k12ModuleManifest } from '@/modules/k12/manifest';
 import {
   resolveLocalizedText,
@@ -43,6 +44,17 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('封面读取失败'));
     reader.readAsDataURL(file);
   });
+}
+
+function getAttachmentDownloadUrl(attachment: TextbookChapterRecord['attachments'][number]) {
+  return (
+    attachment.externalUrl ??
+    `/api/textbook-libraries?action=downloadAttachment&id=${encodeURIComponent(attachment.id)}`
+  );
+}
+
+function getImportDraftDownloadUrl(importDraftId: string) {
+  return `/api/textbook-libraries?action=downloadImportDraftSource&id=${encodeURIComponent(importDraftId)}`;
 }
 
 const K12_PRESETS = k12ModuleManifest.presets as unknown as K12ModulePresets;
@@ -924,6 +936,14 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                                     <Badge variant="secondary" className="h-5 rounded-full bg-slate-100 px-2 text-[10px] font-semibold text-slate-600">
                                       {statusLabel}
                                     </Badge>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 rounded-full px-2 text-[11px] text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                                      onClick={() => void downloadTextbookFile(getImportDraftDownloadUrl(item.id), item.filename)}
+                                    >
+                                      <Download className="mr-1 h-3 w-3" /> 下载
+                                    </Button>
                                     {item.status !== 'confirmed' ? (
                                       <Button
                                         variant="ghost"
@@ -1052,6 +1072,15 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                                 <h4 className="font-semibold text-xs text-slate-900 truncate">{att.title || att.filename}</h4>
                                 <p className="text-[10px] text-slate-500 mt-0.5">{att.mimeType}</p>
                               </div>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-6 w-6 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 -mr-1 -mt-1"
+                                onClick={() => void downloadTextbookFile(getAttachmentDownloadUrl(att), att.filename)}
+                                title="下载附件"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </Button>
                               <Button size="icon" variant="ghost" className="h-6 w-6 text-slate-300 hover:text-rose-500 hover:bg-rose-50 -mr-1 -mt-1" onClick={() => deleteAttachment(att.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
                             </div>
                           ))}

@@ -39,7 +39,7 @@ import {
 } from '@/lib/server/textbook-library-repository';
 
 type CanvasLike = {
-  getContext: (contextId: '2d') => object;
+  getContext: (contextId: '2d') => CanvasRenderingContext2D;
   toBuffer: (type?: string) => Buffer;
 };
 

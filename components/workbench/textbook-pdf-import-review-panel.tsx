@@ -17,9 +17,11 @@ import {
   GripVertical,
   ChevronDown,
   ChevronRight,
-  Info
+  Info,
+  Download,
 } from 'lucide-react';
 
+import { downloadTextbookFile } from './textbook-download';
 import type { TextbookPdfImportDraftRecord } from '@/lib/server/textbook-library-types';
 
 type ImportUnitDraft = TextbookPdfImportDraftRecord['units'][number];
@@ -102,6 +104,7 @@ export function TextbookPdfImportReviewPanel({
   const pdfPreviewUrl = selectedChapter?.chapter.pageStart
     ? `/api/textbook-libraries?action=downloadImportDraftSource&id=${encodeURIComponent(importDraft.id)}#page=${selectedChapter.chapter.pageStart}`
     : `/api/textbook-libraries?action=downloadImportDraftSource&id=${encodeURIComponent(importDraft.id)}`;
+  const pdfDownloadUrl = `/api/textbook-libraries?action=downloadImportDraftSource&id=${encodeURIComponent(importDraft.id)}`;
 
   // 辅助函数：根据置信度返回指示灯颜色
   const getConfidenceColor = (confidence: number) => {
@@ -127,6 +130,13 @@ export function TextbookPdfImportReviewPanel({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="rounded-full shadow-sm"
+            onClick={() => void downloadTextbookFile(pdfDownloadUrl, importDraft.filename)}
+          >
+            <Download className="mr-2 h-4 w-4" /> 下载原始 PDF
+          </Button>
           {importDraft.status !== 'confirmed' && (
             <Button variant="ghost" className="text-rose-500 hover:bg-rose-50 hover:text-rose-600 rounded-full" onClick={onDeleteDraft}>
               <Trash2 className="mr-1.5 h-4 w-4" /> 放弃解析

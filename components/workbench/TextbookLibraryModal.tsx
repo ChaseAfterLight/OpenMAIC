@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Book, Search, CheckCircle2, BookOpen, FilterX, Loader2 } from 'lucide-react';
+import { Book, Search, CheckCircle2, BookOpen, FilterX, Loader2, Download } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { downloadTextbookFile } from './textbook-download';
 import {
   type K12ModulePresets,
   type K12StructuredInput,
@@ -406,6 +407,10 @@ export function TextbookLibraryModal({
     }
     return ['全部', ...Array.from(editions)];
   }, [textbookCards]);
+
+  const activeUnit = activeBook?.units.find((unit) => unit.id === activeChapterPath[0]) ?? null;
+  const activeChapter =
+    activeUnit?.children?.find((chapter) => chapter.id === activeChapterPath[1]) ?? null;
 
   const filteredBooks = useMemo(() => {
     return filterTextbookCards(textbookCards, {
@@ -857,6 +862,66 @@ export function TextbookLibraryModal({
                       </div>
                     ))}
                   </div>
+
+                  {activeChapter?.resources?.length ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200/70 bg-slate-50/60 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-800">
+                            {locale === 'en-US' ? 'Chapter resources' : '章节资料'}
+                          </h4>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {locale === 'en-US'
+                              ? 'Download the attached source documents directly'
+                              : '可直接下载该章节附带的源文件'}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="secondary"
+                          className="bg-white text-slate-500 border-slate-200"
+                        >
+                          {activeChapter.resources.length}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {activeChapter.resources.map((resource) => (
+                          <button
+                            key={resource.id}
+                            type="button"
+                            disabled={!resource.url}
+                            onClick={() => {
+                              if (!resource.url) return;
+                              void downloadTextbookFile(resource.url, resource.title);
+                            }}
+                            className={cn(
+                              'flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors',
+                              resource.url
+                                ? 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50/40'
+                                : 'cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400',
+                            )}
+                          >
+                            <div className="min-w-0">
+                              <span className="block truncate text-sm font-medium">
+                                {resource.title}
+                              </span>
+                              {resource.description ? (
+                                <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                                  {resource.description}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-400">
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 uppercase">
+                                {resource.type}
+                              </span>
+                              <Download className="size-3.5" />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </>
             ) : (
