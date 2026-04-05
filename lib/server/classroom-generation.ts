@@ -34,7 +34,7 @@ import {
 import type { UserRequirements } from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
-import type { Scene, Stage } from '@/lib/types/stage';
+import type { Scene, Stage, LessonPackStatus } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 import type { K12ModulePresets, K12StructuredInput, SupportedLocale } from '@/lib/module-host/types';
 
@@ -124,16 +124,23 @@ function normalizeLanguage(language?: string): 'zh-CN' | 'en-US' {
   return language === 'en-US' ? 'en-US' : 'zh-CN';
 }
 
-function buildLessonPackMetadata(input: GenerateClassroomInput, locale: SupportedLocale) {
+function buildLessonPackMetadata(
+  input: GenerateClassroomInput,
+  locale: SupportedLocale,
+  status: LessonPackStatus,
+) {
   if (input.moduleId !== 'k12' || !input.k12) {
-    return undefined;
+    return {
+      status,
+      exportStatus: 'not_exported' as const,
+    };
   }
 
   const presets = getModuleById('k12').presets as K12ModulePresets | undefined;
   if (!presets) {
     return {
       durationMinutes: input.k12.durationMinutes,
-      status: 'draft' as const,
+      status,
       exportStatus: 'not_exported' as const,
     };
   }
@@ -144,7 +151,7 @@ function buildLessonPackMetadata(input: GenerateClassroomInput, locale: Supporte
       presets,
       locale,
     }),
-    status: 'draft' as const,
+    status,
     exportStatus: 'not_exported' as const,
   };
 }
@@ -392,7 +399,7 @@ export async function generateClassroom(
   log.info(`Generated ${outlines.length} scene outlines`);
 
   const stageId = nanoid(10);
-  const lessonPack = buildLessonPackMetadata(input, lang);
+  const lessonPack = buildLessonPackMetadata(input, lang, 'in_progress');
   const k12Presets =
     input.moduleId === 'k12'
       ? ((getModuleById('k12').presets as K12ModulePresets | undefined) ?? undefined)
@@ -569,7 +576,13 @@ export async function generateClassroom(
   const persisted = await persistClassroom(
     {
       id: stageId,
-      stage,
+      stage: {
+        ...stage,
+        lessonPack: {
+          ...stage.lessonPack,
+          status: 'ready',
+        },
+      },
       scenes,
     },
     options.baseUrl,

@@ -86,9 +86,9 @@ const workbenchCopy = {
     all: '全部',
     recent: '最近更新',
     oldest: '最早创建',
-    ready: '就绪',
-    draft: '草稿',
-    inProgress: '进行中',
+    ready: '已完成',
+    draft: '未开始',
+    inProgress: '生成中',
     archived: '已归档',
     empty: '当前工作台还没有内容，快创建一个新备课包吧。',
     sceneCount: '内容页',
@@ -133,9 +133,9 @@ const workbenchCopy = {
     all: 'All',
     recent: 'Recently updated',
     oldest: 'Oldest created',
-    ready: 'Ready',
-    draft: 'Draft',
-    inProgress: 'In progress',
+    ready: 'Done',
+    draft: 'Not started',
+    inProgress: 'Generating',
     archived: 'Archived',
     empty: 'No lesson packs yet. Kick off a new one to get started.',
     sceneCount: 'scenes',
@@ -181,6 +181,13 @@ function getStatusLabel(status: StageListItem['lessonPack']['status'], locale: S
   if (status === 'in_progress') return copy.inProgress;
   if (status === 'archived') return copy.archived;
   return copy.draft;
+}
+
+function getDisplayStatus(item: StageListItem) {
+  if (item.lessonPack.status !== 'draft') {
+    return item.lessonPack.status;
+  }
+  return item.sceneCount > 0 ? 'ready' : 'draft';
 }
 
 export function LessonPackWorkbenchClient() {
@@ -254,7 +261,7 @@ export function LessonPackWorkbenchClient() {
             .filter(Boolean)
             .some((v) => v!.toLowerCase().includes(keyword));
         const matchesChapterPath = matchesTextbookChapterPath(item.lessonPack, chapterPath);
-        const matchesStatus = statusFilter === 'all' || item.lessonPack.status === statusFilter;
+        const matchesStatus = statusFilter === 'all' || getDisplayStatus(item) === statusFilter;
         return matchesKeyword && matchesChapterPath && matchesStatus;
       })
       .sort((a, b) =>
@@ -408,15 +415,16 @@ export function LessonPackWorkbenchClient() {
 
                 <div className="hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
 
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
                   <SelectTrigger className="h-10 w-[110px] rounded-xl border-transparent bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800">
                     <SelectValue placeholder={copy.status} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">{copy.all}状态</SelectItem>
+                    <SelectItem value="all">{copy.all}</SelectItem>
                     <SelectItem value="draft">{copy.draft}</SelectItem>
                     <SelectItem value="in_progress">{copy.inProgress}</SelectItem>
                     <SelectItem value="ready">{copy.ready}</SelectItem>
+                    <SelectItem value="archived">{copy.archived}</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select
@@ -495,7 +503,7 @@ export function LessonPackWorkbenchClient() {
                         variant="secondary"
                         className="bg-white/90 text-slate-700 shadow-sm backdrop-blur dark:bg-slate-900/90 dark:text-slate-300"
                       >
-                        {getStatusLabel(classroom.lessonPack.status, activeLocale)}
+                        {getStatusLabel(getDisplayStatus(classroom), activeLocale)}
                       </Badge>
                     </div>
                   </div>
