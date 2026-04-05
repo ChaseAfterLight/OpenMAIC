@@ -43,6 +43,7 @@ import {
   startClassroomJobStream,
   type ClassroomJobStreamState,
 } from '@/lib/client/classroom-job-stream';
+import { setLiveClassroomJobId, clearLiveClassroomJobId } from '@/lib/client/classroom-live-job';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
 import { StepVisualizer } from './components/visualizers';
 
@@ -218,6 +219,7 @@ function GenerationPreviewContent() {
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const serverJobStreamCloseRef = useRef<(() => void) | null>(null);
+  const serverRedirectedRef = useRef(false);
   const [authReady, setAuthReady] = useState(false);
 
   const [session, setSession] = useState<GenerationSessionState | null>(null);
@@ -336,6 +338,7 @@ function GenerationPreviewContent() {
     sessionActiveSteps: ReturnType<typeof getActiveSteps>,
     generationSignal: AbortSignal,
   ) => {
+    const modelConfig = getCurrentModelConfig();
     const settings = useSettingsStore.getState();
     const imageIds = (sessionSnapshot.pdfImages || [])
       .map((img) => img.storageId || img.id)
@@ -343,6 +346,8 @@ function GenerationPreviewContent() {
     const hasPdfContent = Boolean(sessionSnapshot.pdfText || imageIds.length > 0);
 
     const serverPayload = {
+      moduleId: sessionSnapshot.requirements.moduleId,
+      k12: sessionSnapshot.requirements.k12,
       requirement: sessionSnapshot.requirements.requirement,
       pdfContent: hasPdfContent
         ? {
@@ -351,6 +356,11 @@ function GenerationPreviewContent() {
           }
         : undefined,
       language: sessionSnapshot.requirements.language,
+      modelString: modelConfig.modelString,
+      apiKey: modelConfig.apiKey,
+      baseUrl: modelConfig.baseUrl,
+      providerType: modelConfig.providerType,
+      requiresApiKey: modelConfig.requiresApiKey,
       enableWebSearch: Boolean(sessionSnapshot.requirements.webSearch),
       webSearchProviderId: settings.webSearchProviderId,
       webSearchApiKey:
@@ -393,6 +403,23 @@ function GenerationPreviewContent() {
       }
     };
 
+    const redirectToLiveClassroom = (job: ClassroomJobStreamState) => {
+      if (serverRedirectedRef.current) {
+        return true;
+      }
+      if (!job.result?.url || job.scenesGenerated < 1) {
+        return false;
+      }
+
+      serverRedirectedRef.current = true;
+      sessionStorage.removeItem('generationSession');
+      const classroomUrl = new URL(job.result.url, window.location.origin);
+      setLiveClassroomJobId(job.result.classroomId, job.jobId);
+      classroomUrl.searchParams.set('jobId', job.jobId);
+      router.push(`${classroomUrl.pathname}${classroomUrl.search}`);
+      return true;
+    };
+
     const persistServerSession = (job: ClassroomJobStreamState) => {
       const updatedServerSession = {
         ...sessionSnapshot,
@@ -410,6 +437,10 @@ function GenerationPreviewContent() {
     };
 
     const finalizeServerJob = (job: ClassroomJobStreamState) => {
+      if (redirectToLiveClassroom(job)) {
+        return;
+      }
+
       if (job.status === 'succeeded') {
         setIsComplete(true);
         setStatusMessage(job.message);
@@ -425,6 +456,9 @@ function GenerationPreviewContent() {
       }
 
       const message = job.error || job.message || t('generation.generationFailed');
+      if (job.result?.classroomId) {
+        clearLiveClassroomJobId(job.result.classroomId);
+      }
       setError(message);
       sessionStorage.removeItem('generationSession');
     };
@@ -437,6 +471,7 @@ function GenerationPreviewContent() {
         signal: generationSignal,
         onUpdate: (nextJob) => {
           persistServerSession(nextJob);
+          redirectToLiveClassroom(nextJob);
         },
         onTerminal: (nextJob) => {
           persistServerSession(nextJob);
@@ -488,6 +523,9 @@ function GenerationPreviewContent() {
           return job;
         });
 
+    if (redirectToLiveClassroom(initialJob)) {
+      return;
+    }
     monitorServerJob(initialJob);
   };
 

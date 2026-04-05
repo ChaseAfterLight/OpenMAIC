@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
 import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
@@ -13,14 +13,28 @@ import { createLogger } from '@/lib/logger';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import {
+  startClassroomJobStream,
+  type ClassroomJobStreamState,
+} from '@/lib/client/classroom-job-stream';
+import {
+  getLiveClassroomJobId,
+  clearLiveClassroomJobId,
+  setLiveClassroomJobId,
+} from '@/lib/client/classroom-live-job';
+import { PENDING_SCENE_ID } from '@/lib/store/stage';
+import type { Stage as StageType, Scene as SceneType } from '@/lib/types/stage';
+import type { SceneOutline } from '@/lib/types/generation';
 
 const log = createLogger('Classroom');
 
 export default function ClassroomDetailPage() {
+  const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
   const classroomId = params?.id as string;
   const targetSceneId = searchParams.get('scene');
+  const queryLiveJobId = searchParams.get('jobId');
 
   // 记录来源：如果是从详情页跳转，存储 packId
   useEffect(() => {
@@ -30,20 +44,125 @@ export default function ClassroomDetailPage() {
     }
   }, [classroomId, searchParams]);
 
+  useEffect(() => {
+    if (!classroomId) {
+      setResolvedLiveJobId(null);
+      setLiveJobReady(true);
+      return;
+    }
+
+    const jobId = queryLiveJobId || getLiveClassroomJobId(classroomId);
+    if (queryLiveJobId) {
+      setLiveClassroomJobId(classroomId, queryLiveJobId);
+    }
+    setResolvedLiveJobId(jobId);
+    setLiveJobReady(true);
+  }, [classroomId, queryLiveJobId]);
+
   const { loadFromStorage, setCurrentSceneId } = useStageStore();
   const { t } = useI18n();
   const [authReady, setAuthReady] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resolvedLiveJobId, setResolvedLiveJobId] = useState<string | null>(null);
+  const [liveJobReady, setLiveJobReady] = useState(false);
 
   const generationStartedRef = useRef(false);
+  const liveJobStreamCloseRef = useRef<(() => void) | null>(null);
+  const lastLiveRefreshKeyRef = useRef<string>('');
+  const hydratedAgentStageRef = useRef<string | null>(null);
 
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
     onComplete: () => {
       log.info('[Classroom] All scenes generated');
     },
   });
+
+  const hydrateGeneratedAgents = useCallback(async () => {
+    const stage = useStageStore.getState().stage;
+    if (!stage?.generatedAgentConfigs?.length) {
+      return;
+    }
+    if (hydratedAgentStageRef.current === stage.id) {
+      return;
+    }
+
+    const { saveGeneratedAgents } = await import('@/lib/orchestration/registry/store');
+    const { useSettingsStore } = await import('@/lib/store/settings');
+    const agentIds = await saveGeneratedAgents(stage.id, stage.generatedAgentConfigs);
+    useSettingsStore.getState().setSelectedAgentIds(agentIds);
+    hydratedAgentStageRef.current = stage.id;
+    log.info('Hydrated server-generated agents:', agentIds);
+  }, []);
+
+  const applyServerClassroomSnapshot = useCallback(
+    async (classroom: {
+      stage: StageType & { currentSceneId?: string };
+      scenes: SceneType[];
+      outlines?: SceneOutline[];
+    }) => {
+      const state = useStageStore.getState();
+      const currentSceneId = state.currentSceneId;
+      const remoteSceneIds = new Set(classroom.scenes.map((scene) => scene.id));
+      const mergedScenes = classroom.scenes.map((scene) =>
+        currentSceneId && scene.id === currentSceneId
+          ? (state.scenes.find((existing) => existing.id === scene.id) ?? scene)
+          : scene,
+      );
+
+      for (const existing of state.scenes) {
+        if (!remoteSceneIds.has(existing.id)) {
+          mergedScenes.push(existing);
+        }
+      }
+
+      mergedScenes.sort((a, b) => a.order - b.order);
+
+      const outlines = classroom.outlines ?? [];
+      const generatingOutlines = outlines.filter(
+        (outline) => !mergedScenes.some((scene) => scene.order === outline.order),
+      );
+      const nextCurrentSceneId =
+        currentSceneId === PENDING_SCENE_ID && generatingOutlines.length > 0
+          ? PENDING_SCENE_ID
+          : currentSceneId && mergedScenes.some((scene) => scene.id === currentSceneId)
+            ? currentSceneId
+            : mergedScenes[0]?.id ?? (generatingOutlines.length > 0 ? PENDING_SCENE_ID : null);
+
+      useStageStore.setState({
+        stage: classroom.stage,
+        scenes: mergedScenes,
+        currentSceneId: nextCurrentSceneId,
+        outlines,
+        generatingOutlines,
+      });
+
+      await hydrateGeneratedAgents();
+    },
+    [hydrateGeneratedAgents],
+  );
+
+  const fetchServerClassroom = useCallback(async () => {
+    const res = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch classroom: HTTP ${res.status}`);
+    }
+
+    const json = await res.json();
+    if (!json.success || !json.classroom) {
+      throw new Error(json.error || 'Failed to load classroom');
+    }
+
+    await applyServerClassroomSnapshot(json.classroom);
+    return json.classroom as {
+      stage: StageType & { currentSceneId?: string };
+      scenes: SceneType[];
+      outlines?: SceneOutline[];
+    };
+  }, [applyServerClassroomSnapshot, classroomId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,28 +200,8 @@ export default function ClassroomDetailPage() {
       if (!useStageStore.getState().stage) {
         log.info('No IndexedDB data, trying server-side storage for:', classroomId);
         try {
-          const res = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
-          if (res.ok) {
-            const json = await res.json();
-            if (json.success && json.classroom) {
-              const { stage, scenes } = json.classroom;
-              useStageStore.getState().setStage(stage);
-              useStageStore.setState({
-                scenes,
-                currentSceneId: scenes[0]?.id ?? null,
-              });
-              log.info('Loaded from server-side storage:', classroomId);
-
-              // Hydrate server-generated agents into IndexedDB + registry
-              if (stage.generatedAgentConfigs?.length) {
-                const { saveGeneratedAgents } = await import('@/lib/orchestration/registry/store');
-                const { useSettingsStore } = await import('@/lib/store/settings');
-                const agentIds = await saveGeneratedAgents(stage.id, stage.generatedAgentConfigs);
-                useSettingsStore.getState().setSelectedAgentIds(agentIds);
-                log.info('Hydrated server-generated agents:', agentIds);
-              }
-            }
-          }
+          await fetchServerClassroom();
+          log.info('Loaded from server-side storage:', classroomId);
         } catch (fetchErr) {
           log.warn('Server-side storage fetch failed:', fetchErr);
         }
@@ -158,15 +257,18 @@ export default function ClassroomDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [classroomId, loadFromStorage]);
+  }, [classroomId, fetchServerClassroom, loadFromStorage, setCurrentSceneId]);
 
   useEffect(() => {
     if (!authReady) return;
+    if (!liveJobReady) return;
     // Reset loading state on course switch to unmount Stage during transition,
     // preventing stale data from syncing back to the new course
     setLoading(true);
     setError(null);
     generationStartedRef.current = false;
+    lastLiveRefreshKeyRef.current = '';
+    hydratedAgentStageRef.current = null;
 
     // Clear previous classroom's media tasks to prevent cross-classroom contamination.
     // Placeholder IDs (gen_img_1, gen_vid_1) are NOT globally unique across stages,
@@ -182,13 +284,17 @@ export default function ClassroomDetailPage() {
 
     // Cancel ongoing generation when classroomId changes or component unmounts
     return () => {
+      liveJobStreamCloseRef.current?.();
+      liveJobStreamCloseRef.current = null;
       stop();
     };
-  }, [authReady, classroomId, loadClassroom, stop]);
+  }, [authReady, classroomId, liveJobReady, loadClassroom, stop]);
 
   // Auto-resume generation for pending outlines
   useEffect(() => {
     if (!authReady) return;
+    if (!liveJobReady) return;
+    if (resolvedLiveJobId) return;
     if (loading || error || generationStartedRef.current) return;
 
     const state = useStageStore.getState();
@@ -233,7 +339,129 @@ export default function ClassroomDetailPage() {
         log.warn('[Classroom] Media generation resume error:', err);
       });
     }
-  }, [authReady, loading, error, generateRemaining]);
+  }, [authReady, error, generateRemaining, liveJobReady, loading, resolvedLiveJobId]);
+
+  useEffect(() => {
+    if (!authReady || !liveJobReady || loading || error || !resolvedLiveJobId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshFromServer = async () => {
+      try {
+        await fetchServerClassroom();
+      } catch (syncError) {
+        log.warn('[Classroom] Live classroom refresh failed:', syncError);
+      }
+    };
+
+    const syncProgressState = (job: ClassroomJobStreamState) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (job.status === 'failed') {
+        useStageStore.getState().setGenerationStatus('paused');
+      } else if (job.done) {
+        useStageStore.getState().setGenerationStatus('completed');
+      } else {
+        useStageStore.getState().setGenerationStatus('generating');
+      }
+    };
+
+    const maybeRefreshForJob = (job: ClassroomJobStreamState) => {
+      const refreshKey = `${job.scenesGenerated}:${job.step}:${job.status}`;
+      const shouldRefresh =
+        job.scenesGenerated > 0 &&
+        (job.scenesGenerated !== useStageStore.getState().scenes.length ||
+          ['generating_media', 'generating_tts', 'persisting', 'completed'].includes(job.step) ||
+          job.status === 'failed');
+
+      syncProgressState(job);
+
+      if (shouldRefresh && refreshKey !== lastLiveRefreshKeyRef.current) {
+        lastLiveRefreshKeyRef.current = refreshKey;
+        void refreshFromServer();
+      }
+
+      if (job.done && job.status === 'succeeded') {
+        clearLiveClassroomJobId(classroomId);
+        setResolvedLiveJobId(null);
+        const nextParams = new URLSearchParams(searchParams.toString());
+        if (nextParams.has('jobId')) {
+          nextParams.delete('jobId');
+          const nextQuery = nextParams.toString();
+          router.replace(
+            nextQuery ? `/classroom/${classroomId}?${nextQuery}` : `/classroom/${classroomId}`,
+          );
+        }
+      } else if (job.done && job.result?.classroomId) {
+        clearLiveClassroomJobId(job.result.classroomId);
+        setResolvedLiveJobId(null);
+      } else if (job.done) {
+        clearLiveClassroomJobId(classroomId);
+        setResolvedLiveJobId(null);
+      }
+    };
+
+    const startLiveSync = async () => {
+      try {
+        const res = await fetch(`/api/generate-classroom/${resolvedLiveJobId}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          throw new Error(`Failed to load live job: HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to load live job');
+        }
+
+        const job = (data.job ?? data) as ClassroomJobStreamState;
+        maybeRefreshForJob(job);
+
+        if (job.done) {
+          return;
+        }
+
+        const stream = startClassroomJobStream({
+          job,
+          onUpdate: (nextJob) => {
+            maybeRefreshForJob(nextJob);
+          },
+          onTerminal: (nextJob) => {
+            maybeRefreshForJob(nextJob);
+          },
+          onError: (message) => {
+            log.warn('[Classroom] Live job stream issue:', message);
+          },
+        });
+        liveJobStreamCloseRef.current = stream.close;
+      } catch (streamError) {
+        log.warn('[Classroom] Failed to start live classroom sync:', streamError);
+      }
+    };
+
+    void startLiveSync();
+
+    return () => {
+      cancelled = true;
+      liveJobStreamCloseRef.current?.();
+      liveJobStreamCloseRef.current = null;
+    };
+  }, [
+    authReady,
+    classroomId,
+    error,
+    fetchServerClassroom,
+    liveJobReady,
+    loading,
+    resolvedLiveJobId,
+    router,
+    searchParams,
+  ]);
 
   return (
     <ThemeProvider>

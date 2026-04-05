@@ -24,9 +24,16 @@ export async function POST(req: NextRequest) {
     const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;
     requirementSnippet = rawBody.requirement?.substring(0, 60);
     const body: GenerateClassroomInput = {
+      ...(rawBody.moduleId ? { moduleId: rawBody.moduleId } : {}),
+      ...(rawBody.k12 ? { k12: rawBody.k12 } : {}),
       requirement: rawBody.requirement || '',
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
       ...(rawBody.language ? { language: rawBody.language } : {}),
+      ...(rawBody.modelString ? { modelString: rawBody.modelString } : {}),
+      ...(rawBody.apiKey ? { apiKey: rawBody.apiKey } : {}),
+      ...(rawBody.baseUrl ? { baseUrl: rawBody.baseUrl } : {}),
+      ...(rawBody.providerType ? { providerType: rawBody.providerType } : {}),
+      ...(rawBody.requiresApiKey != null ? { requiresApiKey: rawBody.requiresApiKey } : {}),
       ...(rawBody.enableWebSearch != null ? { enableWebSearch: rawBody.enableWebSearch } : {}),
       ...(rawBody.webSearchProviderId ? { webSearchProviderId: rawBody.webSearchProviderId } : {}),
       ...(rawBody.webSearchApiKey ? { webSearchApiKey: rawBody.webSearchApiKey } : {}),

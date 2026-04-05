@@ -2,12 +2,15 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { NextRequest } from 'next/server';
 import type { Scene, Stage } from '@/lib/types/stage';
+import type { SceneOutline } from '@/lib/types/generation';
 import { ensureStageLessonPack } from '@/lib/utils/lesson-pack';
 import {
   getStageRecord,
+  getStageOutlinesRecord,
   listScenesByStageId,
   replaceScenesByStageId,
   saveStageRecord,
+  saveStageOutlinesRecord,
 } from '@/lib/server/storage-repository';
 
 export const CLASSROOMS_DIR = path.join(process.cwd(), 'data', 'classrooms');
@@ -46,6 +49,7 @@ export interface PersistedClassroomData {
   ownerUserId?: string;
   stage: Stage;
   scenes: Scene[];
+  outlines?: SceneOutline[];
   createdAt: string;
 }
 
@@ -74,13 +78,17 @@ export async function readClassroom(id: string): Promise<PersistedClassroomData 
   try {
     const stage = await getStageRecord(id);
     if (stage) {
-      const scenes = await listScenesByStageId(id);
+      const [scenes, outlinesRecord] = await Promise.all([
+        listScenesByStageId(id),
+        getStageOutlinesRecord(id),
+      ]);
       const normalizedStage = ensureStageLessonPack(stage);
       return {
         id,
         ownerUserId: normalizedStage.ownerUserId,
         stage: normalizedStage,
         scenes,
+        outlines: outlinesRecord?.outlines,
         createdAt: new Date(normalizedStage.createdAt).toISOString(),
       };
     }
@@ -95,8 +103,9 @@ export async function persistClassroom(
   data: {
     id: string;
     ownerUserId?: string;
-    stage: Stage;
+    stage: Stage & { currentSceneId?: string };
     scenes: Scene[];
+    outlines?: SceneOutline[];
   },
   baseUrl: string,
 ): Promise<PersistedClassroomData & { url: string }> {
@@ -111,6 +120,7 @@ export async function persistClassroom(
     ownerUserId: normalizedStage.ownerUserId,
     stage: normalizedStage,
     scenes: data.scenes,
+    outlines: data.outlines,
     createdAt: new Date().toISOString(),
   };
 
@@ -138,6 +148,14 @@ export async function persistClassroom(
       updatedAt: scene.updatedAt ?? normalizedStage.updatedAt,
     })),
   );
+  if (data.outlines) {
+    await saveStageOutlinesRecord({
+      stageId: data.id,
+      outlines: data.outlines,
+      createdAt: normalizedStage.createdAt,
+      updatedAt: normalizedStage.updatedAt,
+    });
+  }
 
   return {
     ...classroomData,

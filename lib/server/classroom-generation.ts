@@ -16,8 +16,7 @@ import type { AgentInfo } from '@/lib/generation/pipeline-types';
 import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatters';
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
-import { parseModelString } from '@/lib/ai/providers';
-import { resolveApiKey, resolveWebSearchApiKey } from '@/lib/server/provider-config';
+import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import { buildSearchQuery } from '@/lib/server/search-query-builder';
@@ -25,6 +24,8 @@ import { searchWithTavily, formatSearchResultsAsContext } from '@/lib/web-search
 import { searchWithBrave } from '@/lib/web-search/brave';
 import { searchWithBaidu } from '@/lib/web-search/baidu';
 import { persistClassroom } from '@/lib/server/classroom-storage';
+import { buildK12LessonPackTitle, resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
+import { getModuleById } from '@/lib/module-host/runtime';
 import {
   generateMediaForClassroom,
   replaceMediaPlaceholders,
@@ -35,13 +36,21 @@ import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
+import type { K12ModulePresets, K12StructuredInput, SupportedLocale } from '@/lib/module-host/types';
 
 const log = createLogger('Classroom');
 
 export interface GenerateClassroomInput {
+  moduleId?: 'core' | 'k12';
+  k12?: K12StructuredInput;
   requirement: string;
   pdfContent?: { text: string; images: string[] };
   language?: string;
+  modelString?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  providerType?: string;
+  requiresApiKey?: boolean;
   enableWebSearch?: boolean;
   webSearchProviderId?: WebSearchProviderId;
   webSearchApiKey?: string;
@@ -68,6 +77,11 @@ export interface ClassroomGenerationProgress {
   message: string;
   scenesGenerated: number;
   totalScenes?: number;
+  result?: {
+    classroomId: string;
+    url: string;
+    scenesCount: number;
+  };
 }
 
 export interface GenerateClassroomResult {
@@ -108,6 +122,31 @@ function createInMemoryStore(stage: Stage): StageStore {
 
 function normalizeLanguage(language?: string): 'zh-CN' | 'en-US' {
   return language === 'en-US' ? 'en-US' : 'zh-CN';
+}
+
+function buildLessonPackMetadata(input: GenerateClassroomInput, locale: SupportedLocale) {
+  if (input.moduleId !== 'k12' || !input.k12) {
+    return undefined;
+  }
+
+  const presets = getModuleById('k12').presets as K12ModulePresets | undefined;
+  if (!presets) {
+    return {
+      durationMinutes: input.k12.durationMinutes,
+      status: 'draft' as const,
+      exportStatus: 'not_exported' as const,
+    };
+  }
+
+  return {
+    ...resolveK12LessonPackMetadata({
+      input: input.k12,
+      presets,
+      locale,
+    }),
+    status: 'draft' as const,
+    exportStatus: 'not_exported' as const,
+  };
 }
 
 function resolveWebSearchProviderId(providerId?: string): WebSearchProviderId {
@@ -199,18 +238,14 @@ export async function generateClassroom(
     scenesGenerated: 0,
   });
 
-  const { model: languageModel, modelInfo, modelString } = resolveModel({});
+  const { model: languageModel, modelInfo, modelString } = resolveModel({
+    modelString: input.modelString,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+    providerType: input.providerType,
+    requiresApiKey: input.requiresApiKey,
+  });
   log.info(`Using server-configured model: ${modelString}`);
-
-  // Fail fast if the resolved provider has no API key configured
-  const { providerId } = parseModelString(modelString);
-  const apiKey = resolveApiKey(providerId);
-  if (!apiKey) {
-    throw new Error(
-      `No API key configured for provider "${providerId}". ` +
-        `Set the appropriate key in .env.local or server-providers.yml (e.g. ${providerId.toUpperCase()}_API_KEY).`,
-    );
-  }
 
   const aiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
     const result = await callLLM(
@@ -356,23 +391,29 @@ export async function generateClassroom(
   const outlines = outlinesResult.data;
   log.info(`Generated ${outlines.length} scene outlines`);
 
-  await options.onProgress?.({
-    step: 'generating_outlines',
-    progress: 30,
-    message: `Generated ${outlines.length} scene outlines`,
-    scenesGenerated: 0,
-    totalScenes: outlines.length,
-  });
-
   const stageId = nanoid(10);
+  const lessonPack = buildLessonPackMetadata(input, lang);
+  const k12Presets =
+    input.moduleId === 'k12'
+      ? ((getModuleById('k12').presets as K12ModulePresets | undefined) ?? undefined)
+      : undefined;
   const stage: Stage = {
     id: stageId,
-    name: outlines[0]?.title || requirement.slice(0, 50),
+    name:
+      input.moduleId === 'k12'
+        ? buildK12LessonPackTitle({
+            input: input.k12,
+            presets: k12Presets,
+            locale: lang,
+            requirement,
+          })
+        : outlines[0]?.title || requirement.slice(0, 50),
     description: undefined,
     language: lang,
     style: 'interactive',
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    lessonPack,
     // Embed agent configs so API-generated classrooms can hydrate
     // the client-side agent registry without IndexedDB
     generatedAgentConfigs: agents.map((a, i) => ({
@@ -388,6 +429,38 @@ export async function generateClassroom(
 
   const store = createInMemoryStore(stage);
   const api = createStageAPI(store);
+  const persistSnapshot = async () => {
+    stage.updatedAt = Date.now();
+    const scenes = store.getState().scenes;
+    const persisted = await persistClassroom(
+      {
+        id: stageId,
+        stage: {
+          ...stage,
+          currentSceneId: scenes[0]?.id,
+        },
+        scenes,
+        outlines,
+      },
+      options.baseUrl,
+    );
+
+    return {
+      classroomId: persisted.id,
+      url: persisted.url,
+      scenesCount: scenes.length,
+    };
+  };
+  const initialSnapshot = await persistSnapshot();
+
+  await options.onProgress?.({
+    step: 'generating_outlines',
+    progress: 30,
+    message: `Generated ${outlines.length} scene outlines`,
+    scenesGenerated: 0,
+    totalScenes: outlines.length,
+    result: initialSnapshot,
+  });
 
   log.info('Stage 2: Generating scene content and actions...');
   let generatedScenes = 0;
@@ -429,6 +502,7 @@ export async function generateClassroom(
     }
 
     generatedScenes += 1;
+    const snapshot = await persistSnapshot();
     const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
@@ -436,6 +510,7 @@ export async function generateClassroom(
       message: `Generated ${generatedScenes}/${outlines.length} scenes`,
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
+      result: snapshot,
     });
   }
 
