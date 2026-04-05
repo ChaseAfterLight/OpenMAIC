@@ -171,6 +171,29 @@ CREATE TABLE IF NOT EXISTS image_files (
 CREATE INDEX IF NOT EXISTS idx_image_files_created_at ON image_files (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_image_files_storage_status ON image_files (storage_status);
 
+CREATE TABLE IF NOT EXISTS classroom_generation_jobs (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  step TEXT NOT NULL,
+  progress INTEGER NOT NULL,
+  message TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  started_at BIGINT,
+  completed_at BIGINT,
+  input_summary JSONB NOT NULL,
+  scenes_generated INTEGER NOT NULL DEFAULT 0,
+  total_scenes INTEGER,
+  result_json JSONB,
+  error TEXT,
+  raw_job JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_classroom_generation_jobs_status_updated
+  ON classroom_generation_jobs (status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_classroom_generation_jobs_completed_at
+  ON classroom_generation_jobs (completed_at DESC);
+
 CREATE TABLE IF NOT EXISTS auth_users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,

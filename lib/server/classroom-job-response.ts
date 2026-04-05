@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import type { ClassroomGenerationJob } from '@/lib/server/classroom-job-store';
+import type { ClassroomGenerationJob } from '@/lib/server/classroom-job-types';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 
 export const CLASSROOM_JOB_POLL_INTERVAL_MS = 5000;

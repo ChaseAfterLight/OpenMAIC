@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
 
     const baseUrl = buildRequestOrigin(req);
     const jobId = nanoid(10);
-    const job = await createClassroomGenerationJob(jobId, body);
+    const job = await createClassroomGenerationJob(jobId, body, baseUrl);
     const urls = buildClassroomJobUrls(req, jobId);
 
     after(() => runClassroomGenerationJob(jobId, body, baseUrl));

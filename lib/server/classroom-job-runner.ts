@@ -4,8 +4,10 @@ import {
   markClassroomGenerationJobFailed,
   markClassroomGenerationJobRunning,
   markClassroomGenerationJobSucceeded,
+  updateClassroomGenerationJobCheckpoint,
   updateClassroomGenerationJobProgress,
 } from '@/lib/server/classroom-job-store';
+import type { ClassroomGenerationCheckpoint } from '@/lib/server/classroom-generation';
 
 const log = createLogger('ClassroomJob');
 const runningJobs = new Map<string, Promise<void>>();
@@ -14,6 +16,7 @@ export function runClassroomGenerationJob(
   jobId: string,
   input: GenerateClassroomInput,
   baseUrl: string,
+  resumeCheckpoint?: ClassroomGenerationCheckpoint,
 ): Promise<void> {
   const existing = runningJobs.get(jobId);
   if (existing) {
@@ -26,6 +29,10 @@ export function runClassroomGenerationJob(
 
       const result = await generateClassroom(input, {
         baseUrl,
+        resumeCheckpoint,
+        onCheckpoint: async (checkpoint) => {
+          await updateClassroomGenerationJobCheckpoint(jobId, checkpoint);
+        },
         onProgress: async (progress) => {
           await updateClassroomGenerationJobProgress(jobId, progress);
         },

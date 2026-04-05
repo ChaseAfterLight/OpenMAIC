@@ -23,7 +23,7 @@ import { buildSearchQuery } from '@/lib/server/search-query-builder';
 import { searchWithTavily, formatSearchResultsAsContext } from '@/lib/web-search/tavily';
 import { searchWithBrave } from '@/lib/web-search/brave';
 import { searchWithBaidu } from '@/lib/web-search/baidu';
-import { persistClassroom } from '@/lib/server/classroom-storage';
+import { persistClassroom, readClassroom } from '@/lib/server/classroom-storage';
 import { buildK12LessonPackTitle, resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
 import { getModuleById } from '@/lib/module-host/runtime';
 import {
@@ -31,12 +31,16 @@ import {
   replaceMediaPlaceholders,
   generateTTSForClassroom,
 } from '@/lib/server/classroom-media-generation';
-import type { UserRequirements } from '@/lib/types/generation';
+import type { SceneOutline, UserRequirements } from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import type { Scene, Stage, LessonPackStatus } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
-import type { K12ModulePresets, K12StructuredInput, SupportedLocale } from '@/lib/module-host/types';
+import type {
+  K12ModulePresets,
+  K12StructuredInput,
+  SupportedLocale,
+} from '@/lib/module-host/types';
 
 const log = createLogger('Classroom');
 
@@ -77,11 +81,16 @@ export interface ClassroomGenerationProgress {
   message: string;
   scenesGenerated: number;
   totalScenes?: number;
+  checkpoint?: ClassroomGenerationCheckpoint;
   result?: {
     classroomId: string;
     url: string;
     scenesCount: number;
   };
+}
+
+export interface ClassroomGenerationCheckpoint {
+  classroomId?: string;
 }
 
 export interface GenerateClassroomResult {
@@ -93,11 +102,17 @@ export interface GenerateClassroomResult {
   createdAt: string;
 }
 
-function createInMemoryStore(stage: Stage): StageStore {
+function createInMemoryStore(
+  stage: Stage,
+  initial?: {
+    scenes?: Scene[];
+    currentSceneId?: string | null;
+  },
+): StageStore {
   let state = {
     stage: stage as Stage | null,
-    scenes: [] as Scene[],
-    currentSceneId: null as string | null,
+    scenes: initial?.scenes ?? ([] as Scene[]),
+    currentSceneId: initial?.currentSceneId ?? null,
     mode: 'playback' as const,
   };
 
@@ -122,6 +137,19 @@ function createInMemoryStore(stage: Stage): StageStore {
 
 function normalizeLanguage(language?: string): 'zh-CN' | 'en-US' {
   return language === 'en-US' ? 'en-US' : 'zh-CN';
+}
+
+function restoreAgentsFromStage(stage: Stage): AgentInfo[] | null {
+  if (!stage.generatedAgentConfigs?.length) {
+    return null;
+  }
+
+  return stage.generatedAgentConfigs.map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    persona: agent.persona,
+  }));
 }
 
 function buildLessonPackMetadata(
@@ -233,6 +261,8 @@ export async function generateClassroom(
   input: GenerateClassroomInput,
   options: {
     baseUrl: string;
+    resumeCheckpoint?: ClassroomGenerationCheckpoint;
+    onCheckpoint?: (checkpoint: ClassroomGenerationCheckpoint) => Promise<void> | void;
     onProgress?: (progress: ClassroomGenerationProgress) => Promise<void> | void;
   },
 ): Promise<GenerateClassroomResult> {
@@ -245,7 +275,11 @@ export async function generateClassroom(
     scenesGenerated: 0,
   });
 
-  const { model: languageModel, modelInfo, modelString } = resolveModel({
+  const {
+    model: languageModel,
+    modelInfo,
+    modelString,
+  } = resolveModel({
     modelString: input.modelString,
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
@@ -291,10 +325,31 @@ export async function generateClassroom(
   };
   const pdfText = pdfContent?.text || undefined;
 
+  let resumedClassroom = options.resumeCheckpoint?.classroomId
+    ? await readClassroom(options.resumeCheckpoint.classroomId).catch((error) => {
+        log.warn(
+          `Failed to load checkpoint classroom ${options.resumeCheckpoint?.classroomId}, restarting from scratch:`,
+          error,
+        );
+        return null;
+      })
+    : null;
+
+  if (resumedClassroom && !resumedClassroom.outlines?.length) {
+    log.warn(
+      `Checkpoint classroom ${resumedClassroom.id} missing outlines, restarting generation from scratch`,
+    );
+    resumedClassroom = null;
+  }
+
   // Resolve agents based on agentMode
   let agents: AgentInfo[];
   const agentMode = input.agentMode || 'default';
-  if (agentMode === 'generate') {
+  const restoredAgents = resumedClassroom ? restoreAgentsFromStage(resumedClassroom.stage) : null;
+  if (restoredAgents) {
+    agents = restoredAgents;
+    log.info(`Restored ${agents.length} agent profiles from checkpoint classroom`);
+  } else if (agentMode === 'generate') {
     log.info('Generating custom agent profiles via LLM...');
     try {
       agents = await generateAgentProfiles(requirement, lang, aiCall);
@@ -308,16 +363,18 @@ export async function generateClassroom(
   }
   const teacherContext = formatTeacherPersonaForPrompt(agents);
 
-  await options.onProgress?.({
-    step: 'researching',
-    progress: 10,
-    message: 'Researching topic',
-    scenesGenerated: 0,
-  });
-
   // Web search (optional, graceful degradation)
   let researchContext: string | undefined;
-  if (input.enableWebSearch) {
+  if (!resumedClassroom) {
+    await options.onProgress?.({
+      step: 'researching',
+      progress: 10,
+      message: 'Researching topic',
+      scenesGenerated: 0,
+    });
+  }
+
+  if (!resumedClassroom && input.enableWebSearch) {
     const providerId = resolveWebSearchProviderId(input.webSearchProviderId);
     const provider = WEB_SEARCH_PROVIDERS[providerId];
     const baiduSubSources = normalizeBaiduSubSources(input.baiduSubSources);
@@ -369,72 +426,118 @@ export async function generateClassroom(
     }
   }
 
-  await options.onProgress?.({
-    step: 'generating_outlines',
-    progress: 15,
-    message: 'Generating scene outlines',
-    scenesGenerated: 0,
-  });
+  let outlines: SceneOutline[];
+  let stageId: string;
+  let stage: Stage;
+  let store: StageStore;
 
-  const outlinesResult = await generateSceneOutlinesFromRequirements(
-    requirements,
-    pdfText,
-    undefined,
-    aiCall,
-    undefined,
-    {
-      imageGenerationEnabled: input.enableImageGeneration,
-      videoGenerationEnabled: input.enableVideoGeneration,
-      researchContext,
-      teacherContext,
-    },
-  );
+  if (resumedClassroom) {
+    outlines = resumedClassroom.outlines ?? [];
+    stageId = resumedClassroom.id;
+    stage = {
+      ...resumedClassroom.stage,
+      lessonPack: resumedClassroom.stage.lessonPack
+        ? {
+            ...resumedClassroom.stage.lessonPack,
+            status: 'in_progress',
+          }
+        : resumedClassroom.stage.lessonPack,
+      updatedAt: Date.now(),
+    };
+    store = createInMemoryStore(stage, {
+      scenes: resumedClassroom.scenes,
+      currentSceneId:
+        (resumedClassroom.stage as Stage & { currentSceneId?: string }).currentSceneId ??
+        resumedClassroom.scenes[0]?.id ??
+        null,
+    });
 
-  if (!outlinesResult.success || !outlinesResult.data) {
-    log.error('Failed to generate outlines:', outlinesResult.error);
-    throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
+    await options.onCheckpoint?.({ classroomId: stageId });
+    await options.onProgress?.({
+      step: 'generating_scenes',
+      progress: Math.min(
+        30 + Math.floor((resumedClassroom.scenes.length / Math.max(outlines.length, 1)) * 60),
+        90,
+      ),
+      message: `Resuming classroom generation (${resumedClassroom.scenes.length}/${outlines.length} scenes ready)`,
+      scenesGenerated: resumedClassroom.scenes.length,
+      totalScenes: outlines.length,
+      checkpoint: { classroomId: stageId },
+      result: {
+        classroomId: resumedClassroom.id,
+        url: `${options.baseUrl}/classroom/${resumedClassroom.id}`,
+        scenesCount: resumedClassroom.scenes.length,
+      },
+    });
+  } else {
+    await options.onProgress?.({
+      step: 'generating_outlines',
+      progress: 15,
+      message: 'Generating scene outlines',
+      scenesGenerated: 0,
+    });
+
+    const outlinesResult = await generateSceneOutlinesFromRequirements(
+      requirements,
+      pdfText,
+      undefined,
+      aiCall,
+      undefined,
+      {
+        imageGenerationEnabled: input.enableImageGeneration,
+        videoGenerationEnabled: input.enableVideoGeneration,
+        researchContext,
+        teacherContext,
+      },
+    );
+
+    if (!outlinesResult.success || !outlinesResult.data) {
+      log.error('Failed to generate outlines:', outlinesResult.error);
+      throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
+    }
+
+    outlines = outlinesResult.data;
+    log.info(`Generated ${outlines.length} scene outlines`);
+
+    stageId = nanoid(10);
+    const lessonPack = buildLessonPackMetadata(input, lang, 'in_progress');
+    const k12Presets =
+      input.moduleId === 'k12'
+        ? ((getModuleById('k12').presets as K12ModulePresets | undefined) ?? undefined)
+        : undefined;
+    stage = {
+      id: stageId,
+      name:
+        input.moduleId === 'k12'
+          ? buildK12LessonPackTitle({
+              input: input.k12,
+              presets: k12Presets,
+              locale: lang,
+              requirement,
+            })
+          : outlines[0]?.title || requirement.slice(0, 50),
+      description: undefined,
+      language: lang,
+      style: 'interactive',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lessonPack,
+      // Embed agent configs so API-generated classrooms can hydrate
+      // the client-side agent registry without IndexedDB
+      generatedAgentConfigs: agents.map((a, i) => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        persona: a.persona || '',
+        avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
+        color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
+        priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
+      })),
+    };
+
+    store = createInMemoryStore(stage);
   }
 
-  const outlines = outlinesResult.data;
-  log.info(`Generated ${outlines.length} scene outlines`);
-
-  const stageId = nanoid(10);
-  const lessonPack = buildLessonPackMetadata(input, lang, 'in_progress');
-  const k12Presets =
-    input.moduleId === 'k12'
-      ? ((getModuleById('k12').presets as K12ModulePresets | undefined) ?? undefined)
-      : undefined;
-  const stage: Stage = {
-    id: stageId,
-    name:
-      input.moduleId === 'k12'
-        ? buildK12LessonPackTitle({
-            input: input.k12,
-            presets: k12Presets,
-            locale: lang,
-            requirement,
-          })
-        : outlines[0]?.title || requirement.slice(0, 50),
-    description: undefined,
-    language: lang,
-    style: 'interactive',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    lessonPack,
-    // Embed agent configs so API-generated classrooms can hydrate
-    // the client-side agent registry without IndexedDB
-    generatedAgentConfigs: agents.map((a, i) => ({
-      id: a.id,
-      name: a.name,
-      role: a.role,
-      persona: a.persona || '',
-      avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
-      color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
-      priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
-    })),
-  };
-
-  const store = createInMemoryStore(stage);
   const api = createStageAPI(store);
   const persistSnapshot = async () => {
     stage.updatedAt = Date.now();
@@ -458,23 +561,32 @@ export async function generateClassroom(
       scenesCount: scenes.length,
     };
   };
-  const initialSnapshot = await persistSnapshot();
+  if (!resumedClassroom) {
+    const initialSnapshot = await persistSnapshot();
+    await options.onCheckpoint?.({ classroomId: initialSnapshot.classroomId });
 
-  await options.onProgress?.({
-    step: 'generating_outlines',
-    progress: 30,
-    message: `Generated ${outlines.length} scene outlines`,
-    scenesGenerated: 0,
-    totalScenes: outlines.length,
-    result: initialSnapshot,
-  });
+    await options.onProgress?.({
+      step: 'generating_outlines',
+      progress: 30,
+      message: `Generated ${outlines.length} scene outlines`,
+      scenesGenerated: 0,
+      totalScenes: outlines.length,
+      checkpoint: { classroomId: initialSnapshot.classroomId },
+      result: initialSnapshot,
+    });
+  }
 
   log.info('Stage 2: Generating scene content and actions...');
-  let generatedScenes = 0;
+  let generatedScenes = store.getState().scenes.length;
+  const completedSceneOrders = new Set(store.getState().scenes.map((scene) => scene.order));
 
   for (const [index, outline] of outlines.entries()) {
     const safeOutline = applyOutlineFallbacks(outline, true);
-    const progressStart = 30 + Math.floor((index / Math.max(outlines.length, 1)) * 60);
+    if (completedSceneOrders.has(safeOutline.order)) {
+      continue;
+    }
+
+    const progressStart = 30 + Math.floor((generatedScenes / Math.max(outlines.length, 1)) * 60);
 
     await options.onProgress?.({
       step: 'generating_scenes',
@@ -509,14 +621,16 @@ export async function generateClassroom(
     }
 
     generatedScenes += 1;
+    completedSceneOrders.add(safeOutline.order);
     const snapshot = await persistSnapshot();
-    const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
+    const progressEnd = 30 + Math.floor((generatedScenes / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.min(progressEnd, 90),
       message: `Generated ${generatedScenes}/${outlines.length} scenes`,
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
+      checkpoint: { classroomId: snapshot.classroomId },
       result: snapshot,
     });
   }
