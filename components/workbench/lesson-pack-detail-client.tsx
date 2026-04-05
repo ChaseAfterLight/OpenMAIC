@@ -25,16 +25,27 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  startClassroomJobStream,
+  type ClassroomJobStreamState,
+} from '@/lib/client/classroom-job-stream';
+import {
+  clearLiveClassroomJobId,
+  getLiveClassroomJobId,
+} from '@/lib/client/classroom-live-job';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store';
+import type { SceneOutline } from '@/lib/types/generation';
 import type { Scene } from '@/lib/types/stage';
 import type { Slide } from '@/lib/types/slides';
 import {
   getFirstSlideByStages,
   listLessonPackVersions,
   loadStageData,
+  loadStageOutlines,
   restoreLessonPackVersion,
   saveLessonPackVersion,
 } from '@/lib/utils/stage-storage';
@@ -56,8 +67,8 @@ const detailCopy = {
     exported: '已导出',
     notExported: '未导出',
     planDescription: '按当前备课包内容整理出的结构概览，帮助老师在进入编辑器前快速回看。',
-    slideDescription: '展示当前备课包里的页面结构与内容顺序。',
-    practiceDescription: '从内容中提取测验与互动场景，方便快速定位课堂练习。',
+    slideDescription: '按真实上课顺序展示整节课的全部页面与互动节点。',
+    practiceDescription: '只筛选互动、测验与实践页面，方便快速定位课堂练习。',
     versionDescription: '随时手动保存当前版本，并在需要时安全地恢复到历史节点。',
     exportDescription: '导出后，工作台会实时显示已导出状态，方便追踪交付进度。',
     restored: '已恢复所选版本',
@@ -71,8 +82,16 @@ const detailCopy = {
     updatedAt: '最近更新',
     metadata: '基础信息',
     sceneCount: '内容页',
+    allPages: '全部页面',
+    practicePages: '练习',
     restoreCurrent: '恢复此版本',
     retry: '重试',
+    generating: '生成中',
+    generatingDescription: '备课包正在后台持续生成，你可以先预览当前内容，或直接进入编辑器。',
+    progressLabel: '生成进度',
+    generatedScenes: '已生成页面',
+    currentStep: '当前阶段',
+    pendingScene: '生成中',
     slideType: '演示',
     quizType: '测验',
     interactiveType: '互动',
@@ -93,8 +112,8 @@ const detailCopy = {
     exported: 'Exported',
     notExported: 'Not exported',
     planDescription: 'A structured overview of the current lesson pack before going back into the editor.',
-    slideDescription: 'Review the current page flow and scene order.',
-    practiceDescription: 'Locate quiz and interactive scenes quickly.',
+    slideDescription: 'View the full lesson flow in teaching order, including interactive checkpoints.',
+    practiceDescription: 'Filter to quiz, interactive, and practice scenes only.',
     versionDescription: 'Save a snapshot of the current state and safely restore to any historical point.',
     exportDescription: 'After export, the workbench will update to reflect the "Exported" status.',
     restored: 'Version restored',
@@ -108,8 +127,16 @@ const detailCopy = {
     updatedAt: 'Updated',
     metadata: 'Metadata',
     sceneCount: 'scenes',
+    allPages: 'All pages',
+    practicePages: 'Practice',
     restoreCurrent: 'Restore this version',
     retry: 'Retry',
+    generating: 'Generating',
+    generatingDescription: 'This lesson pack is still being generated on the server. You can preview what is ready or jump into the editor now.',
+    progressLabel: 'Progress',
+    generatedScenes: 'Scenes ready',
+    currentStep: 'Current step',
+    pendingScene: 'Generating',
     slideType: 'Slide',
     quizType: 'Quiz',
     interactiveType: 'Interactive',
@@ -137,28 +164,34 @@ export function LessonPackDetailClient() {
   const stage = useStageStore((s) => s.stage);
   const scenes = useStageStore((s) => s.scenes);
   const outlines = useStageStore((s) => s.outlines);
+  const generatingOutlines = useStageStore((s) => s.generatingOutlines);
   const [versions, setVersions] = useState<Awaited<ReturnType<typeof listLessonPackVersions>>>([]);
   const [thumbnail, setThumbnail] = useState<Slide | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [versionNote, setVersionNote] = useState('');
+  const [liveJob, setLiveJob] = useState<ClassroomJobStreamState | null>(null);
   const { exporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const previousExporting = useRef(false);
+  const liveJobStreamCloseRef = useRef<(() => void) | null>(null);
+  const lastLiveRefreshKeyRef = useRef('');
 
   const currentTab = searchParams.get('tab') ?? 'plan';
 
-  const loadPack = useCallback(async () => {
+  const loadPack = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!packId) return;
-    setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
-      const store = useStageStore.getState();
-      await store.loadFromStorage(packId);
+      let loaded = false;
 
-      const stored = await loadStageData(packId);
-      if (!stored) {
-        const res = await fetch(`/api/classroom?id=${encodeURIComponent(packId)}`);
+      try {
+        const res = await fetch(`/api/classroom?id=${encodeURIComponent(packId)}`, {
+          cache: 'no-store',
+        });
         if (!res.ok) throw new Error(copy.failed);
         const json = await res.json();
         if (!json.success || !json.classroom) throw new Error(copy.failed);
@@ -166,10 +199,41 @@ export function LessonPackDetailClient() {
         useStageStore.setState({
           stage: classroom.stage,
           scenes: classroom.scenes,
-          currentSceneId: classroom.scenes[0]?.id ?? null,
+          currentSceneId: classroom.stage.currentSceneId ?? classroom.scenes[0]?.id ?? null,
           chats: [],
-          outlines: [],
-          generatingOutlines: [],
+          outlines: classroom.outlines ?? [],
+          generatingOutlines: (classroom.outlines ?? []).filter(
+            (outline: { order: number }) =>
+              !classroom.scenes.some((scene: { order: number }) => scene.order === outline.order),
+          ),
+        });
+        loaded = true;
+      } catch {
+        loaded = false;
+      }
+
+      if (!loaded) {
+        const store = useStageStore.getState();
+        await store.loadFromStorage(packId);
+
+        const [stored, storedOutlines] = await Promise.all([
+          loadStageData(packId),
+          loadStageOutlines(packId),
+        ]);
+
+        if (!stored) {
+          throw new Error(copy.failed);
+        }
+
+        useStageStore.setState({
+          stage: stored.stage,
+          scenes: stored.scenes,
+          currentSceneId: stored.currentSceneId,
+          chats: stored.chats,
+          outlines: storedOutlines,
+          generatingOutlines: storedOutlines.filter(
+            (outline) => !stored.scenes.some((scene) => scene.order === outline.order),
+          ),
         });
       }
 
@@ -180,9 +244,13 @@ export function LessonPackDetailClient() {
       setVersions(packVersions);
       setThumbnail(thumbs[packId]);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : copy.failed);
+      if (!silent) {
+        setError(loadError instanceof Error ? loadError.message : copy.failed);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [copy.failed, packId]);
 
@@ -197,6 +265,88 @@ export function LessonPackDetailClient() {
     previousExporting.current = exporting;
   }, [exporting, loadPack]);
 
+  useEffect(() => {
+    if (!packId) {
+      setLiveJob(null);
+      return;
+    }
+
+    let cancelled = false;
+    liveJobStreamCloseRef.current?.();
+    liveJobStreamCloseRef.current = null;
+    lastLiveRefreshKeyRef.current = '';
+    setLiveJob(null);
+
+    const maybeRefreshForJob = (job: ClassroomJobStreamState) => {
+      if (cancelled) {
+        return;
+      }
+
+      setLiveJob(job.done ? null : job);
+
+      const refreshKey = `${job.scenesGenerated}:${job.step}:${job.status}`;
+      const shouldRefresh =
+        job.scenesGenerated > useStageStore.getState().scenes.length ||
+        ['generating_media', 'generating_tts', 'persisting', 'completed'].includes(job.step) ||
+        job.status === 'failed' ||
+        job.done;
+
+      if (shouldRefresh && refreshKey !== lastLiveRefreshKeyRef.current) {
+        lastLiveRefreshKeyRef.current = refreshKey;
+        void loadPack({ silent: true });
+      }
+
+      if (job.done) {
+        clearLiveClassroomJobId(packId);
+      }
+    };
+
+    const startLiveSync = async () => {
+      const liveJobId = getLiveClassroomJobId(packId);
+      if (!liveJobId) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/generate-classroom/${encodeURIComponent(liveJobId)}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          throw new Error(`Failed to load live job: HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to load live job');
+        }
+
+        const job = (data.job ?? data) as ClassroomJobStreamState;
+        maybeRefreshForJob(job);
+
+        if (job.done || cancelled) {
+          return;
+        }
+
+        const stream = startClassroomJobStream({
+          job,
+          onUpdate: maybeRefreshForJob,
+          onTerminal: maybeRefreshForJob,
+        });
+        liveJobStreamCloseRef.current = stream.close;
+      } catch {
+        clearLiveClassroomJobId(packId);
+      }
+    };
+
+    void startLiveSync();
+
+    return () => {
+      cancelled = true;
+      liveJobStreamCloseRef.current?.();
+      liveJobStreamCloseRef.current = null;
+    };
+  }, [loadPack, packId]);
+
   const slideScenes = useMemo(
     () => scenes.filter((scene) => scene.content.type === 'slide'),
     [scenes],
@@ -205,10 +355,54 @@ export function LessonPackDetailClient() {
     () => scenes.filter((scene) => scene.content.type === 'quiz' || scene.content.type === 'interactive'),
     [scenes],
   );
+  const pendingPracticeOutlines = useMemo(
+    () =>
+      generatingOutlines
+        .filter(
+          (outline) =>
+            outline.type === 'quiz' || outline.type === 'interactive' || outline.type === 'pbl',
+        )
+        .sort((a, b) => a.order - b.order),
+    [generatingOutlines],
+  );
   const planItems = useMemo(() => {
     if (outlines.length > 0) return outlines.map((outline) => outline.title);
     return scenes.slice(0, 8).map((scene) => scene.title);
   }, [outlines, scenes]);
+  const classroomItems = useMemo(
+    () =>
+      [
+        ...scenes.map((scene) => ({ kind: 'scene' as const, order: scene.order, scene })),
+        ...generatingOutlines.map((outline) => ({
+          kind: 'outline' as const,
+          order: outline.order,
+          outline,
+        })),
+      ].sort((a, b) => a.order - b.order),
+    [generatingOutlines, scenes],
+  );
+  const practiceItems = useMemo(
+    () =>
+      [
+        ...practiceScenes.map((scene) => ({ kind: 'scene' as const, order: scene.order, scene })),
+        ...pendingPracticeOutlines.map((outline) => ({
+          kind: 'outline' as const,
+          order: outline.order,
+          outline,
+        })),
+      ].sort((a, b) => a.order - b.order),
+    [pendingPracticeOutlines, practiceScenes],
+  );
+  const classroomHref = useMemo(() => {
+    if (!liveJob?.jobId) {
+      return `/classroom/${packId}`;
+    }
+    return `/classroom/${packId}?jobId=${encodeURIComponent(liveJob.jobId)}`;
+  }, [liveJob?.jobId, packId]);
+  const liveProgressValue = useMemo(() => {
+    if (!liveJob) return 0;
+    return Math.max(2, Math.min(100, liveJob.progress || 0));
+  }, [liveJob]);
 
   const setTab = (value: string) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -336,6 +530,38 @@ export function LessonPackDetailClient() {
                   <span className="flex items-center gap-1.5"><LayoutTemplate className="size-4" /> {scenes.length} {copy.sceneCount}</span>
                   {stage.lessonPack?.durationMinutes ? <span className="flex items-center gap-1.5"><PlaySquare className="size-4" /> {stage.lessonPack.durationMinutes} min</span> : null}
                 </div>
+
+                {liveJob ? (
+                  <div className="max-w-2xl rounded-[1.5rem] border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50 p-4 shadow-sm dark:border-indigo-500/20 dark:from-indigo-500/10 dark:via-slate-900 dark:to-violet-500/10">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-indigo-600 text-white hover:bg-indigo-600 dark:bg-indigo-500">
+                          {copy.generating}
+                        </Badge>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                          {copy.generatedScenes}: {liveJob.scenesGenerated}
+                          {liveJob.totalScenes ? ` / ${liveJob.totalScenes}` : ''}
+                        </span>
+                      </div>
+                      <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+                        {Math.round(liveProgressValue)}%
+                      </span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-2 flex items-center justify-between text-xs font-medium uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                        <span>{copy.progressLabel}</span>
+                        <span>{Math.round(liveProgressValue)}%</span>
+                      </div>
+                      <Progress value={liveProgressValue} className="h-2.5 bg-indigo-100 dark:bg-slate-800" />
+                    </div>
+                    <div className="mt-3 flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-300">
+                      <p>{liveJob.message || copy.generatingDescription}</p>
+                      <p className="text-slate-500 dark:text-slate-400">
+                        {copy.currentStep}: {liveJob.step}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -344,7 +570,7 @@ export function LessonPackDetailClient() {
               <Button 
                 size="lg" 
                 className="w-full rounded-xl bg-indigo-600 text-base font-semibold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 sm:w-auto" 
-                onClick={() => router.push(`/classroom/${packId}`)}
+                onClick={() => router.push(classroomHref)}
               >
                 <ExternalLink className="mr-2 size-5" />
                 {copy.continueEdit}
@@ -447,7 +673,7 @@ export function LessonPackDetailClient() {
                       </div>
                       <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
                         <span className="text-sm font-medium text-slate-500 dark:text-slate-400">内容统计</span>
-                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{slideScenes.length} 演示 / {practiceScenes.length} 练习</span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{classroomItems.length} {copy.allPages} / {practiceItems.length} {copy.practicePages}</span>
                       </div>
                     </CardContent>
                   </Card>
@@ -464,10 +690,16 @@ export function LessonPackDetailClient() {
                 </CardHeader>
                 <CardContent className="px-8 pb-8">
                   <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                    {scenes.length === 0 ? (
+                    {classroomItems.length === 0 ? (
                       <div className="col-span-full py-12 text-center text-slate-500">{copy.empty}</div>
                     ) : (
-                      scenes.map((scene, index) => <VisualSceneTile key={scene.id} index={index} scene={scene} copy={copy} packId={packId} />)
+                      classroomItems.map((item) =>
+                        item.kind === 'scene' ? (
+                          <VisualSceneTile key={item.scene.id} scene={item.scene} copy={copy} packId={packId} />
+                        ) : (
+                          <PendingSceneTile key={item.outline.id} outline={item.outline} copy={copy} />
+                        ),
+                      )
                     )}
                   </div>
                 </CardContent>
@@ -482,14 +714,20 @@ export function LessonPackDetailClient() {
                   <CardDescription className="text-base">{copy.practiceDescription}</CardDescription>
                 </CardHeader>
                 <CardContent className="px-8 pb-8">
-                  {practiceScenes.length === 0 ? (
+                  {practiceItems.length === 0 ? (
                     <div className="flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 py-20 dark:border-slate-800">
                       <PackageOpen className="mb-4 size-12 text-slate-300 dark:text-slate-600" />
                       <p className="text-base font-medium text-slate-500 dark:text-slate-400">{copy.noPractice}</p>
                     </div>
                   ) : (
                     <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                      {practiceScenes.map((scene, index) => <VisualSceneTile key={scene.id} index={index} scene={scene} copy={copy} packId={packId} />)}
+                      {practiceItems.map((item) =>
+                        item.kind === 'scene' ? (
+                          <VisualSceneTile key={item.scene.id} scene={item.scene} copy={copy} packId={packId} />
+                        ) : (
+                          <PendingSceneTile key={item.outline.id} outline={item.outline} copy={copy} />
+                        ),
+                      )}
                     </div>
                   )}
                 </CardContent>
@@ -594,7 +832,7 @@ export function LessonPackDetailClient() {
                     </Button>
                   </div>
                   <div className="mt-8 text-center">
-                    <Button variant="ghost" className="text-slate-500" onClick={() => router.push(`/classroom/${packId}`)}>
+                    <Button variant="ghost" className="text-slate-500" onClick={() => router.push(classroomHref)}>
                       <ExternalLink className="mr-2 size-4" />
                       先不导出，{copy.continueEdit}
                     </Button>
@@ -612,12 +850,10 @@ export function LessonPackDetailClient() {
 
 // 可视化幻灯片占位卡片组件
 function VisualSceneTile({
-  index,
   scene,
   copy,
   packId,
 }: {
-  index: number;
   scene: Scene;
   copy: { slideType: string; quizType: string; interactiveType: string };
   packId: string;
@@ -641,7 +877,7 @@ function VisualSceneTile({
       {/* 模拟 16:9 画布区域 */}
       <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${isInteractive ? 'bg-gradient-to-br from-orange-50 to-rose-50 dark:from-orange-950/40 dark:to-rose-950/40' : 'bg-gradient-to-br from-slate-50 to-indigo-50/50 dark:from-slate-900 dark:to-indigo-950/30'}`}>
         <div className="absolute left-3 top-3 flex size-6 items-center justify-center rounded-full bg-white/80 text-xs font-bold text-slate-700 shadow-sm backdrop-blur dark:bg-slate-800/80 dark:text-slate-300">
-          {index + 1}
+          {scene.order}
         </div>
         {isInteractive ? (
           <PackageOpen className="size-10 text-orange-300 dark:text-orange-700" />
@@ -655,10 +891,67 @@ function VisualSceneTile({
         <h3 className="line-clamp-2 min-h-[40px] text-sm font-semibold leading-relaxed text-slate-900 dark:text-slate-100">
           {scene.title}
         </h3>
-        <div className="mt-auto pt-2">
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
           <Badge variant={isInteractive ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${isInteractive ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}`}>
             {typeLabel}
           </Badge>
+          <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            P.{scene.order}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingSceneTile({
+  outline,
+  copy,
+}: {
+  outline: SceneOutline;
+  copy: {
+    slideType: string;
+    quizType: string;
+    interactiveType: string;
+    pendingScene: string;
+  };
+}) {
+  const isInteractive =
+    outline.type === 'quiz' || outline.type === 'interactive' || outline.type === 'pbl';
+  const typeLabel = outline.type === 'slide'
+    ? copy.slideType
+    : outline.type === 'quiz'
+      ? copy.quizType
+      : copy.interactiveType;
+
+  return (
+    <div className="group flex flex-col overflow-hidden rounded-2xl border border-dashed border-indigo-200/70 bg-white shadow-sm dark:border-indigo-500/30 dark:bg-slate-950">
+      <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${isInteractive ? 'bg-gradient-to-br from-orange-50/80 to-rose-50/80 dark:from-orange-950/20 dark:to-rose-950/20' : 'bg-gradient-to-br from-slate-50 to-indigo-50/60 dark:from-slate-900 dark:to-indigo-950/20'}`}>
+        <div className="absolute left-3 top-3 flex size-6 items-center justify-center rounded-full bg-white/80 text-xs font-bold text-slate-700 shadow-sm backdrop-blur dark:bg-slate-800/80 dark:text-slate-300">
+          {outline.order}
+        </div>
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Loader2 className="size-8 animate-spin text-indigo-400 dark:text-indigo-500" />
+          <Badge variant="outline" className="border-indigo-200 bg-white/80 text-indigo-700 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-indigo-300">
+            {copy.pendingScene}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2 p-4">
+        <h3 className="line-clamp-2 min-h-[40px] text-sm font-semibold leading-relaxed text-slate-900 dark:text-slate-100">
+          {outline.title}
+        </h3>
+        <p className="line-clamp-2 min-h-[36px] text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          {outline.description}
+        </p>
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+          <Badge variant={isInteractive ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${isInteractive ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}`}>
+            {typeLabel}
+          </Badge>
+          <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            P.{outline.order}
+          </span>
         </div>
       </div>
     </div>
