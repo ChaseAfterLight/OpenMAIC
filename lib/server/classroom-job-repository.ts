@@ -249,3 +249,51 @@ export async function listClassroomGenerationJobRecordsByStatuses(
 
   return result.rows.map((row) => fromJsonColumn<ClassroomGenerationJob>(row.raw_job));
 }
+
+export async function findLatestClassroomGenerationJobRecordByClassroomId(
+  classroomId: string,
+  statuses: ClassroomGenerationJob['status'][],
+): Promise<ClassroomGenerationJob | null> {
+  await ensureClassroomJobStorageReady();
+
+  if (!classroomId || statuses.length === 0) {
+    return null;
+  }
+
+  const config = getServerStorageConfig();
+  if (config.backend === 'file') {
+    const jobs = await listFileJobRecords();
+    const statusSet = new Set(statuses);
+    return (
+      jobs
+        .filter(
+          (job) =>
+            statusSet.has(job.status) &&
+            (job.checkpoint?.classroomId === classroomId || job.result?.classroomId === classroomId),
+        )
+        .sort((a, b) => (toEpochMillis(b.updatedAt) ?? 0) - (toEpochMillis(a.updatedAt) ?? 0))[0] ??
+      null
+    );
+  }
+
+  const result = await getStoragePgPool(config.databaseUrl).query(
+    `
+      SELECT raw_job
+      FROM classroom_generation_jobs
+      WHERE status = ANY($1::text[])
+        AND (
+          raw_job->'checkpoint'->>'classroomId' = $2
+          OR raw_job->'result'->>'classroomId' = $2
+        )
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+    [statuses, classroomId],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return fromJsonColumn<ClassroomGenerationJob>(result.rows[0].raw_job);
+}

@@ -34,6 +34,7 @@ import {
 import {
   clearLiveClassroomJobId,
   getLiveClassroomJobId,
+  setLiveClassroomJobId,
 } from '@/lib/client/classroom-live-job';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -91,6 +92,7 @@ const detailCopy = {
     progressLabel: '生成进度',
     generatedScenes: '已生成页面',
     currentStep: '当前阶段',
+    syncingProgress: '正在同步生成进度...',
     pendingScene: '生成中',
     slideType: '演示',
     quizType: '测验',
@@ -136,6 +138,7 @@ const detailCopy = {
     progressLabel: 'Progress',
     generatedScenes: 'Scenes ready',
     currentStep: 'Current step',
+    syncingProgress: 'Syncing generation progress...',
     pendingScene: 'Generating',
     slideType: 'Slide',
     quizType: 'Quiz',
@@ -171,6 +174,7 @@ export function LessonPackDetailClient() {
   const [error, setError] = useState<string | null>(null);
   const [versionNote, setVersionNote] = useState('');
   const [liveJob, setLiveJob] = useState<ClassroomJobStreamState | null>(null);
+  const [resolvingLiveJob, setResolvingLiveJob] = useState(false);
   const { exporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const previousExporting = useRef(false);
   const liveJobStreamCloseRef = useRef<(() => void) | null>(null);
@@ -302,25 +306,44 @@ export function LessonPackDetailClient() {
     };
 
     const startLiveSync = async () => {
-      const liveJobId = getLiveClassroomJobId(packId);
-      if (!liveJobId) {
-        return;
-      }
-
-      try {
-        const res = await fetch(`/api/generate-classroom/${encodeURIComponent(liveJobId)}`, {
-          cache: 'no-store',
-        });
+      const loadJob = async (url: string) => {
+        const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) {
           throw new Error(`Failed to load live job: HTTP ${res.status}`);
         }
-
         const data = await res.json();
         if (!data.success) {
           throw new Error(data.error || 'Failed to load live job');
         }
+        if (!('job' in data)) {
+          return data as ClassroomJobStreamState;
+        }
+        return (data.job as ClassroomJobStreamState | null) ?? null;
+      };
 
-        const job = (data.job ?? data) as ClassroomJobStreamState;
+      try {
+        setResolvingLiveJob(true);
+
+        let job: ClassroomJobStreamState | null = null;
+        const rememberedJobId = getLiveClassroomJobId(packId);
+
+        if (rememberedJobId) {
+          try {
+            job = await loadJob(`/api/generate-classroom/${encodeURIComponent(rememberedJobId)}`);
+          } catch {
+            clearLiveClassroomJobId(packId);
+          }
+        }
+
+        if (!job) {
+          job = await loadJob(`/api/generate-classroom/by-classroom/${encodeURIComponent(packId)}`);
+        }
+
+        if (!job) {
+          return;
+        }
+
+        setLiveClassroomJobId(packId, job.jobId);
         maybeRefreshForJob(job);
 
         if (job.done || cancelled) {
@@ -335,6 +358,10 @@ export function LessonPackDetailClient() {
         liveJobStreamCloseRef.current = stream.close;
       } catch {
         clearLiveClassroomJobId(packId);
+      } finally {
+        if (!cancelled) {
+          setResolvingLiveJob(false);
+        }
       }
     };
 
@@ -403,6 +430,28 @@ export function LessonPackDetailClient() {
     if (!liveJob) return 0;
     return Math.max(2, Math.min(100, liveJob.progress || 0));
   }, [liveJob]);
+  const fallbackTotalScenes = useMemo(() => {
+    if (liveJob?.totalScenes) {
+      return liveJob.totalScenes;
+    }
+    if (outlines.length > 0) {
+      return outlines.length;
+    }
+    const total = scenes.length + generatingOutlines.length;
+    return total > 0 ? total : undefined;
+  }, [generatingOutlines.length, liveJob?.totalScenes, outlines.length, scenes.length]);
+  const fallbackGeneratedScenes = liveJob?.scenesGenerated ?? scenes.length;
+  const compactProgressValue = useMemo(() => {
+    if (liveJob) {
+      return liveProgressValue;
+    }
+    if (fallbackTotalScenes && fallbackTotalScenes > 0) {
+      return Math.max(6, Math.min(96, (fallbackGeneratedScenes / fallbackTotalScenes) * 100));
+    }
+    return 12;
+  }, [fallbackGeneratedScenes, fallbackTotalScenes, liveJob, liveProgressValue]);
+  const showCompactProgress = !!liveJob || (!loading && stage?.lessonPack?.status === 'in_progress');
+  const compactProgressMessage = liveJob?.message || copy.syncingProgress;
 
   const setTab = (value: string) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -531,35 +580,32 @@ export function LessonPackDetailClient() {
                   {stage.lessonPack?.durationMinutes ? <span className="flex items-center gap-1.5"><PlaySquare className="size-4" /> {stage.lessonPack.durationMinutes} min</span> : null}
                 </div>
 
-                {liveJob ? (
-                  <div className="max-w-2xl rounded-[1.5rem] border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50 p-4 shadow-sm dark:border-indigo-500/20 dark:from-indigo-500/10 dark:via-slate-900 dark:to-violet-500/10">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-indigo-600 text-white hover:bg-indigo-600 dark:bg-indigo-500">
-                          {copy.generating}
-                        </Badge>
-                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                          {copy.generatedScenes}: {liveJob.scenesGenerated}
-                          {liveJob.totalScenes ? ` / ${liveJob.totalScenes}` : ''}
-                        </span>
-                      </div>
-                      <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
-                        {Math.round(liveProgressValue)}%
+                {showCompactProgress ? (
+                  <div className="max-w-2xl rounded-2xl border border-indigo-100/80 bg-white/90 px-4 py-3 shadow-sm backdrop-blur dark:border-indigo-500/20 dark:bg-slate-900/70">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge className="bg-indigo-600 text-white hover:bg-indigo-600 dark:bg-indigo-500">
+                        {copy.generating}
+                      </Badge>
+                      <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300">
+                        {compactProgressMessage}
                       </span>
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                        {fallbackGeneratedScenes}
+                        {fallbackTotalScenes ? `/${fallbackTotalScenes}` : ''}{' '}
+                        {copy.sceneCount}
+                      </span>
+                      {liveJob ? (
+                        <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                          {Math.round(liveProgressValue)}%
+                        </span>
+                      ) : resolvingLiveJob ? (
+                        <Loader2 className="size-4 animate-spin text-indigo-500" />
+                      ) : null}
                     </div>
-                    <div className="mt-3">
-                      <div className="mb-2 flex items-center justify-between text-xs font-medium uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                        <span>{copy.progressLabel}</span>
-                        <span>{Math.round(liveProgressValue)}%</span>
-                      </div>
-                      <Progress value={liveProgressValue} className="h-2.5 bg-indigo-100 dark:bg-slate-800" />
-                    </div>
-                    <div className="mt-3 flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-300">
-                      <p>{liveJob.message || copy.generatingDescription}</p>
-                      <p className="text-slate-500 dark:text-slate-400">
-                        {copy.currentStep}: {liveJob.step}
-                      </p>
-                    </div>
+                    <Progress
+                      value={compactProgressValue}
+                      className="mt-2 h-1.5 bg-indigo-100 dark:bg-slate-800"
+                    />
                   </div>
                 ) : null}
               </div>

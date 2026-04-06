@@ -142,6 +142,54 @@ function normalizeLanguage(language?: string): 'zh-CN' | 'en-US' {
   return language === 'en-US' ? 'en-US' : 'zh-CN';
 }
 
+function progressMessage(
+  locale: 'zh-CN' | 'en-US',
+  key:
+    | 'initializing'
+    | 'researching'
+    | 'resuming'
+    | 'generatingOutlines'
+    | 'generatedOutlines'
+    | 'generatingScene'
+    | 'generatedScenes'
+    | 'generatingMedia'
+    | 'generatingTts'
+    | 'persisting'
+    | 'completed',
+  params?: Record<string, string | number>,
+) {
+  const messages = {
+    'zh-CN': {
+      initializing: '正在初始化课程包生成',
+      researching: '正在检索主题资料',
+      resuming: `正在恢复课程包生成（${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} 页已就绪）`,
+      generatingOutlines: '正在生成场景大纲',
+      generatedOutlines: `已生成 ${params?.totalScenes ?? 0} 个场景大纲`,
+      generatingScene: `正在生成第 ${params?.currentScene ?? 0}/${params?.totalScenes ?? 0} 页：${params?.title ?? ''}`,
+      generatedScenes: `已生成 ${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} 页`,
+      generatingMedia: '正在生成媒体素材',
+      generatingTts: '正在生成语音讲解',
+      persisting: '正在保存课程包数据',
+      completed: '课程包生成完成',
+    },
+    'en-US': {
+      initializing: 'Initializing classroom generation',
+      researching: 'Researching topic',
+      resuming: `Resuming classroom generation (${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} scenes ready)`,
+      generatingOutlines: 'Generating scene outlines',
+      generatedOutlines: `Generated ${params?.totalScenes ?? 0} scene outlines`,
+      generatingScene: `Generating scene ${params?.currentScene ?? 0}/${params?.totalScenes ?? 0}: ${params?.title ?? ''}`,
+      generatedScenes: `Generated ${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} scenes`,
+      generatingMedia: 'Generating media files',
+      generatingTts: 'Generating TTS audio',
+      persisting: 'Persisting classroom data',
+      completed: 'Classroom generation completed',
+    },
+  } as const;
+
+  return messages[locale][key];
+}
+
 function restoreAgentsFromStage(stage: Stage): AgentInfo[] | null {
   if (!stage.generatedAgentConfigs?.length) {
     return null;
@@ -306,11 +354,12 @@ export async function generateClassroom(
   },
 ): Promise<GenerateClassroomResult> {
   const { requirement, pdfContent } = input;
+  const lang = normalizeLanguage(input.language);
 
   await options.onProgress?.({
     step: 'initializing',
     progress: 5,
-    message: 'Initializing classroom generation',
+    message: progressMessage(lang, 'initializing'),
     scenesGenerated: 0,
   });
 
@@ -376,7 +425,6 @@ export async function generateClassroom(
     return result.text;
   };
 
-  const lang = normalizeLanguage(input.language);
   const { pdfImages: restoredPdfImages, imageMapping } = await loadServerPdfAssets(input);
   const requirements: UserRequirements = {
     requirement,
@@ -428,7 +476,7 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'researching',
       progress: 10,
-      message: 'Researching topic',
+      message: progressMessage(lang, 'researching'),
       scenesGenerated: 0,
     });
   }
@@ -518,7 +566,10 @@ export async function generateClassroom(
         30 + Math.floor((resumedClassroom.scenes.length / Math.max(outlines.length, 1)) * 60),
         90,
       ),
-      message: `Resuming classroom generation (${resumedClassroom.scenes.length}/${outlines.length} scenes ready)`,
+      message: progressMessage(lang, 'resuming', {
+        readyScenes: resumedClassroom.scenes.length,
+        totalScenes: outlines.length,
+      }),
       scenesGenerated: resumedClassroom.scenes.length,
       totalScenes: outlines.length,
       checkpoint: { classroomId: stageId },
@@ -532,7 +583,7 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_outlines',
       progress: 15,
-      message: 'Generating scene outlines',
+      message: progressMessage(lang, 'generatingOutlines'),
       scenesGenerated: 0,
     });
 
@@ -629,7 +680,9 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_outlines',
       progress: 30,
-      message: `Generated ${outlines.length} scene outlines`,
+      message: progressMessage(lang, 'generatedOutlines', {
+        totalScenes: outlines.length,
+      }),
       scenesGenerated: 0,
       totalScenes: outlines.length,
       checkpoint: { classroomId: initialSnapshot.classroomId },
@@ -652,7 +705,11 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.max(progressStart, 31),
-      message: `Generating scene ${index + 1}/${outlines.length}: ${safeOutline.title}`,
+      message: progressMessage(lang, 'generatingScene', {
+        currentScene: index + 1,
+        totalScenes: outlines.length,
+        title: safeOutline.title,
+      }),
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
     });
@@ -699,7 +756,10 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.min(progressEnd, 90),
-      message: `Generated ${generatedScenes}/${outlines.length} scenes`,
+      message: progressMessage(lang, 'generatedScenes', {
+        readyScenes: generatedScenes,
+        totalScenes: outlines.length,
+      }),
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
       checkpoint: { classroomId: snapshot.classroomId },
@@ -719,7 +779,7 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_media',
       progress: 90,
-      message: 'Generating media files',
+      message: progressMessage(lang, 'generatingMedia'),
       scenesGenerated: scenes.length,
       totalScenes: outlines.length,
     });
@@ -738,7 +798,7 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_tts',
       progress: 94,
-      message: 'Generating TTS audio',
+      message: progressMessage(lang, 'generatingTts'),
       scenesGenerated: scenes.length,
       totalScenes: outlines.length,
     });
@@ -754,7 +814,7 @@ export async function generateClassroom(
   await options.onProgress?.({
     step: 'persisting',
     progress: 98,
-    message: 'Persisting classroom data',
+    message: progressMessage(lang, 'persisting'),
     scenesGenerated: scenes.length,
     totalScenes: outlines.length,
   });
@@ -779,7 +839,7 @@ export async function generateClassroom(
   await options.onProgress?.({
     step: 'completed',
     progress: 100,
-    message: 'Classroom generation completed',
+    message: progressMessage(lang, 'completed'),
     scenesGenerated: scenes.length,
     totalScenes: outlines.length,
   });

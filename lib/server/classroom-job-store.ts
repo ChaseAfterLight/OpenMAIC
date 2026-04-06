@@ -5,10 +5,31 @@ import type {
   GenerateClassroomResult,
 } from '@/lib/server/classroom-generation';
 import {
+  findLatestClassroomGenerationJobRecordByClassroomId,
   readClassroomGenerationJobRecord,
   writeClassroomGenerationJobRecord,
 } from '@/lib/server/classroom-job-repository';
 import type { ClassroomGenerationJob } from '@/lib/server/classroom-job-types';
+
+function jobMessage(input: Pick<GenerateClassroomInput, 'language'> | undefined, key: 'queued' | 'started' | 'completed' | 'failed') {
+  const locale = input?.language === 'en-US' ? 'en-US' : 'zh-CN';
+  const messages = {
+    'zh-CN': {
+      queued: '课程包生成任务已排队',
+      started: '课程包生成已开始',
+      completed: '课程包生成完成',
+      failed: '课程包生成失败',
+    },
+    'en-US': {
+      queued: 'Classroom generation job queued',
+      started: 'Classroom generation started',
+      completed: 'Classroom generation completed',
+      failed: 'Classroom generation failed',
+    },
+  } as const;
+
+  return messages[locale][key];
+}
 
 function buildInputSummary(input: GenerateClassroomInput): ClassroomGenerationJob['inputSummary'] {
   return {
@@ -76,7 +97,7 @@ export async function createClassroomGenerationJob(
     status: 'queued',
     step: 'queued',
     progress: 0,
-    message: 'Classroom generation job queued',
+    message: jobMessage(input, 'queued'),
     createdAt: now,
     updatedAt: now,
     inputSummary: buildInputSummary(input),
@@ -108,6 +129,26 @@ export async function readClassroomGenerationJob(
     await writeClassroomGenerationJobRecord(staleJob);
     return staleJob;
   });
+}
+
+export async function findLiveClassroomGenerationJobByClassroomId(
+  classroomId: string,
+): Promise<ClassroomGenerationJob | null> {
+  const existing = await findLatestClassroomGenerationJobRecordByClassroomId(classroomId, [
+    'queued',
+    'running',
+  ]);
+  if (!existing) {
+    return null;
+  }
+
+  const staleJob = markStaleIfNeeded(existing);
+  if (!staleJob) {
+    return existing;
+  }
+
+  await writeClassroomGenerationJobRecord(staleJob);
+  return null;
 }
 
 export async function updateClassroomGenerationJob(
@@ -144,7 +185,7 @@ export async function markClassroomGenerationJobRunning(
       ...existing,
       status: 'running',
       startedAt: existing.startedAt || new Date().toISOString(),
-      message: 'Classroom generation started',
+      message: jobMessage(existing.resume?.input, 'started'),
       updatedAt: new Date().toISOString(),
     };
 
@@ -188,21 +229,33 @@ export async function markClassroomGenerationJobSucceeded(
   jobId: string,
   result: GenerateClassroomResult,
 ): Promise<ClassroomGenerationJob> {
-  return updateClassroomGenerationJob(jobId, {
-    status: 'succeeded',
-    step: 'completed',
-    progress: 100,
-    message: 'Classroom generation completed',
-    completedAt: new Date().toISOString(),
-    scenesGenerated: result.scenesCount,
-    result: {
-      classroomId: result.id,
-      url: result.url,
-      scenesCount: result.scenesCount,
-    },
-    checkpoint: {
-      classroomId: result.id,
-    },
+  return withJobLock(jobId, async () => {
+    const existing = await readClassroomGenerationJobRecord(jobId);
+    if (!existing) {
+      throw new Error(`Classroom generation job not found: ${jobId}`);
+    }
+
+    const updated: ClassroomGenerationJob = {
+      ...existing,
+      status: 'succeeded',
+      step: 'completed',
+      progress: 100,
+      message: jobMessage(existing.resume?.input, 'completed'),
+      completedAt: new Date().toISOString(),
+      scenesGenerated: result.scenesCount,
+      result: {
+        classroomId: result.id,
+        url: result.url,
+        scenesCount: result.scenesCount,
+      },
+      checkpoint: {
+        classroomId: result.id,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    await writeClassroomGenerationJobRecord(updated);
+    return updated;
   });
 }
 
@@ -210,11 +263,23 @@ export async function markClassroomGenerationJobFailed(
   jobId: string,
   error: string,
 ): Promise<ClassroomGenerationJob> {
-  return updateClassroomGenerationJob(jobId, {
-    status: 'failed',
-    step: 'failed',
-    message: 'Classroom generation failed',
-    completedAt: new Date().toISOString(),
-    error,
+  return withJobLock(jobId, async () => {
+    const existing = await readClassroomGenerationJobRecord(jobId);
+    if (!existing) {
+      throw new Error(`Classroom generation job not found: ${jobId}`);
+    }
+
+    const updated: ClassroomGenerationJob = {
+      ...existing,
+      status: 'failed',
+      step: 'failed',
+      message: jobMessage(existing.resume?.input, 'failed'),
+      completedAt: new Date().toISOString(),
+      error,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await writeClassroomGenerationJobRecord(updated);
+    return updated;
   });
 }
