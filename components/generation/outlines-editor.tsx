@@ -1,13 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -16,7 +14,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, ChevronUp, ChevronDown, Sparkles, Image as ImageIcon } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  Sparkles,
+  Image as ImageIcon,
+  BookOpen,
+  HelpCircle,
+  MousePointerClick,
+  Rocket,
+  Clock,
+  Check,
+  Settings2,
+  FileImage
+} from 'lucide-react';
 import { nanoid } from 'nanoid';
 import type { PdfImage, SceneOutline } from '@/lib/types/generation';
 import type { MediaGenerationRequest } from '@/lib/media/types';
@@ -32,6 +45,15 @@ interface OutlinesEditorProps {
   isLoading?: boolean;
 }
 
+const TYPE_ICONS: Record<string, React.ReactNode> = {
+  slide: <BookOpen className="size-4 text-blue-500" />,
+  quiz: <HelpCircle className="size-4 text-purple-500" />,
+  interactive: <MousePointerClick className="size-4 text-emerald-500" />,
+  pbl: <Rocket className="size-4 text-orange-500" />,
+};
+
+type TabValue = 'content' | 'advanced' | 'materials' | 'aigen';
+
 export function OutlinesEditor({
   outlines,
   onChange,
@@ -42,20 +64,15 @@ export function OutlinesEditor({
   isLoading = false,
 }: OutlinesEditorProps) {
   const { t } = useI18n();
+  const [activeIndex, setActiveIndex] = useState<number>(outlines.length > 0 ? 0 : -1);
+  const [activeTab, setActiveTab] = useState<TabValue>('content');
+
   const availableImageIds = useMemo(
     () => new Set(availableImages.map((image) => image.id)),
-    [availableImages],
+    [availableImages]
   );
-  const totalEstimatedDuration = outlines.reduce(
-    (sum, outline) => sum + (outline.estimatedDuration || 0),
-    0,
-  );
-  const selectedImageCount = outlines.reduce(
-    (sum, outline) => sum + (outline.suggestedImageIds?.length || 0),
-    0,
-  );
-  const linkedImageScenes = outlines.filter((outline) => (outline.suggestedImageIds?.length || 0) > 0)
-    .length;
+  
+  const totalEstimatedDuration = outlines.reduce((sum, outline) => sum + (outline.estimatedDuration || 0), 0);
 
   const sanitizeOutlines = (nextOutlines: SceneOutline[]) =>
     nextOutlines.map((outline) => ({
@@ -63,31 +80,28 @@ export function OutlinesEditor({
       suggestedImageIds: (outline.suggestedImageIds || []).filter((id) => availableImageIds.has(id)),
     }));
 
+  // === 列表操作 ===
   const addOutline = () => {
     const newOutline: SceneOutline = {
       id: nanoid(8),
       type: 'slide',
-      title: '',
+      title: t('generation.newSceneDefaultTitle') || '新教学环节',
       description: '',
       keyPoints: [],
       order: outlines.length + 1,
     };
     onChange([...outlines, newOutline]);
-  };
-
-  const updateOutline = (index: number, updates: Partial<SceneOutline>) => {
-    const newOutlines = [...outlines];
-    newOutlines[index] = { ...newOutlines[index], ...updates };
-    onChange(newOutlines);
+    setActiveIndex(outlines.length);
+    setActiveTab('content');
   };
 
   const removeOutline = (index: number) => {
     const newOutlines = outlines.filter((_, i) => i !== index);
-    // Update order
-    newOutlines.forEach((outline, i) => {
-      outline.order = i + 1;
-    });
+    newOutlines.forEach((outline, i) => { outline.order = i + 1; });
     onChange(newOutlines);
+    if (activeIndex === index) setActiveIndex(Math.max(0, index - 1));
+    else if (activeIndex > index) setActiveIndex(activeIndex - 1);
+    if (newOutlines.length === 0) setActiveIndex(-1);
   };
 
   const moveOutline = (index: number, direction: 'up' | 'down') => {
@@ -95,793 +109,502 @@ export function OutlinesEditor({
     if (newIndex < 0 || newIndex >= outlines.length) return;
     const newOutlines = [...outlines];
     [newOutlines[index], newOutlines[newIndex]] = [newOutlines[newIndex], newOutlines[index]];
-    // Update order
-    newOutlines.forEach((outline, i) => {
-      outline.order = i + 1;
-    });
+    newOutlines.forEach((outline, i) => { outline.order = i + 1; });
+    onChange(newOutlines);
+    if (activeIndex === index) setActiveIndex(newIndex);
+    else if (activeIndex === newIndex) setActiveIndex(index);
+  };
+
+  const updateOutline = (updates: Partial<SceneOutline>) => {
+    if (activeIndex === -1) return;
+    const newOutlines = [...outlines];
+    newOutlines[activeIndex] = { ...newOutlines[activeIndex], ...updates };
     onChange(newOutlines);
   };
 
-  const updateKeyPoints = (index: number, keyPointsText: string) => {
-    const keyPoints = keyPointsText
-      .split('\n')
-      .map((p) => p.trim())
-      .filter(Boolean);
-    updateOutline(index, { keyPoints });
+  const activeOutline = outlines[activeIndex];
+  const activeSuggestedImageIds = activeOutline?.suggestedImageIds || [];
+
+  // === 业务逻辑函数 ===
+  const toggleSuggestedImage = (imageId: string) => {
+    const currentIds = new Set(activeSuggestedImageIds);
+    if (currentIds.has(imageId)) currentIds.delete(imageId);
+    else currentIds.add(imageId);
+    updateOutline({ suggestedImageIds: Array.from(currentIds) });
   };
 
-  const toggleSuggestedImage = (index: number, imageId: string, checked: boolean) => {
-    const currentIds = new Set(outlines[index].suggestedImageIds || []);
-    if (checked) {
-      currentIds.add(imageId);
-    } else {
-      currentIds.delete(imageId);
-    }
-    updateOutline(index, { suggestedImageIds: Array.from(currentIds) });
-  };
-
-  const clearSuggestedImages = (index: number) => {
-    updateOutline(index, { suggestedImageIds: [] });
-  };
-
-  const toggleQuizQuestionType = (
-    index: number,
-    questionType: 'single' | 'multiple' | 'text',
-    checked: boolean,
-  ) => {
-    const currentTypes = new Set(outlines[index].quizConfig?.questionTypes || ['single']);
-    if (checked) {
-      currentTypes.add(questionType);
-    } else if (currentTypes.size > 1) {
-      currentTypes.delete(questionType);
-    }
-    updateOutline(index, {
+  const toggleQuizQuestionType = (questionType: 'single' | 'multiple' | 'text', checked: boolean) => {
+    if (!activeOutline) return;
+    const currentTypes = new Set(activeOutline.quizConfig?.questionTypes || ['single']);
+    if (checked) currentTypes.add(questionType);
+    else if (currentTypes.size > 1) currentTypes.delete(questionType);
+    
+    updateOutline({
       quizConfig: {
-        questionCount: outlines[index].quizConfig?.questionCount || 3,
-        difficulty: outlines[index].quizConfig?.difficulty || 'medium',
+        ...(activeOutline.quizConfig || {}),
+        questionCount: activeOutline.quizConfig?.questionCount || 3,
+        difficulty: activeOutline.quizConfig?.difficulty || 'medium',
         questionTypes: Array.from(currentTypes),
       },
     });
   };
 
-  const updateInteractiveConfig = (
-    index: number,
-    field: 'conceptName' | 'conceptOverview' | 'designIdea' | 'subject',
-    value: string,
-  ) => {
-    updateOutline(index, {
-      interactiveConfig: {
-        conceptName: outlines[index].interactiveConfig?.conceptName || '',
-        conceptOverview: outlines[index].interactiveConfig?.conceptOverview || '',
-        designIdea: outlines[index].interactiveConfig?.designIdea || '',
-        subject: outlines[index].interactiveConfig?.subject || '',
-        [field]: value,
-      },
-    });
+  const updateMediaGeneration = (mediaIndex: number, updates: Partial<MediaGenerationRequest>) => {
+    if (!activeOutline) return;
+    const currentMedia = [...(activeOutline.mediaGenerations || [])];
+    currentMedia[mediaIndex] = { ...currentMedia[mediaIndex], ...updates };
+    updateOutline({ mediaGenerations: currentMedia });
   };
 
-  const updatePblConfig = (
-    index: number,
-    field: 'projectTopic' | 'projectDescription' | 'issueCount' | 'language',
-    value: string,
-  ) => {
-    updateOutline(index, {
-      pblConfig: {
-        projectTopic: outlines[index].pblConfig?.projectTopic || '',
-        projectDescription: outlines[index].pblConfig?.projectDescription || '',
-        targetSkills: outlines[index].pblConfig?.targetSkills || [],
-        issueCount: outlines[index].pblConfig?.issueCount || 3,
-        language: outlines[index].pblConfig?.language || (outlines[index].language ?? 'zh-CN'),
-        [field]:
-          field === 'issueCount'
-            ? Math.max(1, Number(value) || 1)
-            : value,
-      },
-    });
-  };
-
-  const updatePblSkills = (index: number, value: string) => {
-    updateOutline(index, {
-      pblConfig: {
-        projectTopic: outlines[index].pblConfig?.projectTopic || '',
-        projectDescription: outlines[index].pblConfig?.projectDescription || '',
-        targetSkills: value
-          .split('\n')
-          .map((skill) => skill.trim())
-          .filter(Boolean),
-        issueCount: outlines[index].pblConfig?.issueCount || 3,
-        language: outlines[index].pblConfig?.language || (outlines[index].language ?? 'zh-CN'),
-      },
-    });
-  };
-
-  const updateMediaGeneration = (
-    index: number,
-    mediaIndex: number,
-    updates: Partial<MediaGenerationRequest>,
-  ) => {
-    const currentMedia = [...(outlines[index].mediaGenerations || [])];
-    const currentItem = currentMedia[mediaIndex] || {
-      type: 'image' as const,
-      prompt: '',
-      elementId: `gen_img_${nanoid(6)}`,
-    };
-    currentMedia[mediaIndex] = {
-      ...currentItem,
-      ...updates,
-    };
-    updateOutline(index, { mediaGenerations: currentMedia });
-  };
-
-  const addMediaGeneration = (index: number) => {
-    const currentMedia = [...(outlines[index].mediaGenerations || [])];
+  const addMediaGeneration = () => {
+    if (!activeOutline) return;
+    const currentMedia = [...(activeOutline.mediaGenerations || [])];
     currentMedia.push({
       type: 'image',
       prompt: '',
       elementId: `gen_img_${nanoid(6)}`,
       aspectRatio: '16:9',
     });
-    updateOutline(index, { mediaGenerations: currentMedia });
+    updateOutline({ mediaGenerations: currentMedia });
   };
 
-  const removeMediaGeneration = (index: number, mediaIndex: number) => {
-    const currentMedia = [...(outlines[index].mediaGenerations || [])];
+  const removeMediaGeneration = (mediaIndex: number) => {
+    if (!activeOutline) return;
+    const currentMedia = [...(activeOutline.mediaGenerations || [])];
     currentMedia.splice(mediaIndex, 1);
-    updateOutline(index, { mediaGenerations: currentMedia });
+    updateOutline({ mediaGenerations: currentMedia });
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="flex flex-col h-[calc(100vh-6rem)] min-h-[600px] space-y-4">
+      {/* 头部区域 */}
+      <div className="flex items-center justify-between shrink-0">
         <div>
-          <h2 className="text-lg font-semibold">{t('generation.outlineEditorTitle')}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t('generation.outlineEditorSummary', { count: outlines.length })}
-          </p>
+          <h2 className="text-xl font-bold tracking-tight">{t('generation.outlineEditorTitle')}</h2>
+          <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+            <span className="flex items-center gap-1"><BookOpen className="size-3.5" /> {outlines.length} 个环节</span>
+            <span className="flex items-center gap-1"><Clock className="size-3.5" /> {Math.max(1, Math.round(totalEstimatedDuration / 60))} 分钟</span>
+          </div>
         </div>
-        <Button variant="outline" onClick={addOutline} disabled={isLoading}>
-          <Plus className="size-4 mr-1" />
-          {t('generation.addScene')}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={onBack} disabled={isLoading}>返回上一步</Button>
+          <Button onClick={() => onConfirm(sanitizeOutlines(outlines))} disabled={isLoading || outlines.length === 0}>
+            {isLoading ? '生成中...' : '确认并生成教案'}
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card className="border-dashed">
-          <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              {t('generation.summaryScenes')}
-            </p>
-            <p className="mt-2 text-2xl font-semibold">{outlines.length}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-dashed">
-          <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              {t('generation.summaryDuration')}
-            </p>
-            <p className="mt-2 text-2xl font-semibold">
-              {totalEstimatedDuration > 0 ? (
-                <>
-                  {Math.max(1, Math.round(totalEstimatedDuration / 60))}{' '}
-                  <span className="text-sm font-medium text-muted-foreground">
-                    {t('generation.summaryMinutes')}
-                  </span>
-                </>
+      <div className="flex flex-1 overflow-hidden border rounded-xl bg-background shadow-sm">
+        
+        {/* === 左侧：大纲列表 === */}
+        <div className="w-72 border-r flex flex-col bg-muted/10">
+          <div className="p-3 border-b flex justify-between items-center bg-background/50">
+            <span className="text-sm font-semibold pl-1">教学大纲序列</span>
+            <Button variant="outline" size="icon" className="size-7 h-7 shadow-sm" onClick={addOutline} disabled={isLoading}>
+              <Plus className="size-4" />
+            </Button>
+          </div>
+          <ScrollArea className="flex-1 p-2">
+            <div className="space-y-1">
+              {outlines.length === 0 ? (
+                <div className="text-center p-6 text-sm text-muted-foreground">{t('generation.noOutlines')}</div>
               ) : (
-                <span className="text-muted-foreground">--</span>
+                outlines.map((outline, index) => (
+                  <div
+                    key={outline.id}
+                    onClick={() => {
+                      setActiveIndex(index);
+                      if (outline.type === 'slide' && activeTab === 'advanced') setActiveTab('content');
+                    }}
+                    className={`group relative flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer text-sm transition-all border ${
+                      activeIndex === index ? 'bg-primary/10 border-primary/20 font-medium text-primary' : 'bg-transparent border-transparent hover:bg-muted/50'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center opacity-0 group-hover:opacity-100 transition-opacity absolute -left-1">
+                       <button onClick={(e) => { e.stopPropagation(); moveOutline(index, 'up'); }} disabled={index === 0} className="p-0.5 hover:text-primary"><ChevronUp className="size-3" /></button>
+                       <button onClick={(e) => { e.stopPropagation(); moveOutline(index, 'down'); }} disabled={index === outlines.length - 1} className="p-0.5 hover:text-primary"><ChevronDown className="size-3" /></button>
+                    </div>
+                    <div className="flex items-center justify-center size-6 rounded-md bg-background border shrink-0 ml-2">
+                      {TYPE_ICONS[outline.type] || <BookOpen className="size-3.5" />}
+                    </div>
+                    <div className="flex-1 truncate">{outline.title || <span className="text-muted-foreground italic">未命名环节</span>}</div>
+                  </div>
+                ))
               )}
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="border-dashed">
-          <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              {t('generation.summaryImages')}
-            </p>
-            <p className="mt-2 text-2xl font-semibold">{selectedImageCount}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t('generation.summaryLinkedScenes', { count: linkedImageScenes })}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+            </div>
+          </ScrollArea>
+        </div>
 
-      <div className="space-y-4">
-        {outlines.map((outline, index) => (
-          <Card key={outline.id} className="relative">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => moveOutline(index, 'up')}
-                    disabled={index === 0 || isLoading}
-                    className="size-6"
-                  >
-                    <ChevronUp className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => moveOutline(index, 'down')}
-                    disabled={index === outlines.length - 1 || isLoading}
-                    className="size-6"
-                  >
-                    <ChevronDown className="size-4" />
+        {/* === 右侧：配置详情区 === */}
+        <div className="flex-1 relative flex flex-col bg-background">
+          {activeIndex === -1 || !activeOutline ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground bg-muted/5">
+              <MousePointerClick className="size-12 mb-4 opacity-20" />
+              <p>请在左侧选择一个教学环节，或点击新建</p>
+            </div>
+          ) : (
+            <div className="flex flex-col h-full animate-in fade-in duration-300">
+              
+              {/* 顶部常驻：环节标题与类型切换 */}
+              <div className="shrink-0 p-6 border-b bg-background z-10 flex gap-4">
+                <div className="flex-1 space-y-1.5">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">当前环节名称</Label>
+                  <Input
+                    value={activeOutline.title}
+                    onChange={(e) => updateOutline({ title: e.target.value })}
+                    placeholder="输入场景标题，如：引入牛顿第一定律"
+                    className="text-lg font-bold h-12 bg-transparent border-none px-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 border-b-2 focus-visible:border-primary"
+                    disabled={isLoading}
+                  />
+                </div>
+                <div className="flex flex-col items-end gap-2 pt-4">
+                  <Select value={activeOutline.type} onValueChange={(v) => {
+                    updateOutline({ type: v as SceneOutline['type'] });
+                    if (v === 'slide' && activeTab === 'advanced') setActiveTab('content');
+                  }} disabled={isLoading}>
+                    <SelectTrigger className="w-32 h-9 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="slide">标准讲解</SelectItem>
+                      <SelectItem value="quiz">随堂测验</SelectItem>
+                      <SelectItem value="interactive">互动实验</SelectItem>
+                      <SelectItem value="pbl">PBL 探究</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="ghost" size="sm" className="h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => removeOutline(activeIndex)} disabled={isLoading}>
+                    <Trash2 className="size-3 mr-1" /> 删除
                   </Button>
                 </div>
-                <div className="flex-1">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <span className="bg-primary text-primary-foreground size-6 rounded-full flex items-center justify-center text-sm">
-                      {index + 1}
+              </div>
+
+              {/* 手写 Tabs 导航条 (彻底摆脱组件库限制) */}
+              <div className="px-6 pt-4 bg-muted/5 border-b flex gap-2 overflow-x-auto shrink-0">
+                <button
+                  onClick={() => setActiveTab('content')}
+                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'content' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                >
+                  <BookOpen className="size-4"/> 基础内容
+                </button>
+                
+                <button
+                  onClick={() => setActiveTab('advanced')}
+                  disabled={activeOutline.type === 'slide'}
+                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed ${activeTab === 'advanced' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Settings2 className="size-4"/> 
+                  {activeOutline.type === 'quiz' ? '测验规则' : activeOutline.type === 'interactive' ? '互动设定' : activeOutline.type === 'pbl' ? 'PBL规划' : '高级配置'}
+                </button>
+                
+                <button
+                  onClick={() => setActiveTab('materials')}
+                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 relative ${activeTab === 'materials' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                >
+                  <FileImage className="size-4"/> 图片素材
+                  {activeSuggestedImageIds.length > 0 && (
+                    <span className="ml-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
+                      {activeSuggestedImageIds.length}
                     </span>
-                    <Input
-                      value={outline.title}
-                      onChange={(e) => updateOutline(index, { title: e.target.value })}
-                      placeholder={t('generation.sceneTitlePlaceholder')}
-                      className="flex-1"
-                      disabled={isLoading}
-                    />
-                  </CardTitle>
-                </div>
-                <Select
-                  value={outline.type}
-                  onValueChange={(value) =>
-                    updateOutline(index, {
-                      type: value as SceneOutline['type'],
-                    })
-                  }
-                  disabled={isLoading}
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('aigen')}
+                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'aigen' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                 >
-                  <SelectTrigger className="w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="slide">{t('generation.sceneTypeSlide')}</SelectItem>
-                    <SelectItem value="quiz">{t('generation.sceneTypeQuiz')}</SelectItem>
-                    <SelectItem value="interactive">
-                      {t('generation.sceneTypeInteractive')}
-                    </SelectItem>
-                    <SelectItem value="pbl">{t('generation.sceneTypePbl')}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeOutline(index)}
-                  disabled={isLoading}
-                >
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>{t('generation.teachingObjectiveLabel')}</Label>
-                <Textarea
-                  value={outline.teachingObjective || outline.description}
-                  onChange={(e) =>
-                    updateOutline(index, {
-                      teachingObjective: e.target.value,
-                      description: e.target.value,
-                    })
-                  }
-                  placeholder={t('generation.teachingObjectivePlaceholder')}
-                  rows={2}
-                  disabled={isLoading}
-                />
+                  <Sparkles className="size-4"/> AI 多媒体
+                </button>
               </div>
 
-              <div className="space-y-2">
-                <Label>{t('generation.estimatedDurationLabel')}</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  step={30}
-                  value={outline.estimatedDuration || ''}
-                  onChange={(e) =>
-                    updateOutline(index, {
-                      estimatedDuration:
-                        e.target.value.trim().length === 0
-                          ? undefined
-                          : Math.max(30, Number(e.target.value) || 0),
-                    })
-                  }
-                  placeholder={t('generation.estimatedDurationPlaceholder')}
-                  disabled={isLoading}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>{t('generation.keyPointsLabel')}</Label>
-                <Textarea
-                  value={outline.keyPoints?.join('\n') || ''}
-                  onChange={(e) => updateKeyPoints(index, e.target.value)}
-                  placeholder={t('generation.keyPointsPlaceholder')}
-                  rows={3}
-                  disabled={isLoading}
-                />
-              </div>
-
-              {availableImages.length > 0 && (
-                <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="space-y-1">
-                      <Label>{t('generation.referenceImagesLabel')}</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {t('generation.referenceImagesHint')}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => clearSuggestedImages(index)}
-                      disabled={isLoading || (outline.suggestedImageIds?.length || 0) === 0}
-                    >
-                      {t('generation.clearSelectedImages')}
-                    </Button>
-                  </div>
-
-                  <div className="rounded-lg border border-dashed border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                    {t('generation.selectedImagesCount', {
-                      count: outline.suggestedImageIds?.length || 0,
-                    })}
-                    {outline.suggestedImageIds?.some((id) => !availableImageIds.has(id)) && (
-                      <span className="ml-2 text-amber-600 dark:text-amber-400">
-                        {t('generation.invalidImageSelections')}
-                      </span>
-                    )}
-                  </div>
-
-                  <ScrollArea className="h-48 rounded-lg border border-border/60 bg-background/80">
-                    <div className="grid gap-3 p-3 md:grid-cols-2">
-                      {availableImages.map((image) => {
-                        const checked = outline.suggestedImageIds?.includes(image.id) || false;
-                        const previewSrc = imagePreviewMap[image.id];
-                        return (
-                          <label
-                            key={image.id}
-                            className="flex cursor-pointer flex-col gap-3 rounded-xl border border-border/50 p-3 transition-colors hover:bg-muted/40"
-                          >
-                            <div className="flex items-start gap-3">
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={(value) =>
-                                  toggleSuggestedImage(index, image.id, value === true)
-                                }
-                                disabled={isLoading}
-                              />
-                              <div className="min-w-0 flex-1 space-y-1 text-sm">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium">
-                                    {t('generation.referenceImagePage', { page: image.pageNumber })}
-                                  </span>
-                                  <span className="text-xs text-muted-foreground">{image.id}</span>
-                                </div>
-                                <p className="text-xs leading-relaxed text-muted-foreground">
-                                  {image.description || t('generation.referenceImageNoDescription')}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="overflow-hidden rounded-lg border border-border/50 bg-muted/30">
-                              {previewSrc ? (
-                                <img
-                                  src={previewSrc}
-                                  alt={image.description || image.id}
-                                  className="h-28 w-full object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-28 w-full items-center justify-center text-muted-foreground">
-                                  <div className="flex flex-col items-center gap-2 text-xs">
-                                    <ImageIcon className="size-5" />
-                                    <span>{t('generation.referenceImageNoPreview')}</span>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
-                </div>
-              )}
-
-              {outline.type === 'quiz' && (
-                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-                  <Label className="text-sm font-medium">{t('generation.quizConfigLabel')}</Label>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t('generation.quizQuestionCount')}</Label>
+              {/* Tab 内容区 */}
+              <ScrollArea className="flex-1 p-6 bg-muted/5">
+                
+                {/* 1. 基础内容 */}
+                {activeTab === 'content' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="space-y-2 max-w-sm">
+                      <Label>预计教学时长 (秒)</Label>
                       <Input
-                        type="number"
-                        value={outline.quizConfig?.questionCount || 3}
-                        onChange={(e) =>
-                          updateOutline(index, {
-                            quizConfig: {
-                              ...outline.quizConfig,
-                              questionCount: parseInt(e.target.value) || 3,
-                              difficulty: outline.quizConfig?.difficulty || 'medium',
-                              questionTypes: outline.quizConfig?.questionTypes || ['single'],
-                            },
-                          })
-                        }
-                        min={1}
-                        max={10}
+                        type="number" min={1} step={30}
+                        value={activeOutline.estimatedDuration || ''}
+                        onChange={(e) => updateOutline({ estimatedDuration: Math.max(30, Number(e.target.value) || 0) })}
                         disabled={isLoading}
                       />
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t('generation.quizDifficulty')}</Label>
-                      <Select
-                        value={outline.quizConfig?.difficulty || 'medium'}
-                        onValueChange={(value) =>
-                          updateOutline(index, {
-                            quizConfig: {
-                              ...outline.quizConfig,
-                              difficulty: value as 'easy' | 'medium' | 'hard',
-                              questionCount: outline.quizConfig?.questionCount || 3,
-                              questionTypes: outline.quizConfig?.questionTypes || ['single'],
-                            },
-                          })
-                        }
+                    <div className="space-y-2">
+                      <Label>教学目标与概述</Label>
+                      <Textarea
+                        value={activeOutline.teachingObjective || activeOutline.description}
+                        onChange={(e) => updateOutline({ teachingObjective: e.target.value, description: e.target.value })}
+                        className="resize-none h-24 bg-background"
+                        placeholder="清晰描述这段内容的教学目的..."
                         disabled={isLoading}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="easy">{t('generation.quizDifficultyEasy')}</SelectItem>
-                          <SelectItem value="medium">
-                            {t('generation.quizDifficultyMedium')}
-                          </SelectItem>
-                          <SelectItem value="hard">{t('generation.quizDifficultyHard')}</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      />
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t('generation.quizType')}</Label>
-                      <Select
-                        value={outline.quizConfig?.questionTypes?.[0] || 'single'}
-                        onValueChange={(value) =>
-                          updateOutline(index, {
-                            quizConfig: {
-                              ...outline.quizConfig,
-                              questionTypes: [value as 'single' | 'multiple' | 'text'],
-                              questionCount: outline.quizConfig?.questionCount || 3,
-                              difficulty: outline.quizConfig?.difficulty || 'medium',
-                            },
-                          })
-                        }
+                    <div className="space-y-2">
+                      <Label>核心知识点提取</Label>
+                      <Textarea
+                        value={activeOutline.keyPoints?.join('\n') || ''}
+                        onChange={(e) => updateOutline({ keyPoints: e.target.value.split('\n').map(p => p.trim()).filter(Boolean) })}
+                        className="resize-none h-32 bg-background font-mono text-sm leading-relaxed"
+                        placeholder="每行输入一个关键知识点..."
                         disabled={isLoading}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="single">{t('generation.quizTypeSingle')}</SelectItem>
-                          <SelectItem value="multiple">
-                            {t('generation.quizTypeMultiple')}
-                          </SelectItem>
-                          <SelectItem value="text">{t('generation.quizTypeText')}</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      />
                     </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              <Collapsible>
-                <div className="rounded-xl border border-border/60 bg-background/40">
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="flex w-full items-center justify-between px-4 py-3"
-                    >
-                      <span className="flex items-center gap-2 text-sm font-medium">
-                        <Sparkles className="size-4" />
-                        {t('generation.advancedOptionsTitle')}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {t('generation.advancedOptionsHint')}
-                      </span>
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-4 border-t border-border/50 p-4">
-                    {outline.type === 'quiz' && (
-                      <div className="space-y-3">
-                        <Label>{t('generation.quizTypesLabel')}</Label>
-                        <div className="grid gap-2 md:grid-cols-3">
-                          {(['single', 'multiple', 'text'] as const).map((questionType) => (
-                            <label
-                              key={questionType}
-                              className="flex items-center gap-2 rounded-lg border border-border/50 px-3 py-2 text-sm"
+                {/* 2. 动态高级配置 */}
+                {activeTab === 'advanced' && activeOutline.type !== 'slide' && (
+                  <div className="bg-background border rounded-xl p-6 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    
+                    {/* === 测验 Quiz 完整配置 === */}
+                    {activeOutline.type === 'quiz' && (
+                      <div className="space-y-6">
+                        <h3 className="font-semibold text-purple-600 flex items-center gap-2"><HelpCircle className="size-5"/> 测验题目生成规则</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-xs">{t('generation.quizQuestionCount')}</Label>
+                            <Input
+                              type="number" min={1} max={10}
+                              value={activeOutline.quizConfig?.questionCount || 3}
+                              onChange={(e) => updateOutline({ quizConfig: { ...activeOutline.quizConfig, difficulty: activeOutline.quizConfig?.difficulty || 'medium', questionTypes: activeOutline.quizConfig?.questionTypes || ['single'], questionCount: parseInt(e.target.value) || 3 }})}
+                              disabled={isLoading}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">{t('generation.quizDifficulty')}</Label>
+                            <Select
+                              value={activeOutline.quizConfig?.difficulty || 'medium'}
+                              onValueChange={(value: 'easy'|'medium'|'hard') => updateOutline({ quizConfig: { ...activeOutline.quizConfig, questionCount: activeOutline.quizConfig?.questionCount || 3, questionTypes: activeOutline.quizConfig?.questionTypes || ['single'], difficulty: value }})}
+                              disabled={isLoading}
                             >
-                              <Checkbox
-                                checked={
-                                  outline.quizConfig?.questionTypes?.includes(questionType) || false
-                                }
-                                onCheckedChange={(value) =>
-                                  toggleQuizQuestionType(index, questionType, value === true)
-                                }
-                                disabled={isLoading}
-                              />
-                              <span>
-                                {questionType === 'single'
-                                  ? t('generation.quizTypeSingle')
-                                  : questionType === 'multiple'
-                                    ? t('generation.quizTypeMultiple')
-                                    : t('generation.quizTypeText')}
-                              </span>
-                            </label>
-                          ))}
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="easy">{t('generation.quizDifficultyEasy')}</SelectItem>
+                                <SelectItem value="medium">{t('generation.quizDifficultyMedium')}</SelectItem>
+                                <SelectItem value="hard">{t('generation.quizDifficultyHard')}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <Label className="text-xs">{t('generation.quizTypesLabel')}</Label>
+                          <div className="grid gap-2 md:grid-cols-3">
+                            {(['single', 'multiple', 'text'] as const).map((qType) => (
+                              <label key={qType} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm bg-muted/10 cursor-pointer hover:bg-muted/30">
+                                <Checkbox
+                                  checked={activeOutline.quizConfig?.questionTypes?.includes(qType) || false}
+                                  onCheckedChange={(val) => toggleQuizQuestionType(qType, val === true)}
+                                  disabled={isLoading}
+                                />
+                                <span>{qType === 'single' ? t('generation.quizTypeSingle') : qType === 'multiple' ? t('generation.quizTypeMultiple') : t('generation.quizTypeText')}</span>
+                              </label>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {outline.type === 'interactive' && (
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label>{t('generation.interactiveConceptName')}</Label>
-                          <Input
-                            value={outline.interactiveConfig?.conceptName || ''}
-                            onChange={(e) =>
-                              updateInteractiveConfig(index, 'conceptName', e.target.value)
-                            }
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>{t('generation.interactiveSubject')}</Label>
-                          <Input
-                            value={outline.interactiveConfig?.subject || ''}
-                            onChange={(e) =>
-                              updateInteractiveConfig(index, 'subject', e.target.value)
-                            }
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <Label>{t('generation.interactiveOverview')}</Label>
-                          <Textarea
-                            value={outline.interactiveConfig?.conceptOverview || ''}
-                            onChange={(e) =>
-                              updateInteractiveConfig(index, 'conceptOverview', e.target.value)
-                            }
-                            rows={2}
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <Label>{t('generation.interactiveDesignIdea')}</Label>
-                          <Textarea
-                            value={outline.interactiveConfig?.designIdea || ''}
-                            onChange={(e) =>
-                              updateInteractiveConfig(index, 'designIdea', e.target.value)
-                            }
-                            rows={4}
-                            disabled={isLoading}
-                          />
+                    {/* === 互动实验 Interactive 完整配置 === */}
+                    {activeOutline.type === 'interactive' && (
+                      <div className="space-y-6">
+                        <h3 className="font-semibold text-emerald-600 flex items-center gap-2"><MousePointerClick className="size-5"/> 互动实验设计</h3>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>{t('generation.interactiveConceptName')}</Label>
+                            <Input value={activeOutline.interactiveConfig?.conceptName || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, conceptName: e.target.value } })} disabled={isLoading}/>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>{t('generation.interactiveSubject')}</Label>
+                            <Input value={activeOutline.interactiveConfig?.subject || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, subject: e.target.value } })} disabled={isLoading}/>
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t('generation.interactiveOverview')}</Label>
+                            <Textarea value={activeOutline.interactiveConfig?.conceptOverview || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, conceptOverview: e.target.value } })} rows={2} disabled={isLoading}/>
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t('generation.interactiveDesignIdea')}</Label>
+                            <Textarea value={activeOutline.interactiveConfig?.designIdea || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, designIdea: e.target.value } })} rows={3} disabled={isLoading}/>
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {outline.type === 'pbl' && (
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label>{t('generation.pblTopic')}</Label>
-                          <Input
-                            value={outline.pblConfig?.projectTopic || ''}
-                            onChange={(e) => updatePblConfig(index, 'projectTopic', e.target.value)}
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>{t('generation.pblIssueCount')}</Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={outline.pblConfig?.issueCount || 3}
-                            onChange={(e) => updatePblConfig(index, 'issueCount', e.target.value)}
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <Label>{t('generation.pblDescription')}</Label>
-                          <Textarea
-                            value={outline.pblConfig?.projectDescription || ''}
-                            onChange={(e) =>
-                              updatePblConfig(index, 'projectDescription', e.target.value)
-                            }
-                            rows={3}
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>{t('generation.pblLanguage')}</Label>
-                          <Select
-                            value={outline.pblConfig?.language || outline.language || 'zh-CN'}
-                            onValueChange={(value) => updatePblConfig(index, 'language', value)}
-                            disabled={isLoading}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="zh-CN">zh-CN</SelectItem>
-                              <SelectItem value="en-US">en-US</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <Label>{t('generation.pblSkills')}</Label>
-                          <Textarea
-                            value={outline.pblConfig?.targetSkills?.join('\n') || ''}
-                            onChange={(e) => updatePblSkills(index, e.target.value)}
-                            rows={3}
-                            disabled={isLoading}
-                          />
+                    {/* === PBL 探究完整配置 === */}
+                    {activeOutline.type === 'pbl' && (
+                      <div className="space-y-6">
+                        <h3 className="font-semibold text-orange-600 flex items-center gap-2"><Rocket className="size-5"/> 项目式学习参数</h3>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>{t('generation.pblTopic')}</Label>
+                            <Input value={activeOutline.pblConfig?.projectTopic || ''} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, projectTopic: e.target.value } })} disabled={isLoading}/>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>{t('generation.pblIssueCount')}</Label>
+                            <Input type="number" min={1} value={activeOutline.pblConfig?.issueCount || 3} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, issueCount: Math.max(1, Number(e.target.value) || 1) } })} disabled={isLoading}/>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>{t('generation.pblLanguage')}</Label>
+                            <Select value={activeOutline.pblConfig?.language || activeOutline.language || 'zh-CN'} onValueChange={(v) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, language: v } })} disabled={isLoading}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="zh-CN">简体中文 (zh-CN)</SelectItem>
+                                <SelectItem value="en-US">English (en-US)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t('generation.pblDescription')}</Label>
+                            <Textarea value={activeOutline.pblConfig?.projectDescription || ''} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, projectDescription: e.target.value } })} rows={2} disabled={isLoading}/>
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t('generation.pblSkills')}</Label>
+                            <Textarea value={activeOutline.pblConfig?.targetSkills?.join('\n') || ''} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, targetSkills: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })} rows={2} placeholder="每行输入一项核心素养/技能" disabled={isLoading}/>
+                          </div>
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
 
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label>{t('generation.mediaRequestsTitle')}</Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => addMediaGeneration(index)}
-                          disabled={isLoading}
-                        >
-                          {t('generation.addMediaRequest')}
-                        </Button>
+                {/* 3. 图片素材画廊 (绝不裁切，保证阅读体验) */}
+                {activeTab === 'materials' && (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="flex items-center justify-between pb-2 border-b">
+                      <div>
+                        <h3 className="font-medium text-sm">挂载参考文档/图片</h3>
+                        <p className="text-xs text-muted-foreground mt-1">选中的素材将作为 AI 生成当前环节内容的核心依据。</p>
                       </div>
+                      <Button variant="ghost" size="sm" onClick={() => updateOutline({ suggestedImageIds: [] })} disabled={activeSuggestedImageIds.length === 0}>
+                        清除已选 ({activeSuggestedImageIds.length})
+                      </Button>
+                    </div>
 
-                      <div className="space-y-3">
-                        {(outline.mediaGenerations || []).map((media, mediaIndex) => (
-                          <div
-                            key={`${media.elementId}-${mediaIndex}`}
-                            className="space-y-3 rounded-lg border border-border/60 p-3"
-                          >
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label>{t('generation.mediaType')}</Label>
-                                <Select
-                                  value={media.type}
-                                  onValueChange={(value) =>
-                                    updateMediaGeneration(index, mediaIndex, {
-                                      type: value as 'image' | 'video',
-                                      elementId: value === 'video' ? `gen_vid_${nanoid(6)}` : media.elementId,
-                                    })
-                                  }
-                                  disabled={isLoading}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="image">image</SelectItem>
-                                    <SelectItem value="video">video</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                    {availableImages.length === 0 ? (
+                      <div className="py-12 text-center text-muted-foreground border-2 border-dashed rounded-xl bg-background">
+                        <ImageIcon className="size-8 mx-auto mb-3 opacity-20" />
+                        无可用参考图片，请先解析文档。
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {availableImages.map((image) => {
+                          const isSelected = activeSuggestedImageIds.includes(image.id);
+                          const previewSrc = imagePreviewMap[image.id] || image.src;
+                          
+                          return (
+                            <div
+                              key={image.id}
+                              onClick={() => toggleSuggestedImage(image.id)}
+                              className={`
+                                relative cursor-pointer group rounded-xl overflow-hidden bg-background transition-all duration-200 border-2
+                                ${isSelected ? 'border-primary shadow-[0_0_0_4px_rgba(var(--primary),0.1)]' : 'border-border/60 hover:border-primary/40 hover:shadow-md'}
+                              `}
+                            >
+                              {isSelected && (
+                                <div className="absolute top-2 right-2 z-20 bg-primary text-primary-foreground p-1 rounded-full shadow-lg">
+                                  <Check className="size-4 stroke-[3]" />
+                                </div>
+                              )}
+                              
+                              {/* 强制缩放适应 object-contain 保证文字可见 */}
+                              <div className={`relative aspect-[3/4] w-full bg-muted/30 p-2 flex items-center justify-center transition-opacity ${isSelected ? 'opacity-100' : 'group-hover:opacity-90'}`}>
+                                {previewSrc ? (
+                                  <img src={previewSrc} alt={`Page ${image.pageNumber}`} className="max-w-full max-h-full object-contain shadow-sm bg-white" />
+                                ) : (
+                                  <div className="text-xs text-muted-foreground">加载预览失败</div>
+                                )}
                               </div>
-                              <div className="space-y-2">
-                                <Label>{t('generation.mediaAspectRatio')}</Label>
-                                <Select
-                                  value={media.aspectRatio || '16:9'}
-                                  onValueChange={(value) =>
-                                    updateMediaGeneration(index, mediaIndex, {
-                                      aspectRatio: value as '16:9' | '4:3' | '1:1' | '9:16',
-                                    })
-                                  }
-                                  disabled={isLoading}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="16:9">16:9</SelectItem>
-                                    <SelectItem value="4:3">4:3</SelectItem>
-                                    <SelectItem value="1:1">1:1</SelectItem>
-                                    <SelectItem value="9:16">9:16</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="space-y-2">
-                                <Label>{t('generation.mediaElementId')}</Label>
-                                <Input
-                                  value={media.elementId}
-                                  onChange={(e) =>
-                                    updateMediaGeneration(index, mediaIndex, {
-                                      elementId: e.target.value,
-                                    })
-                                  }
-                                  disabled={isLoading}
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>{t('generation.mediaStyle')}</Label>
-                                <Input
-                                  value={media.style || ''}
-                                  onChange={(e) =>
-                                    updateMediaGeneration(index, mediaIndex, {
-                                      style: e.target.value || undefined,
-                                    })
-                                  }
-                                  disabled={isLoading}
-                                />
-                              </div>
-                              <div className="space-y-2 md:col-span-2">
-                                <Label>{t('generation.mediaPrompt')}</Label>
-                                <Textarea
-                                  value={media.prompt}
-                                  onChange={(e) =>
-                                    updateMediaGeneration(index, mediaIndex, {
-                                      prompt: e.target.value,
-                                    })
-                                  }
-                                  rows={3}
-                                  disabled={isLoading}
-                                />
+                              
+                              <div className={`p-3 border-t text-sm transition-colors ${isSelected ? 'bg-primary/5 border-primary/20' : ''}`}>
+                                <div className="font-semibold flex items-center justify-between">
+                                  <span>第 {image.pageNumber} 页</span>
+                                  <span className="text-[10px] text-muted-foreground font-mono">{image.id.slice(-4)}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1 line-clamp-2" title={image.description}>
+                                  {image.description || '无详细描述文本'}
+                                </p>
                               </div>
                             </div>
-                            <div className="flex justify-end">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => removeMediaGeneration(index, mediaIndex)}
-                                disabled={isLoading}
-                              >
-                                {t('generation.removeMediaRequest')}
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 4. AI 多媒体配置完整版 */}
+                {activeTab === 'aigen' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="flex items-center justify-between pb-2 border-b">
+                      <div>
+                        <h3 className="font-medium text-sm">AI 自动生成多媒体 ({activeOutline.mediaGenerations?.length || 0})</h3>
+                        <p className="text-xs text-muted-foreground mt-1">配置需要系统在生成课件时自动生成的插图或视频素材。</p>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={addMediaGeneration} disabled={isLoading}>
+                        <Plus className="size-3 mr-1"/> 添加媒体请求
+                      </Button>
+                    </div>
+
+                    <div className="space-y-4">
+                      {(activeOutline.mediaGenerations || []).length === 0 ? (
+                        <div className="py-10 text-center text-muted-foreground bg-background rounded-xl border border-dashed">
+                           <Sparkles className="size-8 mx-auto mb-3 opacity-20" />
+                           当前环节没有配置自动生成多媒体的需求
+                        </div>
+                      ) : (
+                        (activeOutline.mediaGenerations || []).map((media, mIndex) => (
+                          <div key={`${media.elementId}-${mIndex}`} className="space-y-4 rounded-xl border p-5 bg-background shadow-sm">
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>媒体类型</Label>
+                                <Select value={media.type} onValueChange={(v) => updateMediaGeneration(mIndex, { type: v as 'image'|'video', elementId: v === 'video' ? `gen_vid_${nanoid(6)}` : media.elementId })} disabled={isLoading}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="image">图像 (Image)</SelectItem>
+                                    <SelectItem value="video">视频 (Video)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>期望比例 (Aspect Ratio)</Label>
+                                <Select value={media.aspectRatio || '16:9'} onValueChange={(v) => updateMediaGeneration(mIndex, { aspectRatio: v as '16:9'|'4:3'|'1:1'|'9:16' })} disabled={isLoading}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="16:9">宽屏 16:9</SelectItem>
+                                    <SelectItem value="4:3">传统 4:3</SelectItem>
+                                    <SelectItem value="1:1">正方形 1:1</SelectItem>
+                                    <SelectItem value="9:16">竖屏 9:16</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>绑定元素 ID</Label>
+                                <Input value={media.elementId} onChange={(e) => updateMediaGeneration(mIndex, { elementId: e.target.value })} disabled={isLoading} className="font-mono text-sm"/>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>艺术风格 (Style)</Label>
+                                <Input value={media.style || ''} onChange={(e) => updateMediaGeneration(mIndex, { style: e.target.value || undefined })} disabled={isLoading} placeholder="如：水彩插画、3D卡通、写实摄影"/>
+                              </div>
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>生成提示词 (Prompt)</Label>
+                                <Textarea value={media.prompt} onChange={(e) => updateMediaGeneration(mIndex, { prompt: e.target.value })} rows={2} disabled={isLoading} placeholder="详细描述你想生成的画面内容，例如：一个正在下落的苹果，背景是实验室..."/>
+                              </div>
+                            </div>
+                            <div className="flex justify-end pt-3 border-t border-border/50">
+                              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => removeMediaGeneration(mIndex)} disabled={isLoading}>
+                                <Trash2 className="size-4 mr-1" /> 删除该请求
                               </Button>
                             </div>
                           </div>
-                        ))}
-
-                        {(outline.mediaGenerations || []).length === 0 && (
-                          <div className="rounded-lg border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
-                            {t('generation.noMediaRequests')}
-                          </div>
-                        )}
-                      </div>
+                        ))
+                      )}
                     </div>
-                  </CollapsibleContent>
-                </div>
-              </Collapsible>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                  </div>
+                )}
 
-      {outlines.length === 0 && (
-        <Card className="p-8 text-center">
-          <p className="text-muted-foreground mb-4">{t('generation.noOutlines')}</p>
-          <Button variant="outline" onClick={addOutline} disabled={isLoading}>
-            <Plus className="size-4 mr-1" />
-            {t('generation.addFirstScene')}
-          </Button>
-        </Card>
-      )}
-
-      {/* Actions */}
-      <div className="flex justify-between pt-4">
-        <Button variant="outline" onClick={onBack} disabled={isLoading}>
-          {t('generation.backToRequirements')}
-        </Button>
-        <Button
-          onClick={() => onConfirm(sanitizeOutlines(outlines))}
-          disabled={isLoading || outlines.length === 0}
-        >
-          {isLoading
-            ? t('generation.generatingInProgress')
-            : t('generation.confirmAndGenerateCourse')}
-        </Button>
+              </ScrollArea>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
