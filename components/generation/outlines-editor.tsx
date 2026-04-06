@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -15,9 +16,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, ChevronUp, ChevronDown, Sparkles, Image as ImageIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import type { PdfImage, SceneOutline } from '@/lib/types/generation';
+import type { MediaGenerationRequest } from '@/lib/media/types';
 import { useI18n } from '@/lib/hooks/use-i18n';
 
 interface OutlinesEditorProps {
@@ -26,6 +28,7 @@ interface OutlinesEditorProps {
   onConfirm: (outlines: SceneOutline[]) => void;
   onBack: () => void;
   availableImages?: PdfImage[];
+  imagePreviewMap?: Record<string, string>;
   isLoading?: boolean;
 }
 
@@ -35,10 +38,14 @@ export function OutlinesEditor({
   onConfirm,
   onBack,
   availableImages = [],
+  imagePreviewMap = {},
   isLoading = false,
 }: OutlinesEditorProps) {
   const { t } = useI18n();
-  const availableImageIds = useMemo(() => new Set(availableImages.map((image) => image.id)), [availableImages]);
+  const availableImageIds = useMemo(
+    () => new Set(availableImages.map((image) => image.id)),
+    [availableImages],
+  );
   const totalEstimatedDuration = outlines.reduce(
     (sum, outline) => sum + (outline.estimatedDuration || 0),
     0,
@@ -115,6 +122,112 @@ export function OutlinesEditor({
 
   const clearSuggestedImages = (index: number) => {
     updateOutline(index, { suggestedImageIds: [] });
+  };
+
+  const toggleQuizQuestionType = (
+    index: number,
+    questionType: 'single' | 'multiple' | 'text',
+    checked: boolean,
+  ) => {
+    const currentTypes = new Set(outlines[index].quizConfig?.questionTypes || ['single']);
+    if (checked) {
+      currentTypes.add(questionType);
+    } else if (currentTypes.size > 1) {
+      currentTypes.delete(questionType);
+    }
+    updateOutline(index, {
+      quizConfig: {
+        questionCount: outlines[index].quizConfig?.questionCount || 3,
+        difficulty: outlines[index].quizConfig?.difficulty || 'medium',
+        questionTypes: Array.from(currentTypes),
+      },
+    });
+  };
+
+  const updateInteractiveConfig = (
+    index: number,
+    field: 'conceptName' | 'conceptOverview' | 'designIdea' | 'subject',
+    value: string,
+  ) => {
+    updateOutline(index, {
+      interactiveConfig: {
+        conceptName: outlines[index].interactiveConfig?.conceptName || '',
+        conceptOverview: outlines[index].interactiveConfig?.conceptOverview || '',
+        designIdea: outlines[index].interactiveConfig?.designIdea || '',
+        subject: outlines[index].interactiveConfig?.subject || '',
+        [field]: value,
+      },
+    });
+  };
+
+  const updatePblConfig = (
+    index: number,
+    field: 'projectTopic' | 'projectDescription' | 'issueCount' | 'language',
+    value: string,
+  ) => {
+    updateOutline(index, {
+      pblConfig: {
+        projectTopic: outlines[index].pblConfig?.projectTopic || '',
+        projectDescription: outlines[index].pblConfig?.projectDescription || '',
+        targetSkills: outlines[index].pblConfig?.targetSkills || [],
+        issueCount: outlines[index].pblConfig?.issueCount || 3,
+        language: outlines[index].pblConfig?.language || (outlines[index].language ?? 'zh-CN'),
+        [field]:
+          field === 'issueCount'
+            ? Math.max(1, Number(value) || 1)
+            : value,
+      },
+    });
+  };
+
+  const updatePblSkills = (index: number, value: string) => {
+    updateOutline(index, {
+      pblConfig: {
+        projectTopic: outlines[index].pblConfig?.projectTopic || '',
+        projectDescription: outlines[index].pblConfig?.projectDescription || '',
+        targetSkills: value
+          .split('\n')
+          .map((skill) => skill.trim())
+          .filter(Boolean),
+        issueCount: outlines[index].pblConfig?.issueCount || 3,
+        language: outlines[index].pblConfig?.language || (outlines[index].language ?? 'zh-CN'),
+      },
+    });
+  };
+
+  const updateMediaGeneration = (
+    index: number,
+    mediaIndex: number,
+    updates: Partial<MediaGenerationRequest>,
+  ) => {
+    const currentMedia = [...(outlines[index].mediaGenerations || [])];
+    const currentItem = currentMedia[mediaIndex] || {
+      type: 'image' as const,
+      prompt: '',
+      elementId: `gen_img_${nanoid(6)}`,
+    };
+    currentMedia[mediaIndex] = {
+      ...currentItem,
+      ...updates,
+    };
+    updateOutline(index, { mediaGenerations: currentMedia });
+  };
+
+  const addMediaGeneration = (index: number) => {
+    const currentMedia = [...(outlines[index].mediaGenerations || [])];
+    currentMedia.push({
+      type: 'image',
+      prompt: '',
+      elementId: `gen_img_${nanoid(6)}`,
+      aspectRatio: '16:9',
+    });
+    updateOutline(index, { mediaGenerations: currentMedia });
+  };
+
+  const removeMediaGeneration = (index: number, mediaIndex: number) => {
+    const currentMedia = [...(outlines[index].mediaGenerations || [])];
+    currentMedia.splice(mediaIndex, 1);
+    updateOutline(index, { mediaGenerations: currentMedia });
   };
 
   return (
@@ -323,31 +436,50 @@ export function OutlinesEditor({
                   </div>
 
                   <ScrollArea className="h-48 rounded-lg border border-border/60 bg-background/80">
-                    <div className="space-y-2 p-3">
+                    <div className="grid gap-3 p-3 md:grid-cols-2">
                       {availableImages.map((image) => {
                         const checked = outline.suggestedImageIds?.includes(image.id) || false;
+                        const previewSrc = imagePreviewMap[image.id];
                         return (
                           <label
                             key={image.id}
-                            className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/50 p-3 transition-colors hover:bg-muted/40"
+                            className="flex cursor-pointer flex-col gap-3 rounded-xl border border-border/50 p-3 transition-colors hover:bg-muted/40"
                           >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(value) =>
-                                toggleSuggestedImage(index, image.id, value === true)
-                              }
-                              disabled={isLoading}
-                            />
-                            <div className="min-w-0 space-y-1 text-sm">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">
-                                  {t('generation.referenceImagePage', { page: image.pageNumber })}
-                                </span>
-                                <span className="text-xs text-muted-foreground">{image.id}</span>
+                            <div className="flex items-start gap-3">
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={(value) =>
+                                  toggleSuggestedImage(index, image.id, value === true)
+                                }
+                                disabled={isLoading}
+                              />
+                              <div className="min-w-0 flex-1 space-y-1 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">
+                                    {t('generation.referenceImagePage', { page: image.pageNumber })}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">{image.id}</span>
+                                </div>
+                                <p className="text-xs leading-relaxed text-muted-foreground">
+                                  {image.description || t('generation.referenceImageNoDescription')}
+                                </p>
                               </div>
-                              <p className="text-xs leading-relaxed text-muted-foreground">
-                                {image.description || t('generation.referenceImageNoDescription')}
-                              </p>
+                            </div>
+                            <div className="overflow-hidden rounded-lg border border-border/50 bg-muted/30">
+                              {previewSrc ? (
+                                <img
+                                  src={previewSrc}
+                                  alt={image.description || image.id}
+                                  className="h-28 w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-28 w-full items-center justify-center text-muted-foreground">
+                                  <div className="flex flex-col items-center gap-2 text-xs">
+                                    <ImageIcon className="size-5" />
+                                    <span>{t('generation.referenceImageNoPreview')}</span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </label>
                         );
@@ -440,6 +572,288 @@ export function OutlinesEditor({
                   </div>
                 </div>
               )}
+
+              <Collapsible>
+                <div className="rounded-xl border border-border/60 bg-background/40">
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="flex w-full items-center justify-between px-4 py-3"
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        <Sparkles className="size-4" />
+                        {t('generation.advancedOptionsTitle')}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {t('generation.advancedOptionsHint')}
+                      </span>
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-4 border-t border-border/50 p-4">
+                    {outline.type === 'quiz' && (
+                      <div className="space-y-3">
+                        <Label>{t('generation.quizTypesLabel')}</Label>
+                        <div className="grid gap-2 md:grid-cols-3">
+                          {(['single', 'multiple', 'text'] as const).map((questionType) => (
+                            <label
+                              key={questionType}
+                              className="flex items-center gap-2 rounded-lg border border-border/50 px-3 py-2 text-sm"
+                            >
+                              <Checkbox
+                                checked={
+                                  outline.quizConfig?.questionTypes?.includes(questionType) || false
+                                }
+                                onCheckedChange={(value) =>
+                                  toggleQuizQuestionType(index, questionType, value === true)
+                                }
+                                disabled={isLoading}
+                              />
+                              <span>
+                                {questionType === 'single'
+                                  ? t('generation.quizTypeSingle')
+                                  : questionType === 'multiple'
+                                    ? t('generation.quizTypeMultiple')
+                                    : t('generation.quizTypeText')}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {outline.type === 'interactive' && (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>{t('generation.interactiveConceptName')}</Label>
+                          <Input
+                            value={outline.interactiveConfig?.conceptName || ''}
+                            onChange={(e) =>
+                              updateInteractiveConfig(index, 'conceptName', e.target.value)
+                            }
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t('generation.interactiveSubject')}</Label>
+                          <Input
+                            value={outline.interactiveConfig?.subject || ''}
+                            onChange={(e) =>
+                              updateInteractiveConfig(index, 'subject', e.target.value)
+                            }
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>{t('generation.interactiveOverview')}</Label>
+                          <Textarea
+                            value={outline.interactiveConfig?.conceptOverview || ''}
+                            onChange={(e) =>
+                              updateInteractiveConfig(index, 'conceptOverview', e.target.value)
+                            }
+                            rows={2}
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>{t('generation.interactiveDesignIdea')}</Label>
+                          <Textarea
+                            value={outline.interactiveConfig?.designIdea || ''}
+                            onChange={(e) =>
+                              updateInteractiveConfig(index, 'designIdea', e.target.value)
+                            }
+                            rows={4}
+                            disabled={isLoading}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {outline.type === 'pbl' && (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>{t('generation.pblTopic')}</Label>
+                          <Input
+                            value={outline.pblConfig?.projectTopic || ''}
+                            onChange={(e) => updatePblConfig(index, 'projectTopic', e.target.value)}
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t('generation.pblIssueCount')}</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={outline.pblConfig?.issueCount || 3}
+                            onChange={(e) => updatePblConfig(index, 'issueCount', e.target.value)}
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>{t('generation.pblDescription')}</Label>
+                          <Textarea
+                            value={outline.pblConfig?.projectDescription || ''}
+                            onChange={(e) =>
+                              updatePblConfig(index, 'projectDescription', e.target.value)
+                            }
+                            rows={3}
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t('generation.pblLanguage')}</Label>
+                          <Select
+                            value={outline.pblConfig?.language || outline.language || 'zh-CN'}
+                            onValueChange={(value) => updatePblConfig(index, 'language', value)}
+                            disabled={isLoading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="zh-CN">zh-CN</SelectItem>
+                              <SelectItem value="en-US">en-US</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>{t('generation.pblSkills')}</Label>
+                          <Textarea
+                            value={outline.pblConfig?.targetSkills?.join('\n') || ''}
+                            onChange={(e) => updatePblSkills(index, e.target.value)}
+                            rows={3}
+                            disabled={isLoading}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label>{t('generation.mediaRequestsTitle')}</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addMediaGeneration(index)}
+                          disabled={isLoading}
+                        >
+                          {t('generation.addMediaRequest')}
+                        </Button>
+                      </div>
+
+                      <div className="space-y-3">
+                        {(outline.mediaGenerations || []).map((media, mediaIndex) => (
+                          <div
+                            key={`${media.elementId}-${mediaIndex}`}
+                            className="space-y-3 rounded-lg border border-border/60 p-3"
+                          >
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>{t('generation.mediaType')}</Label>
+                                <Select
+                                  value={media.type}
+                                  onValueChange={(value) =>
+                                    updateMediaGeneration(index, mediaIndex, {
+                                      type: value as 'image' | 'video',
+                                      elementId: value === 'video' ? `gen_vid_${nanoid(6)}` : media.elementId,
+                                    })
+                                  }
+                                  disabled={isLoading}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="image">image</SelectItem>
+                                    <SelectItem value="video">video</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>{t('generation.mediaAspectRatio')}</Label>
+                                <Select
+                                  value={media.aspectRatio || '16:9'}
+                                  onValueChange={(value) =>
+                                    updateMediaGeneration(index, mediaIndex, {
+                                      aspectRatio: value as '16:9' | '4:3' | '1:1' | '9:16',
+                                    })
+                                  }
+                                  disabled={isLoading}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="16:9">16:9</SelectItem>
+                                    <SelectItem value="4:3">4:3</SelectItem>
+                                    <SelectItem value="1:1">1:1</SelectItem>
+                                    <SelectItem value="9:16">9:16</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>{t('generation.mediaElementId')}</Label>
+                                <Input
+                                  value={media.elementId}
+                                  onChange={(e) =>
+                                    updateMediaGeneration(index, mediaIndex, {
+                                      elementId: e.target.value,
+                                    })
+                                  }
+                                  disabled={isLoading}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>{t('generation.mediaStyle')}</Label>
+                                <Input
+                                  value={media.style || ''}
+                                  onChange={(e) =>
+                                    updateMediaGeneration(index, mediaIndex, {
+                                      style: e.target.value || undefined,
+                                    })
+                                  }
+                                  disabled={isLoading}
+                                />
+                              </div>
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>{t('generation.mediaPrompt')}</Label>
+                                <Textarea
+                                  value={media.prompt}
+                                  onChange={(e) =>
+                                    updateMediaGeneration(index, mediaIndex, {
+                                      prompt: e.target.value,
+                                    })
+                                  }
+                                  rows={3}
+                                  disabled={isLoading}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex justify-end">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeMediaGeneration(index, mediaIndex)}
+                                disabled={isLoading}
+                              >
+                                {t('generation.removeMediaRequest')}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+
+                        {(outline.mediaGenerations || []).length === 0 && (
+                          <div className="rounded-lg border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
+                            {t('generation.noMediaRequests')}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </div>
+              </Collapsible>
             </CardContent>
           </Card>
         ))}

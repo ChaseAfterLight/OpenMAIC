@@ -282,6 +282,7 @@ function GenerationPreviewContent() {
   const [streamingOutlines, setStreamingOutlines] = useState<SceneOutline[] | null>(null);
   const [truncationWarnings, setTruncationWarnings] = useState<string[]>([]);
   const [isConfirmingOutlines, setIsConfirmingOutlines] = useState(false);
+  const [imagePreviewMap, setImagePreviewMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -365,6 +366,35 @@ function GenerationPreviewContent() {
       serverJobStreamCloseRef.current?.();
     };
   }, []);
+
+  useEffect(() => {
+    const storageIds = (session?.pdfImages || [])
+      .map((image) => image.storageId)
+      .filter((value): value is string => Boolean(value));
+
+    if (storageIds.length === 0) {
+      setImagePreviewMap({});
+      return;
+    }
+
+    let cancelled = false;
+    loadImageMapping(storageIds)
+      .then((mapping) => {
+        if (!cancelled) {
+          setImagePreviewMap(mapping);
+        }
+      })
+      .catch((error) => {
+        log.warn('Failed to load review image previews:', error);
+        if (!cancelled) {
+          setImagePreviewMap({});
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.pdfImages]);
 
   // Get API credentials from localStorage
   const getApiHeaders = () => {
@@ -1388,6 +1418,7 @@ function GenerationPreviewContent() {
                   onConfirm={(outlines) => void continueGeneration(outlines)}
                   onBack={goBackToHome}
                   availableImages={session.pdfImages || []}
+                  imagePreviewMap={imagePreviewMap}
                   isLoading={isConfirmingOutlines}
                 />
               </div>
