@@ -7,13 +7,12 @@ import { CheckCircle2, Sparkles, AlertCircle, AlertTriangle, ArrowLeft, Bot } fr
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OutlinesEditor } from '@/components/generation/outlines-editor';
 import { cn } from '@/lib/utils';
-import { useStageStore } from '@/lib/store/stage';
 import { useSettingsStore } from '@/lib/store/settings';
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
 import { getAvailableProvidersWithVoices } from '@/lib/audio/voice-resolver';
 import { useI18n } from '@/lib/hooks/use-i18n';
-import { generateAndStoreTTS } from '@/lib/hooks/use-scene-generator';
 import {
   loadImageMapping,
   loadPdfBlob,
@@ -214,6 +213,57 @@ function buildLessonPackMetadata(session: GenerationSessionState, locale: Suppor
   };
 }
 
+type PreviewAgent = {
+  id: string;
+  name: string;
+  role: string;
+  persona?: string;
+};
+
+function buildPreviewStage(session: GenerationSessionState): Stage {
+  const locale = (session.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale;
+  const k12Module = getModuleById('k12');
+  const k12Presets = k12Module.presets as K12ModulePresets | undefined;
+  const requirement = session.requirements.requirement.trim();
+
+  return {
+    id: nanoid(10),
+    name:
+      session.requirements.moduleId === 'k12'
+        ? buildK12LessonPackTitle({
+            input: session.requirements.k12,
+            presets: k12Presets,
+            locale,
+            requirement: session.requirements.requirement,
+          })
+        : requirement || 'Untitled Classroom',
+    description: '',
+    language: session.requirements.language || 'zh-CN',
+    style: 'professional',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    lessonPack: buildLessonPackMetadata(session, locale),
+  };
+}
+
+function resolvePreviewAgents(previewStage?: Stage): PreviewAgent[] {
+  const registry = useAgentRegistry.getState();
+  const candidateIds =
+    previewStage?.agentIds && previewStage.agentIds.length > 0
+      ? previewStage.agentIds
+      : useSettingsStore.getState().selectedAgentIds;
+
+  return candidateIds
+    .map((id) => registry.getAgent(id))
+    .filter(Boolean)
+    .map((agent) => ({
+      id: agent!.id,
+      name: agent!.name,
+      role: agent!.role,
+      persona: agent!.persona,
+    }));
+}
+
 function GenerationPreviewContent() {
   const router = useRouter();
   const { t } = useI18n();
@@ -231,6 +281,7 @@ function GenerationPreviewContent() {
   const [statusMessage, setStatusMessage] = useState('');
   const [streamingOutlines, setStreamingOutlines] = useState<SceneOutline[] | null>(null);
   const [truncationWarnings, setTruncationWarnings] = useState<string[]>([]);
+  const [isConfirmingOutlines, setIsConfirmingOutlines] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -278,6 +329,13 @@ function GenerationPreviewContent() {
 
   // Compute active steps based on session state
   const activeSteps = getActiveSteps(session);
+  const isReviewingOutlines = session?.previewPhase === 'review';
+  const getOutlinePreviewPhase = (): GenerationSessionState['previewPhase'] =>
+    useSettingsStore.getState().reviewOutlineEnabled ? 'review' : 'generating-content';
+  const persistSession = (nextSession: GenerationSessionState) => {
+    setSession(nextSession);
+    sessionStorage.setItem('generationSession', JSON.stringify(nextSession));
+  };
 
   // Load session from sessionStorage
   useEffect(() => {
@@ -289,6 +347,9 @@ function GenerationPreviewContent() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as GenerationSessionState;
+        if (!parsed.previewPhase) {
+          parsed.previewPhase = parsed.sceneOutlines?.length ? getOutlinePreviewPhase() : 'preparing';
+        }
         setSession(parsed);
       } catch (e) {
         log.error('Failed to parse generation session:', e);
@@ -379,6 +440,22 @@ function GenerationPreviewContent() {
           }
         : undefined,
       ...(serverPdfImages.length > 0 ? { pdfImages: serverPdfImages } : {}),
+      ...(sessionSnapshot.sceneOutlines?.length
+        ? {
+            sceneOutlines: sessionSnapshot.sceneOutlines,
+            stageSeed: sessionSnapshot.previewStage
+              ? {
+                  id: sessionSnapshot.previewStage.id,
+                  name: sessionSnapshot.previewStage.name,
+                  description: sessionSnapshot.previewStage.description,
+                  language: sessionSnapshot.previewStage.language,
+                  style: sessionSnapshot.previewStage.style,
+                  lessonPack: sessionSnapshot.previewStage.lessonPack,
+                }
+              : undefined,
+            agentProfiles: resolvePreviewAgents(sessionSnapshot.previewStage),
+          }
+        : {}),
       language: sessionSnapshot.requirements.language,
       modelString: modelConfig.modelString,
       apiKey: modelConfig.apiKey,
@@ -555,12 +632,77 @@ function GenerationPreviewContent() {
 
   // Auto-start generation when session is loaded
   useEffect(() => {
-    if (session && !hasStartedRef.current) {
-      hasStartedRef.current = true;
-      startGeneration();
+    if (!session || hasStartedRef.current) {
+      return;
+    }
+    if (session.previewPhase === 'review') {
+      return;
+    }
+    hasStartedRef.current = true;
+    if (session.previewPhase === 'generating-content' && session.sceneOutlines?.length) {
+      void continueGeneration(session.sceneOutlines);
+      return;
+    }
+    if (session.previewPhase === 'preparing' || !session.previewPhase) {
+      void startGeneration();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  const continueGeneration = async (confirmedOutlines: SceneOutline[]) => {
+    if (!session || confirmedOutlines.length === 0) {
+      setError(t('generation.outlineEmptyResponse'));
+      return;
+    }
+
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const signal = controller.signal;
+
+    setError(null);
+    setStatusMessage('');
+    setIsConfirmingOutlines(true);
+
+    const previewStage = session.previewStage ?? buildPreviewStage(session);
+    const stage: Stage = {
+      ...previewStage,
+      updatedAt: Date.now(),
+    };
+    const agents = resolvePreviewAgents(stage);
+    if (agents.length > 0) {
+      stage.agentIds = agents.map((agent) => agent.id);
+    }
+
+    const contentSession: GenerationSessionState = {
+      ...session,
+      sceneOutlines: confirmedOutlines,
+      previewPhase: 'generating-content',
+      previewStage: stage,
+    };
+    persistSession(contentSession);
+    setStreamingOutlines(confirmedOutlines);
+
+    try {
+      const activeSteps = getActiveSteps(contentSession);
+      const contentStepIdx = activeSteps.findIndex((s) => s.id === 'slide-content');
+      setCurrentStepIndex(contentStepIdx >= 0 ? contentStepIdx : 0);
+      await runServerGeneration(contentSession, activeSteps, signal);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        log.info('[GenerationPreview] Generation aborted');
+        return;
+      }
+
+      persistSession({
+        ...contentSession,
+        previewPhase: 'review',
+      });
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsConfirmingOutlines(false);
+    }
+  };
 
   // Main generation flow
   const startGeneration = async () => {
@@ -572,12 +714,12 @@ function GenerationPreviewContent() {
     abortControllerRef.current = controller;
     const signal = controller.signal;
     const settings = useSettingsStore.getState();
+    const shouldUseServerGeneration = !settings.reviewOutlineEnabled;
 
     // Use a local mutable copy so we can update it after PDF parsing
     let currentSession = mergeSelectedTextbookResourcesIntoPdfText(session);
     if (currentSession !== session) {
-      setSession(currentSession);
-      sessionStorage.setItem('generationSession', JSON.stringify(currentSession));
+      persistSession(currentSession);
     }
 
     setError(null);
@@ -742,8 +884,7 @@ function GenerationPreviewContent() {
           pdfStorageKey: undefined, // Clear so we don't re-parse
           selectedTextbookResourcesParsed: true,
         });
-        setSession(updatedSession);
-        sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
+        persistSession(updatedSession);
         if (warnings.length > 0) {
           setTruncationWarnings(warnings);
         } else {
@@ -754,13 +895,13 @@ function GenerationPreviewContent() {
         currentSession = updatedSession;
         activeSteps = getActiveSteps(currentSession);
 
-        if (true) {
+        if (shouldUseServerGeneration) {
           await runServerGeneration(currentSession, activeSteps, signal);
           return;
         }
       }
 
-      if (true) {
+      if (shouldUseServerGeneration) {
         await runServerGeneration(currentSession, activeSteps, signal);
         return;
       }
@@ -805,8 +946,7 @@ function GenerationPreviewContent() {
           researchContext: searchData.context || '',
           researchSources: sources,
         };
-        setSession(updatedSessionWithSearch);
-        sessionStorage.setItem('generationSession', JSON.stringify(updatedSessionWithSearch));
+        persistSession(updatedSessionWithSearch);
         currentSession = updatedSessionWithSearch;
         activeSteps = getActiveSteps(currentSession);
       }
@@ -834,28 +974,7 @@ function GenerationPreviewContent() {
       }> = [];
 
       // Create stage client-side (needed for agent generation stageId)
-      const stageId = nanoid(10);
-      const k12Module = getModuleById('k12');
-      const k12Presets = k12Module.presets as K12ModulePresets | undefined;
-      const lessonPack = buildLessonPackMetadata(
-        currentSession,
-        (currentSession.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale,
-      );
-      const stage: Stage = {
-        id: stageId,
-        name: buildK12LessonPackTitle({
-          input: currentSession.requirements.k12,
-          presets: k12Presets,
-          locale: (currentSession.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale,
-          requirement: currentSession.requirements.requirement,
-        }),
-        description: '',
-        language: currentSession.requirements.language || 'zh-CN',
-        style: 'professional',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        lessonPack,
-      };
+      const stage = currentSession.previewStage ?? buildPreviewStage(currentSession);
 
       if (settings.agentMode === 'auto') {
         const agentStepIdx = activeSteps.findIndex((s) => s.id === 'agent-generation');
@@ -998,9 +1117,18 @@ function GenerationPreviewContent() {
             name: a!.name,
             role: a!.role,
             persona: a!.persona,
-          }));
+        }));
         stage.agentIds = presetAgentIds;
       }
+
+      currentSession = {
+        ...currentSession,
+        previewStage: {
+          ...stage,
+          updatedAt: Date.now(),
+        },
+      };
+      persistSession(currentSession);
 
       // ── Generate outlines (with agent personas for teacher context) ──
       let outlines: SceneOutline[] = currentSession.sceneOutlines ?? [];
@@ -1089,9 +1217,14 @@ function GenerationPreviewContent() {
             .catch(reject);
         });
 
-        const updatedSession = { ...currentSession, sceneOutlines: outlines };
-        setSession(updatedSession);
-        sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
+        const updatedSession = {
+          ...currentSession,
+          sceneOutlines: outlines,
+          previewPhase: getOutlinePreviewPhase(),
+        };
+        persistSession(updatedSession);
+        currentSession = updatedSession;
+        setStreamingOutlines(outlines);
 
         // Outline generation succeeded — clear homepage draft cache
         try {
@@ -1106,139 +1239,15 @@ function GenerationPreviewContent() {
 
       // Move to scene generation step
       setStatusMessage('');
-      if (outlines.length === 0) {
+      if (!currentSession.sceneOutlines || currentSession.sceneOutlines.length === 0) {
         throw new Error(t('generation.outlineEmptyResponse'));
       }
-
-      // Store stage and outlines
-      const store = useStageStore.getState();
-      store.setStage(stage);
-      store.setOutlines(outlines);
-
-      // Advance to slide-content step
-      const contentStepIdx = activeSteps.findIndex((s) => s.id === 'slide-content');
-      if (contentStepIdx >= 0) setCurrentStepIndex(contentStepIdx);
-
-      // Build stageInfo and userProfile for API call
-      const stageInfo = {
-        name: stage.name,
-        description: stage.description,
-        language: stage.language,
-        style: stage.style,
-      };
-
-      const userProfile =
-        currentSession.requirements.userNickname || currentSession.requirements.userBio
-          ? `Student: ${currentSession.requirements.userNickname || 'Unknown'}${currentSession.requirements.userBio ? ` — ${currentSession.requirements.userBio}` : ''}`
-          : undefined;
-
-      // Generate ONLY the first scene
-      store.setGeneratingOutlines(outlines);
-
-      const firstOutline = outlines[0];
-
-      // Step 2: Generate content (currentStepIndex is already 2)
-      const contentResp = await fetch('/api/generate/scene-content', {
-        method: 'POST',
-        headers: getApiHeaders(),
-        body: JSON.stringify({
-          outline: firstOutline,
-          allOutlines: outlines,
-          pdfImages: currentSession.pdfImages,
-          imageMapping,
-          stageInfo,
-          stageId: stage.id,
-          agents,
-        }),
-        signal,
-      });
-
-      if (!contentResp.ok) {
-        const errorData = await contentResp.json().catch(() => ({ error: 'Request failed' }));
-        throw new Error(errorData.error || t('generation.sceneGenerateFailed'));
+      setStreamingOutlines(currentSession.sceneOutlines);
+      if (currentSession.previewPhase === 'review') {
+        return;
       }
 
-      const contentData = await contentResp.json();
-      if (!contentData.success || !contentData.content) {
-        throw new Error(contentData.error || t('generation.sceneGenerateFailed'));
-      }
-
-      // Generate actions (activate actions step indicator)
-      const actionsStepIdx = activeSteps.findIndex((s) => s.id === 'actions');
-      setCurrentStepIndex(actionsStepIdx >= 0 ? actionsStepIdx : currentStepIndex + 1);
-
-      const actionsResp = await fetch('/api/generate/scene-actions', {
-        method: 'POST',
-        headers: getApiHeaders(),
-        body: JSON.stringify({
-          outline: contentData.effectiveOutline || firstOutline,
-          allOutlines: outlines,
-          content: contentData.content,
-          stageId: stage.id,
-          agents,
-          previousSpeeches: [],
-          userProfile,
-        }),
-        signal,
-      });
-
-      if (!actionsResp.ok) {
-        const errorData = await actionsResp.json().catch(() => ({ error: 'Request failed' }));
-        throw new Error(errorData.error || t('generation.sceneGenerateFailed'));
-      }
-
-      const data = await actionsResp.json();
-      if (!data.success || !data.scene) {
-        throw new Error(data.error || t('generation.sceneGenerateFailed'));
-      }
-
-      // Generate TTS for first scene (part of actions step — blocking)
-      if (settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts') {
-        const speechActions = (data.scene.actions || []).filter(
-          (a: { type: string; text?: string }) => a.type === 'speech' && a.text,
-        );
-
-        let ttsFailCount = 0;
-        for (const action of speechActions) {
-          const audioId = `tts_${action.id}`;
-          try {
-            const result = await generateAndStoreTTS(audioId, action.text || '', stage.id, signal);
-            action.audioId = result.audioId;
-            if (result.audioUrl) {
-              action.audioUrl = result.audioUrl;
-            }
-          } catch (err) {
-            log.warn(`[TTS] Failed for ${audioId}:`, err);
-            ttsFailCount++;
-          }
-        }
-
-        if (ttsFailCount > 0 && speechActions.length > 0) {
-          throw new Error(t('generation.speechFailed'));
-        }
-      }
-
-      // Add scene to store and navigate
-      store.addScene(data.scene);
-      store.setCurrentSceneId(data.scene.id);
-
-      // Set remaining outlines as skeleton placeholders
-      const remaining = outlines.filter((o) => o.order !== data.scene.order);
-      store.setGeneratingOutlines(remaining);
-
-      // Store generation params for classroom to continue generation
-      sessionStorage.setItem(
-        'generationParams',
-        JSON.stringify({
-          pdfImages: currentSession.pdfImages,
-          agents,
-          userProfile,
-        }),
-      );
-
-      sessionStorage.removeItem('generationSession');
-      await store.saveToStorage();
-      router.push(`/classroom/${stage.id}`);
+      await continueGeneration(currentSession.sceneOutlines);
     } catch (err) {
       // AbortError is expected when navigating away — don't show as error
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1296,6 +1305,95 @@ function GenerationPreviewContent() {
     return (
       <div className="min-h-[100dvh] flex items-center justify-center">
         <p className="text-sm text-muted-foreground">{t('auth.checkingSession')}</p>
+      </div>
+    );
+  }
+
+  if (isReviewingOutlines && session.sceneOutlines) {
+    const outlineStepIndex = Math.max(
+      0,
+      activeSteps.findIndex((step) => step.id === 'outline'),
+    );
+
+    return (
+      <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex flex-col items-center p-4 relative overflow-hidden">
+        <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+          <div
+            className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"
+            style={{ animationDuration: '4s' }}
+          />
+          <div
+            className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse"
+            style={{ animationDuration: '6s' }}
+          />
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="absolute top-4 left-4 z-20"
+        >
+          <Button variant="ghost" size="sm" onClick={goBackToHome} disabled={isConfirmingOutlines}>
+            <ArrowLeft className="size-4 mr-2" />
+            {t('generation.backToHome')}
+          </Button>
+        </motion.div>
+
+        <div className="z-10 w-full max-w-5xl pt-16 pb-8">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+            <Card className="relative overflow-hidden border-muted/40 shadow-2xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl p-6 md:p-8">
+              <div className="absolute top-6 left-0 right-0 flex justify-center gap-2">
+                {activeSteps.map((step, idx) => (
+                  <div
+                    key={step.id}
+                    className={cn(
+                      'h-1.5 rounded-full transition-all duration-500',
+                      idx < outlineStepIndex
+                        ? 'w-1.5 bg-blue-500/30'
+                        : idx === outlineStepIndex
+                          ? 'w-8 bg-blue-500'
+                          : 'w-1.5 bg-muted/50',
+                    )}
+                  />
+                ))}
+              </div>
+
+              <div className="pt-6 space-y-6">
+                <div className="max-w-2xl space-y-2 text-center mx-auto">
+                  <h2 className="text-2xl font-bold tracking-tight">
+                    {t('generation.reviewOutlineTitle')}
+                  </h2>
+                  <p className="text-muted-foreground text-sm md:text-base">
+                    {t('generation.reviewOutlineDesc')}
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="mx-auto max-w-2xl rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-300">
+                    {error}
+                  </div>
+                )}
+
+                <OutlinesEditor
+                  outlines={session.sceneOutlines}
+                  onChange={(outlines) => {
+                    setError(null);
+                    setStreamingOutlines(outlines);
+                    persistSession({
+                      ...session,
+                      sceneOutlines: outlines,
+                      previewPhase: 'review',
+                    });
+                  }}
+                  onConfirm={(outlines) => void continueGeneration(outlines)}
+                  onBack={goBackToHome}
+                  availableImages={session.pdfImages || []}
+                  isLoading={isConfirmingOutlines}
+                />
+              </div>
+            </Card>
+          </motion.div>
+        </div>
       </div>
     );
   }

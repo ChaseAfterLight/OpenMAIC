@@ -119,6 +119,7 @@ export interface SettingsState {
   // Media generation toggles
   imageGenerationEnabled: boolean;
   videoGenerationEnabled: boolean;
+  reviewOutlineEnabled: boolean;
 
   // Web Search settings
   webSearchProviderId: WebSearchProviderId;
@@ -244,6 +245,7 @@ export interface SettingsState {
   // Media generation toggle actions
   setImageGenerationEnabled: (enabled: boolean) => void;
   setVideoGenerationEnabled: (enabled: boolean) => void;
+  setReviewOutlineEnabled: (enabled: boolean) => void;
 
   // Web Search actions
   setWebSearchProvider: (providerId: WebSearchProviderId) => void;
@@ -582,6 +584,7 @@ export const useSettingsStore = create<SettingsState>()(
         // Media generation toggles (off by default)
         imageGenerationEnabled: false,
         videoGenerationEnabled: false,
+        reviewOutlineEnabled: false,
 
         // Audio feature toggles (on by default)
         ttsEnabled: true,
@@ -741,6 +744,7 @@ export const useSettingsStore = create<SettingsState>()(
           }
           set({ videoGenerationEnabled: enabled });
         },
+        setReviewOutlineEnabled: (enabled) => set({ reviewOutlineEnabled: enabled }),
         setTTSEnabled: (enabled) => set({ ttsEnabled: enabled }),
         setASREnabled: (enabled) => set({ asrEnabled: enabled }),
 
@@ -1310,6 +1314,9 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (state.videoGenerationEnabled === undefined) {
           state.videoGenerationEnabled = false;
+        }
+        if (state.reviewOutlineEnabled === undefined) {
+          state.reviewOutlineEnabled = false;
         }
 
         // Add default audio toggles if missing

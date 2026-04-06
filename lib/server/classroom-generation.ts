@@ -52,12 +52,15 @@ export interface GenerateClassroomInput {
   requirement: string;
   pdfContent?: { text: string; images: string[] };
   pdfImages?: PdfImage[];
+  sceneOutlines?: SceneOutline[];
   language?: string;
   modelString?: string;
   apiKey?: string;
   baseUrl?: string;
   providerType?: string;
   requiresApiKey?: boolean;
+  stageSeed?: Pick<Stage, 'id' | 'name' | 'description' | 'language' | 'style' | 'lessonPack'>;
+  agentProfiles?: AgentInfo[];
   enableWebSearch?: boolean;
   webSearchProviderId?: WebSearchProviderId;
   webSearchApiKey?: string;
@@ -456,6 +459,9 @@ export async function generateClassroom(
   if (restoredAgents) {
     agents = restoredAgents;
     log.info(`Restored ${agents.length} agent profiles from checkpoint classroom`);
+  } else if (input.agentProfiles?.length) {
+    agents = input.agentProfiles;
+    log.info(`Using ${agents.length} agent profiles from confirmed outline payload`);
   } else if (agentMode === 'generate') {
     log.info('Generating custom agent profiles via LLM...');
     try {
@@ -473,15 +479,17 @@ export async function generateClassroom(
   // Web search (optional, graceful degradation)
   let researchContext: string | undefined;
   if (!resumedClassroom) {
-    await options.onProgress?.({
-      step: 'researching',
-      progress: 10,
-      message: progressMessage(lang, 'researching'),
-      scenesGenerated: 0,
-    });
+    if (!input.sceneOutlines?.length) {
+      await options.onProgress?.({
+        step: 'researching',
+        progress: 10,
+        message: progressMessage(lang, 'researching'),
+        scenesGenerated: 0,
+      });
+    }
   }
 
-  if (!resumedClassroom && input.enableWebSearch) {
+  if (!resumedClassroom && !input.sceneOutlines?.length && input.enableWebSearch) {
     const providerId = resolveWebSearchProviderId(input.webSearchProviderId);
     const provider = WEB_SEARCH_PROVIDERS[providerId];
     const baiduSubSources = normalizeBaiduSubSources(input.baiduSubSources);
@@ -579,6 +587,39 @@ export async function generateClassroom(
         scenesCount: resumedClassroom.scenes.length,
       },
     });
+  } else if (input.sceneOutlines?.length) {
+    outlines = input.sceneOutlines;
+    log.info(`Using ${outlines.length} confirmed scene outlines from client`);
+
+    stageId = input.stageSeed?.id || nanoid(10);
+    const lessonPack =
+      input.stageSeed?.lessonPack != null
+        ? {
+            ...input.stageSeed.lessonPack,
+            status: 'in_progress' as const,
+          }
+        : buildLessonPackMetadata(input, lang, 'in_progress');
+    stage = {
+      id: stageId,
+      name: input.stageSeed?.name || outlines[0]?.title || requirement.slice(0, 50),
+      description: input.stageSeed?.description,
+      language: input.stageSeed?.language || lang,
+      style: input.stageSeed?.style || 'interactive',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lessonPack,
+      generatedAgentConfigs: agents.map((a, i) => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        persona: a.persona || '',
+        avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
+        color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
+        priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
+      })),
+    };
+
+    store = createInMemoryStore(stage);
   } else {
     await options.onProgress?.({
       step: 'generating_outlines',

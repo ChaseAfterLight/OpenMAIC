@@ -80,10 +80,14 @@ When comparing or listing information, specify in keyPoints:
 
 ### Image Usage
 
-- If images are provided (suggestedImageIds), match image descriptions to scene themes
-- Each slide scene can use 0-3 images
+- Only fill `suggestedImageIds` when an image is clearly relevant to the scene theme, knowledge point, or teaching target
+- If you are unsure whether an image truly fits the scene, return an empty array instead of guessing
+- `suggestedImageIds` must only contain IDs from the provided available images. Never invent image IDs
+- Each scene should normally use 0-2 images; do not exceed 2 unless it is truly necessary
 - Images can be reused across scenes
-- Quiz scenes typically don't need images
+- Quiz scenes typically do not need images unless the image itself is part of the question material
+- Abstract explanation, summary, and transition scenes often do not need assigned images
+- Prefer images with clear descriptions and strong semantic alignment to the scene over images that merely seem loosely related
 
 ### AI-Generated Media
 
@@ -98,6 +102,7 @@ When a slide scene needs an image or video but no suitable PDF image exists, mar
 - Only request media generation when it genuinely enhances the content — not every slide needs an image or video
 - Video generation is slow (1-2 minutes each), so only request videos when motion genuinely enhances understanding
 - If a suitable PDF image exists, prefer using `suggestedImageIds` instead
+- Only add `mediaGenerations` when no suitable PDF image exists
 - **Avoid duplicate media across slides**: Each generated image/video must be visually distinct. Do NOT request near-identical media for different slides (e.g., two "diagram of cell structure" images). If multiple slides cover the same topic, vary the visual angle, scope, or style
 - **Cross-scene reuse**: To reuse a generated image/video in a different scene, reference the same `elementId` in the later scene's content WITHOUT adding a new `mediaGenerations` entry. Only the scene that first defines the `elementId` in its `mediaGenerations` should include the generation request — later scenes just reference the ID. For example, if scene 1 defines `gen_img_1`, scene 3 can also use `gen_img_1` as an image src without declaring it again in mediaGenerations
 
@@ -245,7 +250,7 @@ You must output a JSON array where each element is a scene outline object:
 | teachingObjective | string                   | ❌       | Corresponding learning objective                                                                 |
 | estimatedDuration | number                   | ❌       | Estimated duration (seconds)                                                                     |
 | order             | number                   | ✅       | Sort order, starting from 1                                                                      |
-| suggestedImageIds | string[]                 | ❌       | Suggested image IDs to use                                                                       |
+| suggestedImageIds | string[]                 | ❌       | Suggested image IDs to use. Only fill when the image is clearly relevant; empty array is allowed |
 | mediaGenerations  | MediaGenerationRequest[] | ❌       | AI image/video generation requests when PDF images insufficient                                  |
 | quizConfig        | object                   | ❌       | Required for quiz type, contains questionCount/difficulty/questionTypes                          |
 | interactiveConfig | object                   | ❌       | Required for interactive type, contains conceptName/conceptOverview/designIdea/subject           |

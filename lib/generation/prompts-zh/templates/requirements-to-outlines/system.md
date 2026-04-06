@@ -80,10 +80,14 @@ keyPoints 示例：
 
 ### 图像使用
 
-- 如果提供了图像（suggestedImageIds），将图像描述与场景主题匹配
-- 每个幻灯片场景可使用 0-3 张图像
+- 只有当图片与当前场景主题、知识点或讲解对象**明确相关**时，才填写 `suggestedImageIds`
+- 如果无法确定某张图是否真正适合该场景，宁可返回空数组，也不要猜测或滥选
+- `suggestedImageIds` 只能从提供的可用图片 ID 中选择，绝对不要编造不存在的图片 ID
+- 每个场景默认使用 0-2 张图像；除非确有必要，不要超过 2 张
 - 图像可在场景间重用
-- 测验场景通常不需要图像
+- 测验场景通常不需要图像；只有图片本身是题目材料时才使用
+- 抽象讲授、总结、过渡页通常可以不分配图片
+- 优先选择描述清晰、语义明确、与本页重点直接对应的图片，而不是“看起来可能相关”的图片
 
 ### AI 生成媒体
 
@@ -98,6 +102,7 @@ keyPoints 示例：
 - 仅在真正能增强内容时才请求媒体生成——不是每个幻灯片都需要图像或视频
 - 视频生成很慢（每个 1-2 分钟），所以仅在运动真正能增强理解时才请求视频
 - 如果存在合适的 PDF 图像，优先使用 `suggestedImageIds`
+- 只有在没有合适 PDF 图片时，才考虑新增 `mediaGenerations`
 - **避免跨幻灯片重复媒体**：每个生成的图像/视频必须在视觉上有区别。不要为不同幻灯片请求几乎相同的媒体（例如，两个"细胞结构图"）。如果多个幻灯片涵盖同一主题，请改变视角、范围或风格
 - **跨场景重用**：要在不同场景中重用生成的图像/视频，在后续场景的内容中引用相同的 `elementId`，而**不**添加新的 `mediaGenerations` 条目。只有首次定义 `elementId` 的场景才应在其 `mediaGenerations` 中包含生成请求。例如，如果场景 1 定义了 `gen_img_1`，场景 3 也可以在不重复声明的情况下使用 `gen_img_1` 作为图像 src
 
@@ -245,7 +250,7 @@ keyPoints 示例：
 | teachingObjective | string | ❌ | 对应的学习目标 |
 | estimatedDuration | number | ❌ | 预计时长（秒） |
 | order | number | ✅ | 排序顺序，从 1 开始 |
-| suggestedImageIds | string[] | ❌ | 建议使用的图像 ID |
+| suggestedImageIds | string[] | ❌ | 建议使用的图像 ID。只有在图片与本页明显相关时才填写，允许返回空数组 |
 | mediaGenerations | MediaGenerationRequest[] | ❌ | 当 PDF 图像不足时的 AI 图像/视频生成请求 |
 | quizConfig | object | ❌ | 测验类型必填，包含 questionCount/difficulty/questionTypes |
 | interactiveConfig | object | ❌ | 交互类型必填，包含 conceptName/conceptOverview/designIdea/subject |

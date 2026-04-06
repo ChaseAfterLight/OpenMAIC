@@ -1,6 +1,7 @@
 import { ScanLine, Search, Bot, FileText, LayoutPanelLeft, Clapperboard } from 'lucide-react';
 import type { K12TextbookResource } from '@/lib/module-host/types';
 import { useSettingsStore } from '@/lib/store/settings';
+import type { Stage } from '@/lib/types/stage';
 import type {
   SceneOutline,
   UserRequirements,
@@ -23,6 +24,8 @@ export interface GenerationSessionState {
   };
   sceneOutlines?: SceneOutline[] | null;
   currentStep: 'generating' | 'complete';
+  previewPhase?: 'preparing' | 'review' | 'generating-content';
+  previewStage?: Stage;
   // PDF deferred parsing fields
   pdfStorageKey?: string;
   pdfFileName?: string;
