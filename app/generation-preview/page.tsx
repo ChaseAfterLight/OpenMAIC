@@ -1346,7 +1346,7 @@ function GenerationPreviewContent() {
     );
 
     return (
-      <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex flex-col items-center p-4 relative overflow-hidden">
+      <div className="h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex flex-col items-center p-4 relative overflow-hidden">
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
           <div
             className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"
@@ -1369,9 +1369,9 @@ function GenerationPreviewContent() {
           </Button>
         </motion.div>
 
-        <div className="z-10 w-full max-w-5xl pt-16 pb-8">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <Card className="relative overflow-hidden border-muted/40 shadow-2xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl p-6 md:p-8">
+        <div className="z-10 flex min-h-0 w-full max-w-5xl flex-1 pt-16 pb-4">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex min-h-0 w-full flex-1">
+            <Card className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden border-muted/40 bg-white/85 p-6 shadow-2xl backdrop-blur-xl dark:bg-slate-900/85 md:p-8">
               <div className="absolute top-6 left-0 right-0 flex justify-center gap-2">
                 {activeSteps.map((step, idx) => (
                   <div
@@ -1388,8 +1388,8 @@ function GenerationPreviewContent() {
                 ))}
               </div>
 
-              <div className="pt-6 space-y-6">
-                <div className="max-w-2xl space-y-2 text-center mx-auto">
+              <div className="flex min-h-0 flex-1 flex-col space-y-6 pt-6">
+                <div className="mx-auto max-w-2xl shrink-0 space-y-2 text-center">
                   <h2 className="text-2xl font-bold tracking-tight">
                     {t('generation.reviewOutlineTitle')}
                   </h2>
@@ -1399,28 +1399,30 @@ function GenerationPreviewContent() {
                 </div>
 
                 {error && (
-                  <div className="mx-auto max-w-2xl rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-300">
+                  <div className="mx-auto max-w-2xl shrink-0 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-300">
                     {error}
                   </div>
                 )}
 
-                <OutlinesEditor
-                  outlines={session.sceneOutlines}
-                  onChange={(outlines) => {
-                    setError(null);
-                    setStreamingOutlines(outlines);
-                    persistSession({
-                      ...session,
-                      sceneOutlines: outlines,
-                      previewPhase: 'review',
-                    });
-                  }}
-                  onConfirm={(outlines) => void continueGeneration(outlines)}
-                  onBack={goBackToHome}
-                  availableImages={session.pdfImages || []}
-                  imagePreviewMap={imagePreviewMap}
-                  isLoading={isConfirmingOutlines}
-                />
+                <div className="min-h-0 flex-1">
+                  <OutlinesEditor
+                    outlines={session.sceneOutlines}
+                    onChange={(outlines) => {
+                      setError(null);
+                      setStreamingOutlines(outlines);
+                      persistSession({
+                        ...session,
+                        sceneOutlines: outlines,
+                        previewPhase: 'review',
+                      });
+                    }}
+                    onConfirm={(outlines) => void continueGeneration(outlines)}
+                    onBack={goBackToHome}
+                    availableImages={session.pdfImages || []}
+                    imagePreviewMap={imagePreviewMap}
+                    isLoading={isConfirmingOutlines}
+                  />
+                </div>
               </div>
             </Card>
           </motion.div>

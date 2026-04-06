@@ -6,7 +6,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -176,7 +175,7 @@ export function OutlinesEditor({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] min-h-[600px] space-y-4">
+    <div className="flex h-full min-h-0 flex-col space-y-4 overflow-hidden">
       {/* 头部区域 */}
       <div className="flex items-center justify-between shrink-0">
         <div>
@@ -204,7 +203,7 @@ export function OutlinesEditor({
               <Plus className="size-4" />
             </Button>
           </div>
-          <ScrollArea className="flex-1 p-2">
+          <div className="flex-1 overflow-y-auto p-2 scrollbar-hide">
             <div className="space-y-1">
               {outlines.length === 0 ? (
                 <div className="text-center p-6 text-sm text-muted-foreground">{t('generation.noOutlines')}</div>
@@ -232,18 +231,18 @@ export function OutlinesEditor({
                 ))
               )}
             </div>
-          </ScrollArea>
+          </div>
         </div>
 
         {/* === 右侧：配置详情区 === */}
-        <div className="flex-1 relative flex flex-col bg-background">
+        <div className="flex-1 min-h-0 relative flex flex-col bg-background">
           {activeIndex === -1 || !activeOutline ? (
             <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground bg-muted/5">
               <MousePointerClick className="size-12 mb-4 opacity-20" />
               <p>请在左侧选择一个教学环节，或点击新建</p>
             </div>
           ) : (
-            <div className="flex flex-col h-full animate-in fade-in duration-300">
+            <div className="flex min-h-0 flex-col h-full animate-in fade-in duration-300">
               
               {/* 顶部常驻：环节标题与类型切换 */}
               <div className="shrink-0 p-6 border-b bg-background z-10 flex gap-4">
@@ -315,11 +314,11 @@ export function OutlinesEditor({
               </div>
 
               {/* Tab 内容区 */}
-              <ScrollArea className="flex-1 p-6 bg-muted/5">
-                
-                {/* 1. 基础内容 */}
-                {activeTab === 'content' && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="min-h-0 flex-1 overflow-hidden bg-muted/5">
+                <div className="h-full p-6">
+                  {/* 1. 基础内容 */}
+                  {activeTab === 'content' && (
+                    <div className="h-full overflow-y-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 scrollbar-hide">
                     <div className="space-y-2 max-w-sm">
                       <Label>预计教学时长 (秒)</Label>
                       <Input
@@ -349,12 +348,12 @@ export function OutlinesEditor({
                         disabled={isLoading}
                       />
                     </div>
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                {/* 2. 动态高级配置 */}
-                {activeTab === 'advanced' && activeOutline.type !== 'slide' && (
-                  <div className="bg-background border rounded-xl p-6 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* 2. 动态高级配置 */}
+                  {activeTab === 'advanced' && activeOutline.type !== 'slide' && (
+                    <div className="h-full overflow-y-auto rounded-xl border bg-background p-6 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 scrollbar-hide">
                     
                     {/* === 测验 Quiz 完整配置 === */}
                     {activeOutline.type === 'quiz' && (
@@ -463,12 +462,12 @@ export function OutlinesEditor({
                         </div>
                       </div>
                     )}
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                {/* 3. 图片素材画廊 (绝不裁切，保证阅读体验) */}
-                {activeTab === 'materials' && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* 3. 图片素材画廊 (绝不裁切，保证阅读体验) */}
+                  {activeTab === 'materials' && (
+                    <div className="flex h-full min-h-0 flex-col space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="flex items-center justify-between pb-2 border-b">
                       <div>
                         <h3 className="font-medium text-sm">挂载参考文档/图片</h3>
@@ -485,55 +484,57 @@ export function OutlinesEditor({
                         无可用参考图片，请先解析文档。
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {availableImages.map((image) => {
-                          const isSelected = activeSuggestedImageIds.includes(image.id);
-                          const previewSrc = imagePreviewMap[image.id] || image.src;
-                          
-                          return (
-                            <div
-                              key={image.id}
-                              onClick={() => toggleSuggestedImage(image.id)}
-                              className={`
-                                relative cursor-pointer group rounded-xl overflow-hidden bg-background transition-all duration-200 border-2
-                                ${isSelected ? 'border-primary shadow-[0_0_0_4px_rgba(var(--primary),0.1)]' : 'border-border/60 hover:border-primary/40 hover:shadow-md'}
-                              `}
-                            >
-                              {isSelected && (
-                                <div className="absolute top-2 right-2 z-20 bg-primary text-primary-foreground p-1 rounded-full shadow-lg">
-                                  <Check className="size-4 stroke-[3]" />
-                                </div>
-                              )}
-                              
-                              {/* 强制缩放适应 object-contain 保证文字可见 */}
-                              <div className={`relative aspect-[3/4] w-full bg-muted/30 p-2 flex items-center justify-center transition-opacity ${isSelected ? 'opacity-100' : 'group-hover:opacity-90'}`}>
-                                {previewSrc ? (
-                                  <img src={previewSrc} alt={`Page ${image.pageNumber}`} className="max-w-full max-h-full object-contain shadow-sm bg-white" />
-                                ) : (
-                                  <div className="text-xs text-muted-foreground">加载预览失败</div>
+                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+                        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-4">
+                          {availableImages.map((image) => {
+                            const isSelected = activeSuggestedImageIds.includes(image.id);
+                            const previewSrc = imagePreviewMap[image.id] || image.src;
+
+                            return (
+                              <div
+                                key={image.id}
+                                onClick={() => toggleSuggestedImage(image.id)}
+                                className={`
+                                  relative cursor-pointer group rounded-xl overflow-hidden bg-background transition-all duration-200 border-2
+                                  ${isSelected ? 'border-primary shadow-[0_0_0_4px_rgba(var(--primary),0.1)]' : 'border-border/60 hover:border-primary/40 hover:shadow-md'}
+                                `}
+                              >
+                                {isSelected && (
+                                  <div className="absolute top-2 right-2 z-20 bg-primary text-primary-foreground p-1 rounded-full shadow-lg">
+                                    <Check className="size-4 stroke-[3]" />
+                                  </div>
                                 )}
-                              </div>
-                              
-                              <div className={`p-3 border-t text-sm transition-colors ${isSelected ? 'bg-primary/5 border-primary/20' : ''}`}>
-                                <div className="font-semibold flex items-center justify-between">
-                                  <span>第 {image.pageNumber} 页</span>
-                                  <span className="text-[10px] text-muted-foreground font-mono">{image.id.slice(-4)}</span>
+
+                                {/* 强制缩放适应 object-contain 保证文字可见 */}
+                                <div className={`relative aspect-[3/4] w-full bg-muted/30 p-2 flex items-center justify-center transition-opacity ${isSelected ? 'opacity-100' : 'group-hover:opacity-90'}`}>
+                                  {previewSrc ? (
+                                    <img src={previewSrc} alt={`Page ${image.pageNumber}`} className="max-w-full max-h-full object-contain shadow-sm bg-white" />
+                                  ) : (
+                                    <div className="text-xs text-muted-foreground">加载预览失败</div>
+                                  )}
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-1 line-clamp-2" title={image.description}>
-                                  {image.description || '无详细描述文本'}
-                                </p>
+
+                                <div className={`p-3 border-t text-sm transition-colors ${isSelected ? 'bg-primary/5 border-primary/20' : ''}`}>
+                                  <div className="font-semibold flex items-center justify-between">
+                                    <span>第 {image.pageNumber} 页</span>
+                                    <span className="text-[10px] text-muted-foreground font-mono">{image.id.slice(-4)}</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2" title={image.description}>
+                                    {image.description || '无详细描述文本'}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                {/* 4. AI 多媒体配置完整版 */}
-                {activeTab === 'aigen' && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* 4. AI 多媒体配置完整版 */}
+                  {activeTab === 'aigen' && (
+                    <div className="h-full overflow-y-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 scrollbar-hide">
                     <div className="flex items-center justify-between pb-2 border-b">
                       <div>
                         <h3 className="font-medium text-sm">AI 自动生成多媒体 ({activeOutline.mediaGenerations?.length || 0})</h3>
@@ -598,10 +599,10 @@ export function OutlinesEditor({
                         ))
                       )}
                     </div>
-                  </div>
-                )}
-
-              </ScrollArea>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>
