@@ -19,6 +19,7 @@ import {
   loadPdfBlob,
   cleanupOldImages,
   storeImages,
+  ensureServerStoredPdfImages,
 } from '@/lib/utils/image-storage';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
@@ -340,10 +341,32 @@ function GenerationPreviewContent() {
   ) => {
     const modelConfig = getCurrentModelConfig();
     const settings = useSettingsStore.getState();
-    const imageIds = (sessionSnapshot.pdfImages || [])
+    const localImageIds = (sessionSnapshot.pdfImages || [])
       .map((img) => img.storageId || img.id)
       .filter(Boolean);
-    const hasPdfContent = Boolean(sessionSnapshot.pdfText || imageIds.length > 0);
+    const localImageMapping = localImageIds.length > 0 ? await loadImageMapping(localImageIds) : {};
+    const serverPdfImages =
+      sessionSnapshot.pdfImages && sessionSnapshot.pdfImages.length > 0
+        ? await ensureServerStoredPdfImages(sessionSnapshot.pdfImages, localImageMapping)
+        : [];
+    const serverImageIds = serverPdfImages
+      .map((img) => img.serverStorageId)
+      .filter((value): value is string => Boolean(value));
+    const hasPdfContent = Boolean(sessionSnapshot.pdfText || serverImageIds.length > 0);
+
+    if (
+      serverPdfImages.length > 0 &&
+      serverPdfImages.some(
+        (image, index) => image.serverStorageId !== sessionSnapshot.pdfImages?.[index]?.serverStorageId,
+      )
+    ) {
+      sessionSnapshot = {
+        ...sessionSnapshot,
+        pdfImages: serverPdfImages,
+      };
+      setSession(sessionSnapshot);
+      sessionStorage.setItem('generationSession', JSON.stringify(sessionSnapshot));
+    }
 
     const serverPayload = {
       moduleId: sessionSnapshot.requirements.moduleId,
@@ -352,9 +375,10 @@ function GenerationPreviewContent() {
       pdfContent: hasPdfContent
         ? {
             text: sessionSnapshot.pdfText || '',
-            images: imageIds,
+            images: serverImageIds,
           }
         : undefined,
+      ...(serverPdfImages.length > 0 ? { pdfImages: serverPdfImages } : {}),
       language: sessionSnapshot.requirements.language,
       modelString: modelConfig.modelString,
       apiKey: modelConfig.apiKey,

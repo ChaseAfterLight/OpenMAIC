@@ -20,6 +20,7 @@ export interface PdfImage {
   pageNumber: number; // Page number in PDF
   description?: string; // Optional description for AI context
   storageId?: string; // Reference to IndexedDB (session_xxx_img_1)
+  serverStorageId?: string; // Reference to server storage for background jobs
   width?: number; // Image width (px or normalized)
   height?: number; // Image height (px or normalized)
 }

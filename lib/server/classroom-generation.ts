@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import { callLLM } from '@/lib/ai/llm';
 import { createStageAPI } from '@/lib/api/stage-api';
 import type { StageStore } from '@/lib/api/stage-api-types';
+import { buildVisionUserContent } from '@/lib/generation/generation-pipeline';
 import {
   applyOutlineFallbacks,
   generateSceneOutlinesFromRequirements,
@@ -31,7 +32,8 @@ import {
   replaceMediaPlaceholders,
   generateTTSForClassroom,
 } from '@/lib/server/classroom-media-generation';
-import type { SceneOutline, UserRequirements } from '@/lib/types/generation';
+import { getImageFileBlob } from '@/lib/server/storage-repository';
+import type { ImageMapping, PdfImage, SceneOutline, UserRequirements } from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import type { Scene, Stage, LessonPackStatus } from '@/lib/types/stage';
@@ -49,6 +51,7 @@ export interface GenerateClassroomInput {
   k12?: K12StructuredInput;
   requirement: string;
   pdfContent?: { text: string; images: string[] };
+  pdfImages?: PdfImage[];
   language?: string;
   modelString?: string;
   apiKey?: string;
@@ -206,6 +209,42 @@ function stripCodeFences(text: string): string {
   return cleaned.trim();
 }
 
+function toDataUrl(payload: { buffer: Buffer; mimeType: string }) {
+  return `data:${payload.mimeType};base64,${payload.buffer.toString('base64')}`;
+}
+
+async function loadServerPdfAssets(input: GenerateClassroomInput): Promise<{
+  pdfImages?: PdfImage[];
+  imageMapping?: ImageMapping;
+}> {
+  if (!input.pdfImages?.length) {
+    return {};
+  }
+
+  const imageMapping: ImageMapping = {};
+  const pdfImages = await Promise.all(
+    input.pdfImages.map(async (image) => {
+      if (!image.serverStorageId) {
+        return image;
+      }
+
+      const payload = await getImageFileBlob(image.serverStorageId);
+      if (!payload) {
+        log.warn(`PDF image asset not found for ${image.id}: ${image.serverStorageId}`);
+        return image;
+      }
+
+      imageMapping[image.id] = toDataUrl(payload);
+      return image;
+    }),
+  );
+
+  return {
+    pdfImages,
+    imageMapping: Object.keys(imageMapping).length > 0 ? imageMapping : undefined,
+  };
+}
+
 async function generateAgentProfiles(
   requirement: string,
   language: string,
@@ -287,8 +326,27 @@ export async function generateClassroom(
     requiresApiKey: input.requiresApiKey,
   });
   log.info(`Using server-configured model: ${modelString}`);
+  const hasVision = !!modelInfo?.capabilities?.vision;
 
-  const aiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
+  const aiCall: AICallFn = async (systemPrompt, userPrompt, images) => {
+    if (images?.length && hasVision) {
+      const result = await callLLM(
+        {
+          model: languageModel,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: buildVisionUserContent(userPrompt, images),
+            },
+          ],
+          maxOutputTokens: modelInfo?.outputWindow,
+        },
+        'generate-classroom',
+      );
+      return result.text;
+    }
+
     const result = await callLLM(
       {
         model: languageModel,
@@ -319,6 +377,7 @@ export async function generateClassroom(
   };
 
   const lang = normalizeLanguage(input.language);
+  const { pdfImages: restoredPdfImages, imageMapping } = await loadServerPdfAssets(input);
   const requirements: UserRequirements = {
     requirement,
     language: lang,
@@ -480,10 +539,12 @@ export async function generateClassroom(
     const outlinesResult = await generateSceneOutlinesFromRequirements(
       requirements,
       pdfText,
-      undefined,
+      restoredPdfImages,
       aiCall,
       undefined,
       {
+        visionEnabled: hasVision,
+        imageMapping,
         imageGenerationEnabled: input.enableImageGeneration,
         videoGenerationEnabled: input.enableVideoGeneration,
         researchContext,
@@ -596,14 +657,25 @@ export async function generateClassroom(
       totalScenes: outlines.length,
     });
 
+    let assignedImages: PdfImage[] | undefined;
+    if (
+      restoredPdfImages &&
+      restoredPdfImages.length > 0 &&
+      safeOutline.suggestedImageIds &&
+      safeOutline.suggestedImageIds.length > 0
+    ) {
+      const suggestedIds = new Set(safeOutline.suggestedImageIds);
+      assignedImages = restoredPdfImages.filter((image) => suggestedIds.has(image.id));
+    }
+
     const content = await generateSceneContent(
       safeOutline,
       aiCall,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
+      assignedImages,
+      imageMapping,
+      safeOutline.type === 'pbl' ? languageModel : undefined,
+      hasVision,
+      {},
       agents,
     );
     if (!content) {

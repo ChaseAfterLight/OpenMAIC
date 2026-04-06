@@ -5,6 +5,7 @@
  * Images are stored as Blobs for efficient storage.
  */
 
+import type { PdfImage } from '@/lib/types/generation';
 import type { ImageFileRecord } from './database';
 import { nanoid } from 'nanoid';
 import { createLogger } from '@/lib/logger';
@@ -182,4 +183,61 @@ export async function loadPdfBlob(key: string): Promise<Blob | null> {
   const storage = getStorageAdapter();
   const record = await storage.getImageFileRecord(key);
   return record?.blob ?? null;
+}
+
+export async function ensureServerStoredPdfImages(
+  pdfImages: PdfImage[],
+  imageMapping: Record<string, string>,
+): Promise<PdfImage[]> {
+  const uploads = await Promise.all(
+    pdfImages.map(async (image) => {
+      if (image.serverStorageId) {
+        return image;
+      }
+
+      const src = image.src || imageMapping[image.id];
+      if (!src) {
+        return image;
+      }
+
+      const blob = base64ToBlob(src);
+      const mimeMatch = src.match(/data:(.*?);/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+      const serverStorageId = `pdfsrv_${nanoid(10)}_${image.id}`;
+
+      const formData = new FormData();
+      formData.append('action', 'saveImageFileRecord');
+      formData.append(
+        'metadata',
+        JSON.stringify({
+          id: serverStorageId,
+          filename: `${image.id}.png`,
+          mimeType,
+          size: blob.size,
+          createdAt: Date.now(),
+        } satisfies Omit<ImageFileRecord, 'blob'>),
+      );
+      formData.append('blob', blob, `${image.id}.png`);
+
+      const response = await fetch('/api/storage', {
+        method: 'POST',
+        body: formData,
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Failed to upload PDF image ${image.id}`);
+      }
+
+      return {
+        ...image,
+        serverStorageId,
+      };
+    }),
+  );
+
+  return uploads;
 }

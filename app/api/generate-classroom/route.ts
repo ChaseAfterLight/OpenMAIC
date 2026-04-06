@@ -2,6 +2,7 @@ import { after, type NextRequest } from 'next/server';
 import { nanoid } from 'nanoid';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { type GenerateClassroomInput } from '@/lib/server/classroom-generation';
+import type { PdfImage } from '@/lib/types/generation';
 import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
 import { buildClassroomJobUrls } from '@/lib/server/classroom-job-response';
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
       ...(rawBody.k12 ? { k12: rawBody.k12 } : {}),
       requirement: rawBody.requirement || '',
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
+      ...(rawBody.pdfImages ? { pdfImages: rawBody.pdfImages as PdfImage[] } : {}),
       ...(rawBody.language ? { language: rawBody.language } : {}),
       ...(rawBody.modelString ? { modelString: rawBody.modelString } : {}),
       ...(rawBody.apiKey ? { apiKey: rawBody.apiKey } : {}),
