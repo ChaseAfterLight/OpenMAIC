@@ -3,15 +3,12 @@
 import { Stage } from '@/components/stage';
 import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
-import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
-import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import {
   startClassroomJobStream,
@@ -21,12 +18,26 @@ import {
   getLiveClassroomJobId,
   clearLiveClassroomJobId,
   setLiveClassroomJobId,
+  getLiveRegeneratingSceneId,
+  setLiveRegeneratingSceneId,
+  clearLiveRegeneratingSceneId,
 } from '@/lib/client/classroom-live-job';
 import { PENDING_SCENE_ID } from '@/lib/store/stage';
 import type { Stage as StageType, Scene as SceneType } from '@/lib/types/stage';
 import type { SceneOutline } from '@/lib/types/generation';
+import { useUserProfileStore } from '@/lib/store/user-profile';
+import { getCurrentModelConfig } from '@/lib/utils/model-config';
+import { useSettingsStore } from '@/lib/store/settings';
 
 const log = createLogger('Classroom');
+
+function buildUserProfilePrompt() {
+  const profile = useUserProfileStore.getState();
+  if (!profile.nickname && !profile.bio) {
+    return '';
+  }
+  return `## Student Profile\n\nStudent: ${profile.nickname || 'Unknown'}${profile.bio ? ` — ${profile.bio}` : ''}\n\nConsider this student's background when designing the course. Adapt difficulty, examples, and teaching approach accordingly.\n\n---`;
+}
 
 export default function ClassroomDetailPage() {
   const router = useRouter();
@@ -47,15 +58,21 @@ export default function ClassroomDetailPage() {
   useEffect(() => {
     if (!classroomId) {
       setResolvedLiveJobId(null);
+      setRegeneratingSceneId(null);
       setLiveJobReady(true);
       return;
     }
 
     const jobId = queryLiveJobId || getLiveClassroomJobId(classroomId);
+    const rememberedRegeneratingSceneId = getLiveRegeneratingSceneId(classroomId);
     if (queryLiveJobId) {
       setLiveClassroomJobId(classroomId, queryLiveJobId);
     }
+    if (!jobId) {
+      clearLiveRegeneratingSceneId(classroomId);
+    }
     setResolvedLiveJobId(jobId);
+    setRegeneratingSceneId(jobId ? rememberedRegeneratingSceneId : null);
     setLiveJobReady(true);
   }, [classroomId, queryLiveJobId]);
 
@@ -67,17 +84,12 @@ export default function ClassroomDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [resolvedLiveJobId, setResolvedLiveJobId] = useState<string | null>(null);
   const [liveJobReady, setLiveJobReady] = useState(false);
+  const [regeneratingSceneId, setRegeneratingSceneId] = useState<string | null>(null);
 
   const generationStartedRef = useRef(false);
   const liveJobStreamCloseRef = useRef<(() => void) | null>(null);
   const lastLiveRefreshKeyRef = useRef<string>('');
   const hydratedAgentStageRef = useRef<string | null>(null);
-
-  const { generateRemaining, retrySingleOutline, stop, regenerateScene } = useSceneGenerator({
-    onComplete: () => {
-      log.info('[Classroom] All scenes generated');
-    },
-  });
 
   const hydrateGeneratedAgents = useCallback(async () => {
     const stage = useStageStore.getState().stage;
@@ -104,7 +116,11 @@ export default function ClassroomDetailPage() {
     }) => {
       const state = useStageStore.getState();
       const currentSceneId = state.currentSceneId;
+      const currentScene = currentSceneId
+        ? state.scenes.find((scene) => scene.id === currentSceneId) ?? null
+        : null;
       const remoteSceneIds = new Set(classroom.scenes.map((scene) => scene.id));
+      const remoteSceneOrders = new Set(classroom.scenes.map((scene) => scene.order));
       const mergedScenes = classroom.scenes.map((scene) =>
         currentSceneId && scene.id === currentSceneId
           ? (state.scenes.find((existing) => existing.id === scene.id) ?? scene)
@@ -112,7 +128,7 @@ export default function ClassroomDetailPage() {
       );
 
       for (const existing of state.scenes) {
-        if (!remoteSceneIds.has(existing.id)) {
+        if (!remoteSceneIds.has(existing.id) && !remoteSceneOrders.has(existing.order)) {
           mergedScenes.push(existing);
         }
       }
@@ -128,6 +144,9 @@ export default function ClassroomDetailPage() {
           ? PENDING_SCENE_ID
           : currentSceneId && mergedScenes.some((scene) => scene.id === currentSceneId)
             ? currentSceneId
+            : currentScene &&
+                mergedScenes.some((scene) => scene.order === currentScene.order)
+              ? (mergedScenes.find((scene) => scene.order === currentScene.order)?.id ?? null)
             : mergedScenes[0]?.id ?? (generatingOutlines.length > 0 ? PENDING_SCENE_ID : null);
 
       useStageStore.setState({
@@ -163,6 +182,70 @@ export default function ClassroomDetailPage() {
       outlines?: SceneOutline[];
     };
   }, [applyServerClassroomSnapshot, classroomId]);
+
+  const startClassroomGenerationJob = useCallback(
+    async (payload?: { sceneId?: string; outlineId?: string }) => {
+      const modelConfig = getCurrentModelConfig();
+      const settings = useSettingsStore.getState();
+      const response = await fetch(`/api/classroom/${encodeURIComponent(classroomId)}/generation-job`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...(payload?.sceneId ? { sceneId: payload.sceneId } : {}),
+          ...(payload?.outlineId ? { outlineId: payload.outlineId } : {}),
+          userProfile: buildUserProfilePrompt() || undefined,
+          modelString: modelConfig.modelString,
+          apiKey: modelConfig.apiKey || undefined,
+          baseUrl: modelConfig.baseUrl || undefined,
+          providerType: modelConfig.providerType || undefined,
+          requiresApiKey: modelConfig.requiresApiKey,
+          enableImageGeneration: Boolean(settings.imageGenerationEnabled),
+          enableVideoGeneration: Boolean(settings.videoGenerationEnabled),
+          enableTTS: Boolean(settings.ttsEnabled),
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        jobId?: string;
+      };
+      if (!response.ok || !data.success || !data.jobId) {
+        throw new Error(data.error || 'Failed to start classroom generation job');
+      }
+
+      setLiveClassroomJobId(classroomId, data.jobId);
+      setResolvedLiveJobId(data.jobId);
+      return data.jobId;
+    },
+    [classroomId],
+  );
+
+  const retryOutlineViaJob = useCallback(
+    async (outlineId: string) => {
+      generationStartedRef.current = true;
+      await startClassroomGenerationJob({ outlineId });
+    },
+    [startClassroomGenerationJob],
+  );
+
+  const regenerateSceneViaJob = useCallback(
+    async (sceneId: string) => {
+      generationStartedRef.current = true;
+      setRegeneratingSceneId(sceneId);
+      setLiveRegeneratingSceneId(classroomId, sceneId);
+      try {
+        await startClassroomGenerationJob({ sceneId });
+      } catch (error) {
+        setRegeneratingSceneId(null);
+        clearLiveRegeneratingSceneId(classroomId);
+        throw error;
+      }
+    },
+    [classroomId, startClassroomGenerationJob],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -286,9 +369,8 @@ export default function ClassroomDetailPage() {
     return () => {
       liveJobStreamCloseRef.current?.();
       liveJobStreamCloseRef.current = null;
-      stop();
     };
-  }, [authReady, classroomId, liveJobReady, loadClassroom, stop]);
+  }, [authReady, classroomId, liveJobReady, loadClassroom]);
 
   // Auto-resume generation for pending outlines
   useEffect(() => {
@@ -303,47 +385,16 @@ export default function ClassroomDetailPage() {
     // Check if there are pending outlines
     const completedOrders = new Set(scenes.map((s) => s.order));
     const hasPending = outlines.some((o) => !completedOrders.has(o.order));
+    const shouldResumeJob = hasPending || stage?.lessonPack?.status === 'in_progress';
 
-    if (!stage) return;
+    if (!stage || !shouldResumeJob) return;
 
     generationStartedRef.current = true;
-
-    // Load generation params from sessionStorage (stored by generation-preview before navigating)
-    const genParamsStr = sessionStorage.getItem('generationParams');
-    const params = genParamsStr ? JSON.parse(genParamsStr) : {};
-
-    // Reconstruct imageMapping from IndexedDB using pdfImages storageIds
-    const storageIds = (params.pdfImages || [])
-      .map((img: { storageId?: string }) => img.storageId)
-      .filter(Boolean);
-
-    // Always call generateRemaining to set lastParamsRef (needed for regenerateScene)
-    // It will early-return if there's nothing to generate
-    loadImageMapping(storageIds).then((imageMapping) => {
-      generateRemaining({
-        pdfImages: params.pdfImages,
-        imageMapping,
-        stageInfo: {
-          name: stage.name || '',
-          description: stage.description,
-          language: stage.language,
-          style: stage.style,
-        },
-        agents: params.agents,
-        userProfile: params.userProfile,
-      });
+    void startClassroomGenerationJob().catch((jobError) => {
+      generationStartedRef.current = false;
+      log.warn('[Classroom] Failed to start resume job:', jobError);
     });
-
-    // If no pending outlines, also resume media generation in background
-    if (!hasPending && outlines.length > 0) {
-      // All scenes are generated, but some media may not have finished.
-      // Resume media generation for any tasks not yet in IndexedDB.
-      // generateMediaForOutlines skips already-completed tasks automatically.
-      generateMediaForOutlines(outlines, stage.id).catch((err) => {
-        log.warn('[Classroom] Media generation resume error:', err);
-      });
-    }
-  }, [authReady, error, generateRemaining, liveJobReady, loading, resolvedLiveJobId]);
+  }, [authReady, error, liveJobReady, loading, resolvedLiveJobId, startClassroomGenerationJob]);
 
   useEffect(() => {
     if (!authReady || !liveJobReady || loading || error || !resolvedLiveJobId) {
@@ -367,8 +418,12 @@ export default function ClassroomDetailPage() {
 
       if (job.status === 'failed') {
         useStageStore.getState().setGenerationStatus('paused');
+        setRegeneratingSceneId(null);
+        clearLiveRegeneratingSceneId(classroomId);
       } else if (job.done) {
         useStageStore.getState().setGenerationStatus('completed');
+        setRegeneratingSceneId(null);
+        clearLiveRegeneratingSceneId(classroomId);
       } else {
         useStageStore.getState().setGenerationStatus('generating');
       }
@@ -391,6 +446,7 @@ export default function ClassroomDetailPage() {
 
       if (job.done && job.status === 'succeeded') {
         clearLiveClassroomJobId(classroomId);
+        clearLiveRegeneratingSceneId(classroomId);
         setResolvedLiveJobId(null);
         const nextParams = new URLSearchParams(searchParams.toString());
         if (nextParams.has('jobId')) {
@@ -402,9 +458,11 @@ export default function ClassroomDetailPage() {
         }
       } else if (job.done && job.result?.classroomId) {
         clearLiveClassroomJobId(job.result.classroomId);
+        clearLiveRegeneratingSceneId(job.result.classroomId);
         setResolvedLiveJobId(null);
       } else if (job.done) {
         clearLiveClassroomJobId(classroomId);
+        clearLiveRegeneratingSceneId(classroomId);
         setResolvedLiveJobId(null);
       }
     };
@@ -500,7 +558,11 @@ export default function ClassroomDetailPage() {
               </div>
             </div>
           ) : (
-            <Stage onRetryOutline={retrySingleOutline} onRegenerateScene={regenerateScene} />
+            <Stage
+              onRetryOutline={retryOutlineViaJob}
+              onRegenerateScene={regenerateSceneViaJob}
+              regeneratingSceneId={regeneratingSceneId}
+            />
           )}
         </div>
       </MediaStageProvider>

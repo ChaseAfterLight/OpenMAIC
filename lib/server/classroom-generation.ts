@@ -75,6 +75,9 @@ export interface GenerateClassroomInput {
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
   agentMode?: 'default' | 'generate';
+  userProfile?: string;
+  sceneOrdersFilter?: number[];
+  regenerateSceneOrders?: number[];
 }
 
 export type ClassroomGenerationStep =
@@ -210,6 +213,19 @@ function restoreAgentsFromStage(stage: Stage): AgentInfo[] | null {
     role: agent.role,
     persona: agent.persona,
   }));
+}
+
+function getPreviousSpeechesForOrder(scenes: Scene[], order: number): string[] {
+  const previousScene = [...scenes]
+    .filter((scene) => scene.order < order)
+    .sort((left, right) => left.order - right.order)
+    .at(-1);
+
+  return (
+    previousScene?.actions
+      ?.filter((action): action is SpeechAction => action.type === 'speech')
+      .map((action) => action.text) ?? []
+  );
 }
 
 function buildLessonPackMetadata(
@@ -551,10 +567,17 @@ export async function generateClassroom(
   let stageId: string;
   let stage: Stage;
   let store: StageStore;
+  const sceneOrdersFilter = new Set(input.sceneOrdersFilter ?? []);
+  const regenerateSceneOrders = new Set(input.regenerateSceneOrders ?? []);
+  const hasSceneOrderFilter = sceneOrdersFilter.size > 0;
 
   if (resumedClassroom) {
     outlines = resumedClassroom.outlines ?? [];
     stageId = resumedClassroom.id;
+    const seedScenes =
+      regenerateSceneOrders.size > 0
+        ? resumedClassroom.scenes.filter((scene) => !regenerateSceneOrders.has(scene.order))
+        : resumedClassroom.scenes;
     stage = {
       ...resumedClassroom.stage,
       lessonPack: resumedClassroom.stage.lessonPack
@@ -566,10 +589,10 @@ export async function generateClassroom(
       updatedAt: Date.now(),
     };
     store = createInMemoryStore(stage, {
-      scenes: resumedClassroom.scenes,
+      scenes: seedScenes,
       currentSceneId:
         (resumedClassroom.stage as Stage & { currentSceneId?: string }).currentSceneId ??
-        resumedClassroom.scenes[0]?.id ??
+        seedScenes[0]?.id ??
         null,
     });
 
@@ -577,20 +600,20 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.min(
-        30 + Math.floor((resumedClassroom.scenes.length / Math.max(outlines.length, 1)) * 60),
+        30 + Math.floor((seedScenes.length / Math.max(outlines.length, 1)) * 60),
         90,
       ),
       message: progressMessage(lang, 'resuming', {
-        readyScenes: resumedClassroom.scenes.length,
+        readyScenes: seedScenes.length,
         totalScenes: outlines.length,
       }),
-      scenesGenerated: resumedClassroom.scenes.length,
+      scenesGenerated: seedScenes.length,
       totalScenes: outlines.length,
       checkpoint: { classroomId: stageId },
       result: {
         classroomId: resumedClassroom.id,
         url: `${options.baseUrl}/classroom/${resumedClassroom.id}`,
-        scenesCount: resumedClassroom.scenes.length,
+        scenesCount: seedScenes.length,
       },
     });
   } else if (input.sceneOutlines?.length) {
@@ -739,35 +762,39 @@ export async function generateClassroom(
   }
 
   log.info('Stage 2: Generating scene content and actions...');
-  let generatedScenes = store.getState().scenes.length;
   const completedSceneOrders = new Set(store.getState().scenes.map((scene) => scene.order));
+  const targetOutlines = hasSceneOrderFilter
+    ? outlines.filter((outline) => sceneOrdersFilter.has(outline.order))
+    : outlines;
+  const totalTargetScenes = targetOutlines.length;
   const allTitles = outlines.map((outline) => outline.title);
-  const initialPreviousScene = [...store.getState().scenes]
-    .sort((left, right) => left.order - right.order)
-    .at(-1);
-  let previousSpeeches =
-    initialPreviousScene?.actions
-      ?.filter((action): action is SpeechAction => action.type === 'speech')
-      .map((action) => action.text) ?? [];
+  let generatedScenes = hasSceneOrderFilter
+    ? targetOutlines.filter((outline) => completedSceneOrders.has(outline.order)).length
+    : store.getState().scenes.length;
 
-  for (const [index, outline] of outlines.entries()) {
+  for (const [index, outline] of targetOutlines.entries()) {
     const safeOutline = applyOutlineFallbacks(outline, true);
     if (completedSceneOrders.has(safeOutline.order)) {
       continue;
     }
+    const fullPageIndex = Math.max(
+      outlines.findIndex((candidate) => candidate.order === safeOutline.order),
+      0,
+    );
 
-    const progressStart = 30 + Math.floor((generatedScenes / Math.max(outlines.length, 1)) * 60);
+    const progressStart =
+      30 + Math.floor((generatedScenes / Math.max(totalTargetScenes, 1)) * 60);
 
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.max(progressStart, 31),
       message: progressMessage(lang, 'generatingScene', {
         currentScene: index + 1,
-        totalScenes: outlines.length,
+        totalScenes: totalTargetScenes,
         title: safeOutline.title,
       }),
       scenesGenerated: generatedScenes,
-      totalScenes: outlines.length,
+      totalScenes: totalTargetScenes,
     });
 
     let assignedImages: PdfImage[] | undefined;
@@ -797,13 +824,20 @@ export async function generateClassroom(
     }
 
     const ctx: SceneGenerationContext = {
-      pageIndex: index + 1,
+      pageIndex: fullPageIndex + 1,
       totalPages: outlines.length,
       allTitles,
-      previousSpeeches,
+      previousSpeeches: getPreviousSpeechesForOrder(store.getState().scenes, safeOutline.order),
     };
 
-    const actions = await generateSceneActions(safeOutline, content, aiCall, ctx, agents);
+    const actions = await generateSceneActions(
+      safeOutline,
+      content,
+      aiCall,
+      ctx,
+      agents,
+      input.userProfile,
+    );
     log.info(`Scene "${safeOutline.title}": ${actions.length} actions`);
 
     const sceneId = createSceneWithActions(safeOutline, content, actions, api);
@@ -812,23 +846,41 @@ export async function generateClassroom(
       continue;
     }
 
-    previousSpeeches = actions
-      .filter((action): action is SpeechAction => action.type === 'speech')
-      .map((action) => action.text);
+    if (regenerateSceneOrders.has(safeOutline.order)) {
+      const currentScenes = store.getState().scenes;
+      const generatedScene = currentScenes.find((scene) => scene.id === sceneId);
+      const scenesWithoutOrder = currentScenes.filter(
+        (scene) => scene.id !== sceneId && scene.order !== safeOutline.order,
+      );
+      if (generatedScene) {
+        const insertIndex = Math.min(
+          scenesWithoutOrder.filter((scene) => scene.order < safeOutline.order).length,
+          scenesWithoutOrder.length,
+        );
+        store.setState({
+          scenes: [
+            ...scenesWithoutOrder.slice(0, insertIndex),
+            generatedScene,
+            ...scenesWithoutOrder.slice(insertIndex),
+          ],
+        });
+      }
+    }
 
     generatedScenes += 1;
     completedSceneOrders.add(safeOutline.order);
     const snapshot = await persistSnapshot();
-    const progressEnd = 30 + Math.floor((generatedScenes / Math.max(outlines.length, 1)) * 60);
+    const progressEnd =
+      30 + Math.floor((generatedScenes / Math.max(totalTargetScenes, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.min(progressEnd, 90),
       message: progressMessage(lang, 'generatedScenes', {
         readyScenes: generatedScenes,
-        totalScenes: outlines.length,
+        totalScenes: totalTargetScenes,
       }),
       scenesGenerated: generatedScenes,
-      totalScenes: outlines.length,
+      totalScenes: totalTargetScenes,
       checkpoint: { classroomId: snapshot.classroomId },
       result: snapshot,
     });
@@ -852,7 +904,7 @@ export async function generateClassroom(
     });
 
     try {
-      const mediaMap = await generateMediaForClassroom(outlines, stageId, options.baseUrl);
+      const mediaMap = await generateMediaForClassroom(targetOutlines, stageId, options.baseUrl);
       replaceMediaPlaceholders(scenes, mediaMap);
       log.info(`Media generation complete: ${Object.keys(mediaMap).length} files`);
     } catch (err) {
@@ -867,11 +919,16 @@ export async function generateClassroom(
       progress: 94,
       message: progressMessage(lang, 'generatingTts'),
       scenesGenerated: scenes.length,
-      totalScenes: outlines.length,
+      totalScenes: totalTargetScenes,
     });
 
     try {
-      await generateTTSForClassroom(scenes, stageId, options.baseUrl);
+      const targetOrders = new Set(targetOutlines.map((outline) => outline.order));
+      await generateTTSForClassroom(
+        scenes.filter((scene) => targetOrders.has(scene.order)),
+        stageId,
+        options.baseUrl,
+      );
       log.info('TTS generation complete');
     } catch (err) {
       log.warn('TTS generation phase failed, continuing:', err);
@@ -883,7 +940,7 @@ export async function generateClassroom(
     progress: 98,
     message: progressMessage(lang, 'persisting'),
     scenesGenerated: scenes.length,
-    totalScenes: outlines.length,
+    totalScenes: totalTargetScenes,
   });
 
   const persisted = await persistClassroom(
@@ -908,7 +965,7 @@ export async function generateClassroom(
     progress: 100,
     message: progressMessage(lang, 'completed'),
     scenesGenerated: scenes.length,
-    totalScenes: outlines.length,
+    totalScenes: totalTargetScenes,
   });
 
   return {

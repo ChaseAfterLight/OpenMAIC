@@ -151,6 +151,24 @@ export async function findLiveClassroomGenerationJobByClassroomId(
   return null;
 }
 
+export async function findLatestClassroomGenerationJobByClassroomId(
+  classroomId: string,
+  statuses: ClassroomGenerationJob['status'][],
+): Promise<ClassroomGenerationJob | null> {
+  const existing = await findLatestClassroomGenerationJobRecordByClassroomId(classroomId, statuses);
+  if (!existing) {
+    return null;
+  }
+
+  const staleJob = markStaleIfNeeded(existing);
+  if (!staleJob) {
+    return existing;
+  }
+
+  await writeClassroomGenerationJobRecord(staleJob);
+  return staleJob.status === 'failed' ? staleJob : null;
+}
+
 export async function updateClassroomGenerationJob(
   jobId: string,
   patch: Partial<ClassroomGenerationJob>,
