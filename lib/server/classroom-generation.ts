@@ -12,8 +12,7 @@ import {
   generateSceneActions,
   generateSceneContent,
 } from '@/lib/generation/scene-generator';
-import type { AICallFn } from '@/lib/generation/pipeline-types';
-import type { AgentInfo } from '@/lib/generation/pipeline-types';
+import type { AICallFn, AgentInfo, SceneGenerationContext } from '@/lib/generation/pipeline-types';
 import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatters';
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
@@ -33,6 +32,7 @@ import {
   generateTTSForClassroom,
 } from '@/lib/server/classroom-media-generation';
 import { getImageFileBlob } from '@/lib/server/storage-repository';
+import type { SpeechAction } from '@/lib/types/action';
 import type { ImageMapping, PdfImage, SceneOutline, UserRequirements } from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
@@ -734,6 +734,12 @@ export async function generateClassroom(
   log.info('Stage 2: Generating scene content and actions...');
   let generatedScenes = store.getState().scenes.length;
   const completedSceneOrders = new Set(store.getState().scenes.map((scene) => scene.order));
+  const allTitles = outlines.map((outline) => outline.title);
+  const initialPreviousScene = [...store.getState().scenes].sort((left, right) => left.order - right.order).at(-1);
+  let previousSpeeches =
+    initialPreviousScene?.actions
+      ?.filter((action): action is SpeechAction => action.type === 'speech')
+      .map((action) => action.text) ?? [];
 
   for (const [index, outline] of outlines.entries()) {
     const safeOutline = applyOutlineFallbacks(outline, true);
@@ -781,7 +787,14 @@ export async function generateClassroom(
       continue;
     }
 
-    const actions = await generateSceneActions(safeOutline, content, aiCall, undefined, agents);
+    const ctx: SceneGenerationContext = {
+      pageIndex: index + 1,
+      totalPages: outlines.length,
+      allTitles,
+      previousSpeeches,
+    };
+
+    const actions = await generateSceneActions(safeOutline, content, aiCall, ctx, agents);
     log.info(`Scene "${safeOutline.title}": ${actions.length} actions`);
 
     const sceneId = createSceneWithActions(safeOutline, content, actions, api);
@@ -789,6 +802,10 @@ export async function generateClassroom(
       log.warn(`Skipping scene "${safeOutline.title}" — scene creation failed`);
       continue;
     }
+
+    previousSpeeches = actions
+      .filter((action): action is SpeechAction => action.type === 'speech')
+      .map((action) => action.text);
 
     generatedScenes += 1;
     completedSceneOrders.add(safeOutline.order);
