@@ -14,25 +14,31 @@ import { k12ModuleManifest } from '@/modules/k12/manifest';
 const presets = k12ModuleManifest.presets as unknown as K12ModulePresets;
 
 describe('k12 textbook helpers', () => {
-  it('hydrates default K12 input with chapter snapshot data', () => {
+  it('does not hydrate default K12 input with textbook snapshot data', () => {
     const input = getDefaultK12StructuredInput(presets);
 
     expect(input).toMatchObject({
       gradeId: 'grade-4',
       subjectId: 'math',
-      textbookEditionId: 'pep-elementary-math',
-      volumeId: 'pep-math-grade-4-upper',
-      unitId: 'g4u-unit-1',
-      chapterId: 'g4u-u1-c1',
+      lessonTypeId: 'new-lesson',
+      durationMinutes: 40,
     });
-    expect(input.chapterSummary).toContain('亿以内大数');
-    expect(input.chapterResources?.length).toBeGreaterThan(0);
+    expect(input.textbookEditionId).toBeUndefined();
+    expect(input.volumeId).toBeUndefined();
+    expect(input.unitId).toBeUndefined();
+    expect(input.chapterId).toBeUndefined();
+    expect(input.chapterSummary).toBeUndefined();
+    expect(input.chapterResources).toEqual([]);
   });
 
   it('clears textbook selections when the chosen subject has no configured catalog', () => {
     const input = syncK12StructuredInput(
       {
         ...getDefaultK12StructuredInput(presets),
+        textbookEditionId: 'pep-elementary-math',
+        volumeId: 'pep-math-grade-4-upper',
+        unitId: 'g4u-unit-1',
+        chapterId: 'g4u-u1-c1',
         subjectId: 'english',
       },
       presets,
@@ -44,9 +50,52 @@ describe('k12 textbook helpers', () => {
     expect(input.chapterResources).toEqual([]);
   });
 
-  it('builds a chapter-aware K12 requirement with supplementary PDF context', () => {
+  it('hydrates preset textbook snapshot data only after an explicit selection', () => {
+    const input = syncK12StructuredInput(
+      {
+        ...getDefaultK12StructuredInput(presets),
+        textbookEditionId: 'pep-elementary-math',
+      },
+      presets,
+    );
+
+    expect(input).toMatchObject({
+      textbookSource: 'preset',
+      textbookEditionId: 'pep-elementary-math',
+      volumeId: 'pep-math-grade-4-upper',
+      unitId: 'g4u-unit-1',
+      chapterId: 'g4u-u1-c1',
+    });
+    expect(input.chapterSummary).toContain('亿以内大数');
+    expect(input.chapterResources?.length).toBeGreaterThan(0);
+  });
+
+  it('builds requirement text without preset textbook context when no textbook is selected', () => {
     const requirement = buildK12RequirementText({
       input: getDefaultK12StructuredInput(presets),
+      presets,
+      locale: 'zh-CN',
+      freeform: '加入一个生活化导入和 3 道练习题。',
+      supplementaryPdfName: '班级学情分析.pdf',
+    });
+
+    expect(requirement).not.toContain('亿以内数的认识');
+    expect(requirement).not.toContain('章节摘要');
+    expect(requirement).not.toContain('章节可参考资料');
+    expect(requirement).not.toContain('章节参考资料');
+    expect(requirement).toContain('如果未关联教材章节');
+    expect(requirement).toContain('补充资料 PDF《班级学情分析.pdf》');
+  });
+
+  it('builds a chapter-aware K12 requirement with supplementary PDF context', () => {
+    const requirement = buildK12RequirementText({
+      input: syncK12StructuredInput(
+        {
+          ...getDefaultK12StructuredInput(presets),
+          textbookEditionId: 'pep-elementary-math',
+        },
+        presets,
+      ),
       presets,
       locale: 'zh-CN',
       freeform: '加入一个生活化导入和 3 道练习题。',
@@ -151,7 +200,13 @@ describe('k12 textbook helpers', () => {
 
   it('resolves lesson pack metadata from textbook selection', () => {
     const metadata = resolveK12LessonPackMetadata({
-      input: getDefaultK12StructuredInput(presets),
+      input: syncK12StructuredInput(
+        {
+          ...getDefaultK12StructuredInput(presets),
+          textbookEditionId: 'pep-elementary-math',
+        },
+        presets,
+      ),
       presets,
       locale: 'zh-CN',
     });
@@ -166,6 +221,26 @@ describe('k12 textbook helpers', () => {
       chapter: '亿以内数的认识',
       chapterId: 'g4u-u1-c1',
     });
+  });
+
+  it('resolves default lesson pack metadata without inferring a textbook chapter', () => {
+    const metadata = resolveK12LessonPackMetadata({
+      input: getDefaultK12StructuredInput(presets),
+      presets,
+      locale: 'zh-CN',
+    });
+
+    expect(metadata).toMatchObject({
+      grade: '四年级',
+      subject: '数学',
+      lessonType: '新课导入',
+      durationMinutes: 40,
+    });
+    expect(metadata.textbookEdition).toBeUndefined();
+    expect(metadata.volume).toBeUndefined();
+    expect(metadata.unit).toBeUndefined();
+    expect(metadata.chapter).toBeUndefined();
+    expect(metadata.chapterId).toBeUndefined();
   });
 
   it('resolves lesson pack metadata and title from non-preset textbook snapshots', () => {

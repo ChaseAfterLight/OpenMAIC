@@ -39,6 +39,7 @@ const copy = {
     chapter: '章节',
     durationUnit: '分钟',
     noEdition: '当前学科暂无教材目录，可直接补充需求或上传资料。',
+    noSelection: '可按需选择教材章节；如果不选，系统只会使用你的需求和上传资料生成。',
     noChapter: '当前教材还没有配置章节数据，可继续通过自由描述和补充资料生成。',
     chapterSummary: '章节摘要',
     chapterKeywords: '关键词',
@@ -56,6 +57,8 @@ const copy = {
     durationUnit: 'min',
     noEdition:
       'No textbook catalog is available for this subject yet. You can still continue with freeform notes and uploaded materials.',
+    noSelection:
+      'Selecting a textbook chapter is optional. If you skip it, generation will only use your prompt and uploaded materials.',
     noChapter:
       'This textbook entry does not have chapter data yet. You can still continue with freeform notes and supplementary materials.',
     chapterSummary: 'Chapter summary',
@@ -225,6 +228,10 @@ export function K12StructuredInputFields({
             {selection.editions.length === 0 ? (
               <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
                 {text.noEdition}
+              </p>
+            ) : !selection.edition ? (
+              <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                {text.noSelection}
               </p>
             ) : selection.chapter ? (
               <div className="space-y-3">

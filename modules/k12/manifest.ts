@@ -58,10 +58,6 @@ const k12Presets: K12ModulePresets = {
     subjectId: 'math',
     lessonTypeId: 'new-lesson',
     durationMinutes: 40,
-    textbookEditionId: 'pep-elementary-math',
-    volumeId: 'pep-math-grade-4-upper',
-    unitId: 'g4u-unit-1',
-    chapterId: 'g4u-u1-c1',
   },
 };
 

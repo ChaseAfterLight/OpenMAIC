@@ -18,8 +18,18 @@ const FALLBACK_K12_INPUT: K12StructuredInput = {
   durationMinutes: 40,
 };
 
+function hasPresetTextbookIdentifiers(input: K12StructuredInput | undefined): boolean {
+  return Boolean(
+    input?.textbookEditionId || input?.volumeId || input?.unitId || input?.chapterId,
+  );
+}
+
 function usesPresetTextbookSnapshot(input: K12StructuredInput | undefined): boolean {
-  return !input?.textbookSource || input.textbookSource === 'preset';
+  if (!input) return false;
+  return (
+    hasPresetTextbookIdentifiers(input) &&
+    (!input.textbookSource || input.textbookSource === 'preset')
+  );
 }
 
 function resolveOption<T extends ModuleOption>(options: T[] | undefined, id: string | undefined): T | undefined {
@@ -86,19 +96,28 @@ export function getK12TextbookSelection(
   chapters: K12TextbookChapter[];
   chapter?: K12TextbookChapter;
 } {
+  const hasPresetSelection = usesPresetTextbookSnapshot(input);
   const editions = getMatchingTextbookEditions(presets, input);
   const edition =
-    editions.find((candidate) => candidate.id === input.textbookEditionId) ?? editions[0];
+    hasPresetSelection
+      ? editions.find((candidate) => candidate.id === input.textbookEditionId) ?? editions[0]
+      : undefined;
   const volumes =
     edition?.volumes.filter(
       (candidate) =>
         candidate.gradeId === input.gradeId && candidate.subjectId === input.subjectId,
     ) ?? [];
-  const volume = volumes.find((candidate) => candidate.id === input.volumeId) ?? volumes[0];
+  const volume = hasPresetSelection
+    ? volumes.find((candidate) => candidate.id === input.volumeId) ?? volumes[0]
+    : undefined;
   const units = volume?.units ?? [];
-  const unit = units.find((candidate) => candidate.id === input.unitId) ?? units[0];
+  const unit = hasPresetSelection
+    ? units.find((candidate) => candidate.id === input.unitId) ?? units[0]
+    : undefined;
   const chapters = unit?.chapters ?? [];
-  const chapter = chapters.find((candidate) => candidate.id === input.chapterId) ?? chapters[0];
+  const chapter = hasPresetSelection
+    ? chapters.find((candidate) => candidate.id === input.chapterId) ?? chapters[0]
+    : undefined;
 
   return {
     editions,
@@ -109,6 +128,26 @@ export function getK12TextbookSelection(
     unit,
     chapters,
     chapter,
+  };
+}
+
+function clearPresetTextbookSnapshot(input: K12StructuredInput): K12StructuredInput {
+  return {
+    ...input,
+    textbookSource: undefined,
+    textbookLibraryId: undefined,
+    textbookPublisher: undefined,
+    textbookEditionId: undefined,
+    textbookEditionLabel: undefined,
+    volumeId: undefined,
+    volumeLabel: undefined,
+    unitId: undefined,
+    unitTitle: undefined,
+    chapterId: undefined,
+    chapterTitle: undefined,
+    chapterSummary: undefined,
+    chapterKeywords: [],
+    chapterResources: [],
   };
 }
 
@@ -129,7 +168,14 @@ export function syncK12StructuredInput(
     };
   }
 
+  if (!hasPresetTextbookIdentifiers(base)) {
+    return clearPresetTextbookSnapshot(base);
+  }
+
   const selection = getK12TextbookSelection(presets, base);
+  if (!selection.edition || !selection.volume || !selection.unit || !selection.chapter) {
+    return clearPresetTextbookSnapshot(base);
+  }
 
   return {
     ...base,
@@ -220,13 +266,16 @@ export function buildK12RequirementText(args: {
     resources: chapterResources,
     locale,
   });
+  const hasLinkedChapter = Boolean(chapterTitle);
 
   if (locale === 'zh-CN') {
     return [
-      `请基于当前关联教材章节设计一节${input.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
-      chapterTitle
+      hasLinkedChapter
+        ? `请基于当前关联教材章节设计一节${input.durationMinutes}分钟的${lessonTypeLabel}课堂。`
+        : `请设计一节${input.durationMinutes}分钟的${lessonTypeLabel}课堂。`,
+      hasLinkedChapter
         ? `优先基于${editionLabel ?? '教材'}${volumeLabel ? ` ${volumeLabel}` : ''}中“${unitTitle ?? '当前单元'}”的“${chapterTitle}”组织内容。`
-        : '如果教材章节信息不完整，请结合老师补充要求组织内容。',
+        : '如果未关联教材章节，请结合老师补充要求和上传资料组织内容。',
       input.chapterSummary ? `章节摘要：${input.chapterSummary}` : null,
       chapterKeywords.length > 0 ? `核心关键词：${chapterKeywords.join('、')}` : null,
       chapterResources.length > 0
@@ -242,10 +291,12 @@ export function buildK12RequirementText(args: {
   }
 
   return [
-    `Design a ${input.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson based on the linked textbook chapter.`,
-    chapterTitle
+    hasLinkedChapter
+      ? `Design a ${input.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson based on the linked textbook chapter.`
+      : `Design a ${input.durationMinutes}-minute ${lessonTypeLabel.toLowerCase()} lesson.`,
+    hasLinkedChapter
       ? `Prioritize the chapter "${chapterTitle}" from ${editionLabel ?? 'the selected textbook'}${volumeLabel ? ` (${volumeLabel})` : ''}${unitTitle ? `, unit "${unitTitle}"` : ''}.`
-      : 'If textbook chapter data is incomplete, rely on the teacher notes and any uploaded supporting materials.',
+      : 'If no textbook chapter is linked, rely on the teacher notes and any uploaded supporting materials.',
     input.chapterSummary ? `Chapter summary: ${input.chapterSummary}` : null,
     chapterKeywords.length > 0 ? `Key concepts: ${chapterKeywords.join(', ')}` : null,
     chapterResources.length > 0
