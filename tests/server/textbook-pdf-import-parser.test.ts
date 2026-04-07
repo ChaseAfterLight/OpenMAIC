@@ -56,9 +56,28 @@ describe('textbook pdf import parser', () => {
     ]);
   });
 
+  it('removes front-matter boilerplate from ai-bound page text', () => {
+    const cleaned = __testables.sanitizePageTextForAi(`
+书名
+主编
+出版发行
+ISBN 978-7-5552-8246-4
+图书在版编目（CIP）数据
+第一单元 太阳与影子
+第一课 影子
+［1］
+`);
+
+    expect(cleaned).not.toContain('ISBN');
+    expect(cleaned).not.toContain('出版发行');
+    expect(cleaned).toContain('第一单元 太阳与影子');
+    expect(cleaned).toContain('第一课 影子');
+    expect(cleaned).toContain('［1］');
+  });
+
   it('builds AI extraction context from front pages', () => {
     const context = __testables.buildAiExtractionContext([
-      '封面',
+      '封面\nISBN 978-7-5552-8246-4\n出版发行\n目录\n第一单元 ........ 3\n第二单元 ........ 12',
       '目录\n第一单元 ........ 3\n第二单元 ........ 12',
       '前言',
     ]);
@@ -66,6 +85,8 @@ describe('textbook pdf import parser', () => {
     expect(context.tocCandidatePages).toContain(2);
     expect(context.sampledPages[1]?.rawPage).toBe(2);
     expect(context.sampledPages[1]?.tocScore).toBeGreaterThan(0);
+    expect(context.sampledPages[0]?.textPreview).not.toContain('ISBN');
+    expect(context.sampledPages[0]?.textPreview).toContain('第一单元');
   });
 
   it('samples the first twelve pages for AI extraction by default', () => {
