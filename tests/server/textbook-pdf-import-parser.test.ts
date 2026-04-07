@@ -134,4 +134,61 @@ ISBN 978-7-5552-8246-4
     expect(aiProposal?.units[0]?.chapters[1]?.pageStart).toBe(5);
     expect(aiProposal?.lowConfidencePages).toContain(5);
   });
+
+  it('accepts AI payloads with more than sixteen page anchors and deduplicates conflicts', () => {
+    const parsed = __testables.parseAiTocExtractionResponse(
+      JSON.stringify({
+        pageAnchors: [
+          { printedPage: 1, rawPage: 10, confidence: 0.2 },
+          { printedPage: 1, rawPage: 4, confidence: 0.9 },
+          ...Array.from({ length: 18 }, (_, index) => ({
+            printedPage: index + 2,
+            rawPage: index + 5,
+            confidence: 0.8,
+          })),
+        ],
+        units: [
+          {
+            title: '第一单元',
+            confidence: 0.9,
+            chapters: [{ title: '第一课', printedPage: 1, confidence: 0.9 }],
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.pageAnchors).toHaveLength(19);
+    expect(parsed.pageAnchors[0]).toEqual({ printedPage: 1, rawPage: 4, confidence: 0.9 });
+  });
+
+  it('salvages wrapped ai json with mixed field types instead of failing fast', () => {
+    const parsed = __testables.parseAiTocExtractionResponseDetailed(`
+下面是结果：
+\`\`\`json
+{
+  "result": {
+    "anchors": [
+      { "page": "1", "pdfPage": "4", "confidence": "92%" },
+      { "page": "bad", "pdfPage": 5, "confidence": 0.1 }
+    ],
+    "chapters": [
+      { "name": "影子", "page": "1", "confidence": "0.9" },
+      { "name": "太阳和影子", "pageNumber": "2" },
+      { "page": 3 }
+    ]
+  }
+}
+\`\`\`
+`);
+
+    expect(parsed.mode).toBe('salvaged');
+    expect(parsed.extraction.pageAnchors).toEqual([
+      { printedPage: 1, rawPage: 4, confidence: 0.92 },
+    ]);
+    expect(parsed.extraction.units).toHaveLength(1);
+    expect(parsed.extraction.units[0]?.chapters.map((chapter) => chapter.title)).toEqual([
+      '影子',
+      '太阳和影子',
+    ]);
+  });
 });

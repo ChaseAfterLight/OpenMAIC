@@ -80,7 +80,6 @@ const aiTocExtractionSchema = z.object({
         confidence: z.number().min(0).max(1).default(0.8),
       }),
     )
-    .max(16)
     .default([]),
   units: z
     .array(
@@ -102,6 +101,360 @@ const aiTocExtractionSchema = z.object({
 });
 
 type AiTocExtraction = z.infer<typeof aiTocExtractionSchema>;
+
+interface ParsedAiTocExtractionResponse {
+  extraction: AiTocExtraction;
+  mode: 'strict' | 'salvaged';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value == null) {
+    return [];
+  }
+  return [value];
+}
+
+function getNestedValue(record: Record<string, unknown>, paths: string[]): unknown {
+  for (const path of paths) {
+    const segments = path.split('.');
+    let current: unknown = record;
+    let matched = true;
+    for (const segment of segments) {
+      if (!isRecord(current) || !(segment in current)) {
+        matched = false;
+        break;
+      }
+      current = current[segment];
+    }
+    if (matched) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+function coercePositiveInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    return normalized > 0 ? normalized : null;
+  }
+  if (typeof value === 'string') {
+    const match = value.trim().match(/\d+/);
+    if (!match) {
+      return null;
+    }
+    const normalized = Number.parseInt(match[0], 10);
+    return normalized > 0 ? normalized : null;
+  }
+  return null;
+}
+
+function coerceConfidenceValue(value: unknown, fallback = 0.6): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return clampConfidence(value, fallback);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return clampConfidence(fallback, fallback);
+    }
+    const normalized = Number(trimmed.replace(/%$/, ''));
+    if (Number.isFinite(normalized)) {
+      const ratio = trimmed.endsWith('%') || normalized > 1 ? normalized / 100 : normalized;
+      return clampConfidence(ratio, fallback);
+    }
+  }
+  return clampConfidence(fallback, fallback);
+}
+
+function coerceNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function extractJsonCandidates(rawText: string): string[] {
+  const stripped = stripCodeFences(rawText);
+  const candidates: string[] = [];
+  const firstBrace = stripped.indexOf('{');
+  const lastBrace = stripped.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(stripped.slice(firstBrace, lastBrace + 1));
+  }
+  const firstBracket = stripped.indexOf('[');
+  const lastBracket = stripped.lastIndexOf(']');
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    candidates.push(stripped.slice(firstBracket, lastBracket + 1));
+  }
+  candidates.push(stripped);
+  return [...new Set(candidates.map((candidate) => candidate.trim()).filter(Boolean))];
+}
+
+function parseJsonWithRepair(rawText: string): unknown {
+  let lastError: Error | null = null;
+  for (const candidate of extractJsonCandidates(rawText)) {
+    try {
+      return JSON.parse(jsonrepair(candidate));
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError ?? new SyntaxError('Failed to parse AI TOC JSON');
+}
+
+function normalizeAiAnchorCandidate(candidate: unknown): {
+  printedPage: number;
+  rawPage: number;
+  confidence: number;
+} | null {
+  if (!isRecord(candidate)) {
+    return null;
+  }
+  const printedPage = coercePositiveInt(
+    getNestedValue(candidate, ['printedPage', 'page', 'bookPage', 'pageNumber', 'targetPage']),
+  );
+  const rawPage = coercePositiveInt(
+    getNestedValue(candidate, ['rawPage', 'pdfPage', 'sourcePage', 'pageIndex', 'raw.page']),
+  );
+  if (!printedPage || !rawPage) {
+    return null;
+  }
+  return {
+    printedPage,
+    rawPage,
+    confidence: coerceConfidenceValue(candidate.confidence, 0.65),
+  };
+}
+
+function normalizeAiChapterCandidate(candidate: unknown): {
+  title: string;
+  printedPage?: number | null;
+  confidence: number;
+} | null {
+  if (typeof candidate === 'string') {
+    const title = coerceNonEmptyString(candidate);
+    return title
+      ? {
+          title,
+          printedPage: null,
+          confidence: 0.55,
+        }
+      : null;
+  }
+  if (!isRecord(candidate)) {
+    return null;
+  }
+
+  const title = coerceNonEmptyString(
+    getNestedValue(candidate, ['title', 'name', 'chapterTitle', 'heading', 'text']),
+  );
+  if (!title) {
+    return null;
+  }
+
+  const printedPage = coercePositiveInt(
+    getNestedValue(candidate, ['printedPage', 'bookPage', 'page', 'pageNumber']),
+  );
+
+  return {
+    title,
+    printedPage: printedPage ?? null,
+    confidence: coerceConfidenceValue(candidate.confidence, 0.6),
+  };
+}
+
+function normalizeAiUnitCandidate(
+  candidate: unknown,
+  fallbackIndex: number,
+): {
+  title: string;
+  confidence: number;
+  chapters: Array<{
+    title: string;
+    printedPage?: number | null;
+    confidence: number;
+  }>;
+} | null {
+  if (typeof candidate === 'string') {
+    const title = coerceNonEmptyString(candidate);
+    return title
+      ? {
+          title,
+          confidence: 0.55,
+          chapters: [],
+        }
+      : null;
+  }
+  if (!isRecord(candidate)) {
+    return null;
+  }
+
+  const chapters = toArray(
+    getNestedValue(candidate, ['chapters', 'lessons', 'sections', 'items', 'children']),
+  )
+    .map((item) => normalizeAiChapterCandidate(item))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  const title =
+    coerceNonEmptyString(getNestedValue(candidate, ['title', 'name', 'unitTitle', 'heading'])) ??
+    (chapters.length > 0 ? `自动识别单元 ${fallbackIndex + 1}` : null);
+
+  if (!title) {
+    return null;
+  }
+
+  return {
+    title,
+    confidence: coerceConfidenceValue(candidate.confidence, chapters.length > 0 ? 0.62 : 0.55),
+    chapters,
+  };
+}
+
+function salvageAiTocExtraction(payload: unknown): AiTocExtraction | null {
+  const root = isRecord(payload)
+    ? payload
+    : Array.isArray(payload)
+      ? { units: payload }
+      : null;
+  if (!root) {
+    return null;
+  }
+
+  const extractionRoot =
+    ([
+      getNestedValue(root, ['result']),
+      getNestedValue(root, ['data']),
+      getNestedValue(root, ['output']),
+      getNestedValue(root, ['payload']),
+    ].find((candidate) => isRecord(candidate)) as Record<string, unknown> | undefined) ?? root;
+
+  const pageAnchors = toArray(
+    getNestedValue(extractionRoot, ['pageAnchors', 'anchors', 'pageMappings', 'pageMap']),
+  )
+    .map((item) => normalizeAiAnchorCandidate(item))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  let units = toArray(
+    getNestedValue(extractionRoot, ['units', 'unitList', 'toc', 'contents', 'sections']),
+  )
+    .map((item, index) => normalizeAiUnitCandidate(item, index))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  if (units.length === 0) {
+    const chapters = toArray(
+      getNestedValue(extractionRoot, ['chapters', 'lessons', 'items']),
+    )
+      .map((item) => normalizeAiChapterCandidate(item))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    if (chapters.length > 0) {
+      units = [
+        {
+          title:
+            coerceNonEmptyString(getNestedValue(extractionRoot, ['title', 'name'])) ?? '自动识别单元 1',
+          confidence: 0.58,
+          chapters,
+        },
+      ];
+    }
+  }
+
+  if (units.length === 0 && pageAnchors.length === 0) {
+    return null;
+  }
+
+  return normalizeAiTocExtraction({
+    pageAnchors,
+    units,
+  });
+}
+
+function hasDirectAiExtractionFields(payload: unknown): boolean {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return 'pageAnchors' in payload || 'units' in payload;
+}
+
+function normalizeAiTocExtraction(extraction: AiTocExtraction): AiTocExtraction {
+  const bestAnchorByPrintedPage = new Map<
+    number,
+    {
+      printedPage: number;
+      rawPage: number;
+      confidence: number;
+    }
+  >();
+
+  for (const anchor of extraction.pageAnchors) {
+    const existing = bestAnchorByPrintedPage.get(anchor.printedPage);
+    if (
+      !existing ||
+      anchor.confidence > existing.confidence ||
+      (anchor.confidence === existing.confidence && anchor.rawPage < existing.rawPage)
+    ) {
+      bestAnchorByPrintedPage.set(anchor.printedPage, anchor);
+    }
+  }
+
+  return {
+    ...extraction,
+    pageAnchors: [...bestAnchorByPrintedPage.values()].sort(
+      (left, right) => left.printedPage - right.printedPage,
+    ),
+    units: extraction.units
+      .map((unit) => ({
+        ...unit,
+        chapters: [...unit.chapters].sort((left, right) => {
+          const leftPage = left.printedPage ?? Number.MAX_SAFE_INTEGER;
+          const rightPage = right.printedPage ?? Number.MAX_SAFE_INTEGER;
+          if (leftPage !== rightPage) {
+            return leftPage - rightPage;
+          }
+          return left.title.localeCompare(right.title, 'zh-Hans-CN');
+        }),
+      }))
+      .filter((unit) => unit.chapters.length > 0 || unit.title.trim().length > 0),
+  };
+}
+
+function parseAiTocExtractionResponse(rawText: string): AiTocExtraction {
+  return parseAiTocExtractionResponseDetailed(rawText).extraction;
+}
+
+function parseAiTocExtractionResponseDetailed(rawText: string): ParsedAiTocExtractionResponse {
+  const parsedJson = parseJsonWithRepair(rawText);
+  const strict = aiTocExtractionSchema.safeParse(parsedJson);
+  if (
+    strict.success &&
+    (hasDirectAiExtractionFields(parsedJson) ||
+      strict.data.pageAnchors.length > 0 ||
+      strict.data.units.length > 0)
+  ) {
+    return {
+      extraction: normalizeAiTocExtraction(strict.data),
+      mode: 'strict',
+    };
+  }
+
+  const salvaged = salvageAiTocExtraction(parsedJson);
+  if (salvaged) {
+    return {
+      extraction: salvaged,
+      mode: 'salvaged',
+    };
+  }
+
+  throw strict.error;
+}
 
 interface ProposalResult {
   units: TextbookPdfImportUnitDraft[];
@@ -1104,13 +1457,15 @@ ${JSON.stringify(promptPayload, null, 2)}`;
       `教材 PDF AI 返回完成: chars=${result.text.length}, model=${resolvedModelString}, vision=${visionImages.length > 0}`,
     );
 
-    const repaired = jsonrepair(stripCodeFences(result.text));
-    const parsed = aiTocExtractionSchema.parse(JSON.parse(repaired));
+    const parsed = parseAiTocExtractionResponseDetailed(result.text);
+    if (parsed.mode === 'salvaged') {
+      log.warn(`教材 PDF AI 返回非标准 JSON，已启用兜底解析: model=${resolvedModelString}`);
+    }
     log.info(
-      `教材 PDF AI 解析成功: anchors=${parsed.pageAnchors.length}, units=${parsed.units.length}`,
+      `教材 PDF AI 解析成功: anchors=${parsed.extraction.pageAnchors.length}, units=${parsed.extraction.units.length}, mode=${parsed.mode}`,
     );
     return {
-      extraction: parsed,
+      extraction: parsed.extraction,
       modelString: resolvedModelString,
     };
   } catch (error) {
@@ -1124,7 +1479,20 @@ ${JSON.stringify(promptPayload, null, 2)}`;
         }),
       };
     }
-    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+    if (error instanceof z.ZodError) {
+      log.warn(
+        `教材 PDF AI 返回 JSON 结构不符合约束，已回退规则解析: model=${resolvedModelString}`,
+        error,
+      );
+      return {
+        extraction: null,
+        modelString: resolvedModelString,
+        note: createConflictNote('ai-invalid-json', 'AI 返回 JSON 结构不符合预期，已使用规则解析', {
+          source: 'system',
+        }),
+      };
+    }
+    if (error instanceof SyntaxError) {
       log.warn(
         `教材 PDF AI 返回不可解析 JSON，已回退规则解析: model=${resolvedModelString}`,
         error,
@@ -1427,6 +1795,8 @@ export const __testables = {
   buildRuleProposal,
   buildImportProposal,
   buildProposal: buildRuleProposal,
+  parseAiTocExtractionResponse,
+  parseAiTocExtractionResponseDetailed,
   sanitizePageTextForAi,
   sanitizePageTextsForAi,
 };
