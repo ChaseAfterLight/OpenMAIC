@@ -216,3 +216,56 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS textbook_library_store (
+  id TEXT PRIMARY KEY,
+  updated_at BIGINT NOT NULL
+);
+
+ALTER TABLE textbook_library_store
+  DROP COLUMN IF EXISTS official_draft;
+ALTER TABLE textbook_library_store
+  DROP COLUMN IF EXISTS official_published;
+ALTER TABLE textbook_library_store
+  DROP COLUMN IF EXISTS personal_libraries;
+ALTER TABLE textbook_library_store
+  DROP COLUMN IF EXISTS pdf_import_drafts;
+
+CREATE TABLE IF NOT EXISTS textbook_libraries (
+  scope TEXT NOT NULL,
+  view TEXT NOT NULL,
+  id TEXT NOT NULL,
+  owner_user_id TEXT,
+  publisher TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  grade_id TEXT NOT NULL,
+  edition_id TEXT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  raw_library JSONB NOT NULL,
+  PRIMARY KEY (scope, view, id)
+);
+
+CREATE INDEX IF NOT EXISTS textbook_libraries_scope_view_updated_idx
+  ON textbook_libraries (scope, view, updated_at DESC);
+CREATE INDEX IF NOT EXISTS textbook_libraries_scope_view_owner_updated_idx
+  ON textbook_libraries (scope, view, owner_user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS textbook_libraries_scope_view_subject_grade_idx
+  ON textbook_libraries (scope, view, subject_id, grade_id);
+
+CREATE TABLE IF NOT EXISTS textbook_pdf_import_drafts (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  owner_user_id TEXT,
+  library_id TEXT NOT NULL,
+  volume_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  raw_draft JSONB NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS textbook_pdf_import_drafts_scope_library_volume_uidx
+  ON textbook_pdf_import_drafts (scope, library_id, volume_id);
+CREATE INDEX IF NOT EXISTS textbook_pdf_import_drafts_scope_library_updated_idx
+  ON textbook_pdf_import_drafts (scope, library_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS textbook_pdf_import_drafts_owner_updated_idx
+  ON textbook_pdf_import_drafts (owner_user_id, updated_at DESC);

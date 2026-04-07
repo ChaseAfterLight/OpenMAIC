@@ -43,7 +43,7 @@ $env:NEXT_PUBLIC_STORAGE_DRIVER='server'; pnpm build; pnpm start
 
 - `SERVER_STORAGE_BACKEND=file` 时，服务端继续使用 `data/storage/` 文件仓库。
 - `SERVER_STORAGE_BACKEND=postgres-object-storage` 时：
-  - 结构化数据进入 PostgreSQL：`classrooms`、`scenes`、`chat_sessions`、`playback_states`、`stage_outlines`
+  - 结构化数据进入 PostgreSQL：`classrooms`、`scenes`、`chat_sessions`、`playback_states`、`stage_outlines`、`textbook_libraries`、`textbook_pdf_import_drafts`
   - 大文件进入对象存储，数据库保存稳定对象 key 与元数据：`media_files`、`image_files`
   - `server` 与 `hybrid` 两种模式共用同一套服务端仓库实现，不改 `StorageAdapter` 调用面
 

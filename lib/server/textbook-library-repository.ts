@@ -12,7 +12,12 @@ import {
   getObjectFromStorage,
   putObjectToStorage,
 } from '@/lib/server/storage-object-store';
-import { fromJsonColumn, getStoragePgPool, toJsonb } from '@/lib/server/storage-postgres';
+import {
+  fromJsonColumn,
+  getStoragePgPool,
+  toJsonb,
+  withStorageTransaction,
+} from '@/lib/server/storage-postgres';
 import {
   buildTextbookAttachmentObjectKey,
   buildTextbookImportDraftObjectKey,
@@ -46,6 +51,8 @@ import type {
 const log = createLogger('TextbookLibraryRepository');
 const STORE_ROW_ID = 'default';
 const TEXTBOOK_COVER_DOWNLOAD_URL_PREFIX = '/api/storage?action=downloadImage&id=';
+const POSTGRES_LIBRARIES_TABLE = 'textbook_libraries';
+const POSTGRES_IMPORT_DRAFTS_TABLE = 'textbook_pdf_import_drafts';
 
 let readyPromise: Promise<void> | null = null;
 
@@ -71,6 +78,13 @@ function buildTextbookCoverImageId(scope: TextbookLibraryScope, libraryId: strin
 
 function buildTextbookCoverDownloadUrl(imageId: string): string {
   return `${TEXTBOOK_COVER_DOWNLOAD_URL_PREFIX}${encodeURIComponent(imageId)}`;
+}
+
+function normalizeLibraryViewForScope(
+  scope: TextbookLibraryScope,
+  view: TextbookLibraryView = 'draft',
+): TextbookLibraryView {
+  return scope === 'personal' ? 'draft' : view;
 }
 
 function parseTextbookCoverDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } | null {
@@ -193,7 +207,21 @@ async function seedStoreIfNeeded(store: TextbookLibraryStore): Promise<TextbookL
     updatedAt: timestamp,
   };
 
-  await writeStore(seededStore);
+  const config = getServerStorageConfig();
+  if (config.backend === 'file') {
+    await writeStore(seededStore);
+  } else {
+    await replacePostgresLibraries('official', 'draft', seededStore.officialDraft);
+    await replacePostgresLibraries('official', 'published', seededStore.officialPublished);
+    await getStoragePgPool(config.databaseUrl).query(
+      `
+        UPDATE textbook_library_store
+        SET updated_at = $2
+        WHERE id = $1
+      `,
+      [STORE_ROW_ID, timestamp],
+    );
+  }
   log.info(
     `教材库已自动导入内置教材种子: draft=${seededStore.officialDraft.length}, published=${seededStore.officialPublished.length}`,
   );
@@ -451,30 +479,85 @@ async function ensurePostgresSchema(config: PostgresObjectStorageConfig): Promis
   await pool.query(`
     CREATE TABLE IF NOT EXISTS textbook_library_store (
       id TEXT PRIMARY KEY,
-      official_draft JSONB NOT NULL,
-      official_published JSONB NOT NULL,
-      personal_libraries JSONB NOT NULL,
-      pdf_import_drafts JSONB NOT NULL DEFAULT '[]'::jsonb,
       updated_at BIGINT NOT NULL
     );
   `);
   await pool.query(`
     ALTER TABLE textbook_library_store
-    ADD COLUMN IF NOT EXISTS pdf_import_drafts JSONB NOT NULL DEFAULT '[]'::jsonb;
+    DROP COLUMN IF EXISTS official_draft;
+  `);
+  await pool.query(`
+    ALTER TABLE textbook_library_store
+    DROP COLUMN IF EXISTS official_published;
+  `);
+  await pool.query(`
+    ALTER TABLE textbook_library_store
+    DROP COLUMN IF EXISTS personal_libraries;
+  `);
+  await pool.query(`
+    ALTER TABLE textbook_library_store
+    DROP COLUMN IF EXISTS pdf_import_drafts;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${POSTGRES_LIBRARIES_TABLE} (
+      scope TEXT NOT NULL,
+      view TEXT NOT NULL,
+      id TEXT NOT NULL,
+      owner_user_id TEXT,
+      publisher TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      grade_id TEXT NOT NULL,
+      edition_id TEXT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      raw_library JSONB NOT NULL,
+      PRIMARY KEY (scope, view, id)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS textbook_libraries_scope_view_updated_idx
+    ON ${POSTGRES_LIBRARIES_TABLE} (scope, view, updated_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS textbook_libraries_scope_view_owner_updated_idx
+    ON ${POSTGRES_LIBRARIES_TABLE} (scope, view, owner_user_id, updated_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS textbook_libraries_scope_view_subject_grade_idx
+    ON ${POSTGRES_LIBRARIES_TABLE} (scope, view, subject_id, grade_id);
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${POSTGRES_IMPORT_DRAFTS_TABLE} (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL,
+      owner_user_id TEXT,
+      library_id TEXT NOT NULL,
+      volume_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      raw_draft JSONB NOT NULL
+    );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS textbook_pdf_import_drafts_scope_library_volume_uidx
+    ON ${POSTGRES_IMPORT_DRAFTS_TABLE} (scope, library_id, volume_id);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS textbook_pdf_import_drafts_scope_library_updated_idx
+    ON ${POSTGRES_IMPORT_DRAFTS_TABLE} (scope, library_id, updated_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS textbook_pdf_import_drafts_owner_updated_idx
+    ON ${POSTGRES_IMPORT_DRAFTS_TABLE} (owner_user_id, updated_at DESC);
   `);
   await pool.query(
     `
       INSERT INTO textbook_library_store (
         id,
-        official_draft,
-        official_published,
-        personal_libraries,
-        pdf_import_drafts,
         updated_at
-      ) VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, $6)
+      ) VALUES ($1, $2)
       ON CONFLICT (id) DO NOTHING
     `,
-    [STORE_ROW_ID, toJsonb([]), toJsonb([]), toJsonb([]), toJsonb([]), Date.now()],
+    [STORE_ROW_ID, Date.now()],
   );
 }
 
@@ -506,8 +589,345 @@ export async function ensureTextbookLibraryStorageReady(): Promise<void> {
   }
 }
 
-async function readStore(): Promise<TextbookLibraryStore> {
+function mapPostgresLibraryRow(row: { raw_library: unknown }): TextbookLibraryRecord {
+  return normalizeLibraryRecord(
+    fromJsonColumn<TextbookLibraryRecord>(row.raw_library as TextbookLibraryRecord | string),
+  );
+}
+
+async function listPostgresLibraries(input: {
+  scope: TextbookLibraryScope;
+  view?: TextbookLibraryView;
+  ownerUserId?: string;
+  libraryId?: string;
+  publisher?: string;
+  subjectId?: string;
+  gradeId?: string;
+  editionId?: string;
+}): Promise<TextbookLibraryRecord[]> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return [];
+  }
+
+  const normalizedView = normalizeLibraryViewForScope(input.scope, input.view);
+  const conditions = ['scope = $1', 'view = $2'];
+  const values: Array<string> = [input.scope, normalizedView];
+
+  if (input.ownerUserId) {
+    values.push(input.ownerUserId);
+    conditions.push(`owner_user_id = $${values.length}`);
+  }
+  if (input.libraryId) {
+    values.push(input.libraryId);
+    conditions.push(`id = $${values.length}`);
+  }
+  if (input.publisher) {
+    values.push(input.publisher.trim());
+    conditions.push(`publisher = $${values.length}`);
+  }
+  if (input.subjectId) {
+    values.push(input.subjectId.trim());
+    conditions.push(`subject_id = $${values.length}`);
+  }
+  if (input.gradeId) {
+    values.push(input.gradeId.trim());
+    conditions.push(`grade_id = $${values.length}`);
+  }
+  if (input.editionId) {
+    values.push(input.editionId.trim());
+    conditions.push(`edition_id = $${values.length}`);
+  }
+
+  const result = await getStoragePgPool(config.databaseUrl).query(
+    `
+      SELECT raw_library
+      FROM ${POSTGRES_LIBRARIES_TABLE}
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY publisher ASC, edition_id ASC, updated_at DESC
+    `,
+    values,
+  );
+  return result.rows.map((row) => mapPostgresLibraryRow(row));
+}
+
+async function getPostgresLibrary(input: {
+  scope: TextbookLibraryScope;
+  view?: TextbookLibraryView;
+  libraryId: string;
+}): Promise<TextbookLibraryRecord | null> {
+  const libraries = await listPostgresLibraries({
+    scope: input.scope,
+    view: input.view,
+    libraryId: input.libraryId,
+  });
+  return libraries[0] ?? null;
+}
+
+async function upsertPostgresLibrary(
+  library: TextbookLibraryRecord,
+  view: TextbookLibraryView = 'draft',
+): Promise<void> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return;
+  }
+
+  const normalizedView = normalizeLibraryViewForScope(library.scope, view);
+  await getStoragePgPool(config.databaseUrl).query(
+    `
+      INSERT INTO ${POSTGRES_LIBRARIES_TABLE} (
+        scope,
+        view,
+        id,
+        owner_user_id,
+        publisher,
+        subject_id,
+        grade_id,
+        edition_id,
+        updated_at,
+        raw_library
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+      ON CONFLICT (scope, view, id) DO UPDATE
+      SET owner_user_id = EXCLUDED.owner_user_id,
+          publisher = EXCLUDED.publisher,
+          subject_id = EXCLUDED.subject_id,
+          grade_id = EXCLUDED.grade_id,
+          edition_id = EXCLUDED.edition_id,
+          updated_at = EXCLUDED.updated_at,
+          raw_library = EXCLUDED.raw_library
+    `,
+    [
+      library.scope,
+      normalizedView,
+      library.id,
+      library.ownerUserId ?? null,
+      library.publisher,
+      library.subjectId,
+      library.gradeId,
+      library.editionId,
+      library.updatedAt,
+      toJsonb(library),
+    ],
+  );
+}
+
+async function deletePostgresLibrary(input: {
+  scope: TextbookLibraryScope;
+  view?: TextbookLibraryView;
+  libraryId: string;
+}): Promise<void> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return;
+  }
+
+  await getStoragePgPool(config.databaseUrl).query(
+    `
+      DELETE FROM ${POSTGRES_LIBRARIES_TABLE}
+      WHERE scope = $1 AND view = $2 AND id = $3
+    `,
+    [input.scope, normalizeLibraryViewForScope(input.scope, input.view), input.libraryId],
+  );
+}
+
+async function replacePostgresLibraries(
+  scope: TextbookLibraryScope,
+  view: TextbookLibraryView,
+  libraries: TextbookLibraryRecord[],
+): Promise<void> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return;
+  }
+
+  const normalizedView = normalizeLibraryViewForScope(scope, view);
+  await withStorageTransaction(config.databaseUrl, async (client) => {
+    await client.query(
+      `
+        DELETE FROM ${POSTGRES_LIBRARIES_TABLE}
+        WHERE scope = $1 AND view = $2
+      `,
+      [scope, normalizedView],
+    );
+
+    for (const library of libraries) {
+      await client.query(
+        `
+          INSERT INTO ${POSTGRES_LIBRARIES_TABLE} (
+            scope,
+            view,
+            id,
+            owner_user_id,
+            publisher,
+            subject_id,
+            grade_id,
+            edition_id,
+            updated_at,
+            raw_library
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+        `,
+        [
+          library.scope,
+          normalizedView,
+          library.id,
+          library.ownerUserId ?? null,
+          library.publisher,
+          library.subjectId,
+          library.gradeId,
+          library.editionId,
+          library.updatedAt,
+          toJsonb(library),
+        ],
+      );
+    }
+  });
+}
+
+function mapPostgresImportDraftRow(row: { raw_draft: unknown }): TextbookPdfImportDraftRecord {
+  return normalizePdfImportDraft(
+    fromJsonColumn<TextbookPdfImportDraftRecord>(
+      row.raw_draft as TextbookPdfImportDraftRecord | string,
+    ),
+  );
+}
+
+async function listPostgresImportDrafts(input?: {
+  scope?: TextbookLibraryScope;
+  libraryId?: string;
+  volumeId?: string;
+  ownerUserId?: string;
+}): Promise<TextbookPdfImportDraftRecord[]> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return [];
+  }
+
+  const conditions: string[] = [];
+  const values: Array<string> = [];
+  if (input?.scope) {
+    values.push(input.scope);
+    conditions.push(`scope = $${values.length}`);
+  }
+  if (input?.libraryId) {
+    values.push(input.libraryId);
+    conditions.push(`library_id = $${values.length}`);
+  }
+  if (input?.volumeId) {
+    values.push(input.volumeId);
+    conditions.push(`volume_id = $${values.length}`);
+  }
+  if (input?.ownerUserId) {
+    values.push(input.ownerUserId);
+    conditions.push(`owner_user_id = $${values.length}`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await getStoragePgPool(config.databaseUrl).query(
+    `
+      SELECT raw_draft
+      FROM ${POSTGRES_IMPORT_DRAFTS_TABLE}
+      ${whereClause}
+      ORDER BY updated_at DESC, id ASC
+    `,
+    values,
+  );
+  return result.rows.map((row) => mapPostgresImportDraftRow(row));
+}
+
+async function getPostgresImportDraft(draftId: string): Promise<TextbookPdfImportDraftRecord | null> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return null;
+  }
+
+  const result = await getStoragePgPool(config.databaseUrl).query(
+    `
+      SELECT raw_draft
+      FROM ${POSTGRES_IMPORT_DRAFTS_TABLE}
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [draftId],
+  );
+  if ((result.rowCount ?? 0) > 0) {
+    return mapPostgresImportDraftRow(result.rows[0]);
+  }
+  return null;
+}
+
+async function upsertPostgresImportDraft(draft: TextbookPdfImportDraftRecord): Promise<void> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return;
+  }
+
+  await getStoragePgPool(config.databaseUrl).query(
+    `
+      INSERT INTO ${POSTGRES_IMPORT_DRAFTS_TABLE} (
+        id,
+        scope,
+        owner_user_id,
+        library_id,
+        volume_id,
+        status,
+        updated_at,
+        raw_draft
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+      ON CONFLICT (id) DO UPDATE
+      SET scope = EXCLUDED.scope,
+          owner_user_id = EXCLUDED.owner_user_id,
+          library_id = EXCLUDED.library_id,
+          volume_id = EXCLUDED.volume_id,
+          status = EXCLUDED.status,
+          updated_at = EXCLUDED.updated_at,
+          raw_draft = EXCLUDED.raw_draft
+    `,
+    [
+      draft.id,
+      draft.scope,
+      draft.ownerUserId ?? null,
+      draft.libraryId,
+      draft.volumeId,
+      draft.status,
+      draft.updatedAt,
+      toJsonb(draft),
+    ],
+  );
+}
+
+async function deletePostgresImportDraftById(draftId: string): Promise<void> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return;
+  }
+
+  await getStoragePgPool(config.databaseUrl).query(
+    `DELETE FROM ${POSTGRES_IMPORT_DRAFTS_TABLE} WHERE id = $1`,
+    [draftId],
+  );
+}
+
+async function deletePostgresImportDraftsByLibrary(
+  scope: TextbookLibraryScope,
+  libraryId: string,
+): Promise<void> {
+  const config = getServerStorageConfig();
+  if (config.backend !== 'postgres-object-storage') {
+    return;
+  }
+
+  await getStoragePgPool(config.databaseUrl).query(
+    `DELETE FROM ${POSTGRES_IMPORT_DRAFTS_TABLE} WHERE scope = $1 AND library_id = $2`,
+    [scope, libraryId],
+  );
+}
+
+async function readStore(options?: {
+  includeImportDrafts?: boolean;
+}): Promise<TextbookLibraryStore> {
   await ensureTextbookLibraryStorageReady();
+  const includeImportDrafts = options?.includeImportDrafts ?? true;
   const config = getServerStorageConfig();
   if (config.backend === 'file') {
     const seededStore = await seedStoreIfNeeded(await readFileStore());
@@ -517,33 +937,29 @@ async function readStore(): Promise<TextbookLibraryStore> {
     return seededStore;
   }
 
-  const result = await getStoragePgPool(config.databaseUrl).query(
-    `
-      SELECT official_draft, official_published, personal_libraries, pdf_import_drafts, updated_at
-      FROM textbook_library_store
-      WHERE id = $1
-      LIMIT 1
-    `,
-    [STORE_ROW_ID],
-  );
-  if (result.rowCount === 0) {
+  const [officialDraft, officialPublished, personalLibraries, metadataResult] = await Promise.all([
+    listPostgresLibraries({ scope: 'official', view: 'draft' }),
+    listPostgresLibraries({ scope: 'official', view: 'published' }),
+    listPostgresLibraries({ scope: 'personal', view: 'draft' }),
+    getStoragePgPool(config.databaseUrl).query(
+      `
+        SELECT updated_at
+        FROM textbook_library_store
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [STORE_ROW_ID],
+    ),
+  ]);
+  if ((metadataResult.rowCount ?? 0) === 0) {
     return createEmptyStore();
   }
-  const row = result.rows[0];
   const store = {
-    officialDraft: fromJsonColumn<TextbookLibraryRecord[]>(row.official_draft).map(
-      normalizeLibraryRecord,
-    ),
-    officialPublished: fromJsonColumn<TextbookLibraryRecord[]>(row.official_published).map(
-      normalizeLibraryRecord,
-    ),
-    personalLibraries: fromJsonColumn<TextbookLibraryRecord[]>(row.personal_libraries).map(
-      normalizeLibraryRecord,
-    ),
-    pdfImportDrafts: fromJsonColumn<TextbookPdfImportDraftRecord[]>(row.pdf_import_drafts).map(
-      normalizePdfImportDraft,
-    ),
-    updatedAt: Number(row.updated_at) || Date.now(),
+    officialDraft,
+    officialPublished,
+    personalLibraries,
+    pdfImportDrafts: includeImportDrafts ? await listPostgresImportDrafts() : [],
+    updatedAt: Number(metadataResult.rows[0].updated_at) || Date.now(),
   };
   const seededStore = await seedStoreIfNeeded(store);
   if (await migrateStoredTextbookCovers(seededStore)) {
@@ -564,24 +980,18 @@ async function writeStore(store: TextbookLibraryStore): Promise<void> {
     return;
   }
 
+  await Promise.all([
+    replacePostgresLibraries('official', 'draft', nextStore.officialDraft),
+    replacePostgresLibraries('official', 'published', nextStore.officialPublished),
+    replacePostgresLibraries('personal', 'draft', nextStore.personalLibraries),
+  ]);
   await getStoragePgPool(config.databaseUrl).query(
     `
       UPDATE textbook_library_store
-      SET official_draft = $2::jsonb,
-          official_published = $3::jsonb,
-          personal_libraries = $4::jsonb,
-          pdf_import_drafts = $5::jsonb,
-          updated_at = $6
+      SET updated_at = $2
       WHERE id = $1
     `,
-    [
-      STORE_ROW_ID,
-      toJsonb(nextStore.officialDraft),
-      toJsonb(nextStore.officialPublished),
-      toJsonb(nextStore.personalLibraries),
-      toJsonb(nextStore.pdfImportDrafts),
-      nextStore.updatedAt,
-    ],
+    [STORE_ROW_ID, nextStore.updatedAt],
   );
 }
 
@@ -856,7 +1266,22 @@ async function deleteImportDraftObjects(drafts: TextbookPdfImportDraftRecord[]):
 export async function listTextbookLibraries(
   options: ListTextbookLibrariesOptions,
 ): Promise<TextbookLibraryRecord[]> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    return (
+      await listPostgresLibraries({
+        scope: options.scope,
+        view: options.view,
+        ownerUserId: options.ownerUserId,
+        publisher: options.publisher,
+        subjectId: options.subjectId,
+        gradeId: options.gradeId,
+        editionId: options.editionId,
+      })
+    )
+      .filter((library) => matchesLibraryQuery(library, options))
+      .map((library) => structuredClone(library));
+  }
+  const store = await readStore({ includeImportDrafts: false });
   return getLibrariesForView(store, options.scope, options.view)
     .filter((library) => matchesLibraryQuery(library, options))
     .map((library) => structuredClone(library));
@@ -867,7 +1292,11 @@ export async function getTextbookLibrary(input: {
   libraryId: string;
   view?: TextbookLibraryView;
 }): Promise<TextbookLibraryRecord | null> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const library = await getPostgresLibrary(input);
+    return library ? structuredClone(library) : null;
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const library =
     getLibrariesForView(store, input.scope, input.view).find((item) => item.id === input.libraryId) ??
     null;
@@ -877,7 +1306,39 @@ export async function getTextbookLibrary(input: {
 export async function saveTextbookLibrary(
   input: SaveTextbookLibraryInput,
 ): Promise<TextbookLibraryRecord> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const scope = input.library.scope;
+    const view = normalizeLibraryViewForScope(scope, input.view);
+    const existing = await getPostgresLibrary({
+      scope,
+      view,
+      libraryId: input.library.id,
+    });
+    const libraryId = input.library.id || randomUUID();
+    const storedCover = await persistTextbookLibraryCover({
+      ...input.library,
+      id: libraryId,
+      scope,
+      createdAt: existing?.createdAt ?? input.library.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    });
+    if (!storedCover) {
+      await deleteImageFileRecord(buildTextbookCoverImageId(scope, libraryId));
+    }
+    const normalized = normalizeLibraryRecord({
+      ...input.library,
+      id: libraryId,
+      createdAt: existing?.createdAt ?? input.library.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+      publishedAt: scope === 'official' && view === 'published' ? input.library.publishedAt : undefined,
+      publishedByUserId:
+        scope === 'official' && view === 'published' ? input.library.publishedByUserId : undefined,
+      cover: storedCover,
+    });
+    await upsertPostgresLibrary(normalized, view);
+    return structuredClone(normalized);
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const scope = input.library.scope;
   const view = input.view ?? (scope === 'official' ? 'draft' : 'draft');
   const libraries = getLibrariesForView(store, scope, view);
@@ -914,7 +1375,27 @@ export async function deleteTextbookLibrary(input: {
   libraryId: string;
   view?: TextbookLibraryView;
 }): Promise<void> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const target = await getPostgresLibrary(input);
+    if (!target) {
+      return;
+    }
+
+    const attachments = target.volumes.flatMap((volume) =>
+      volume.units.flatMap((unit) => unit.chapters.flatMap((chapter) => chapter.attachments)),
+    );
+    const relatedImportDrafts = await listPostgresImportDrafts({
+      scope: input.scope,
+      libraryId: input.libraryId,
+    });
+    await deleteAttachmentObjects(attachments);
+    await deleteImportDraftObjects(relatedImportDrafts);
+    await deleteImageFileRecord(buildTextbookCoverImageId(input.scope, input.libraryId));
+    await deletePostgresImportDraftsByLibrary(input.scope, input.libraryId);
+    await deletePostgresLibrary(input);
+    return;
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const libraries = getLibrariesForView(store, input.scope, input.view);
   const target = libraries.find((library) => library.id === input.libraryId);
   if (!target) {
@@ -924,15 +1405,25 @@ export async function deleteTextbookLibrary(input: {
   const attachments = target.volumes.flatMap((volume) =>
     volume.units.flatMap((unit) => unit.chapters.flatMap((chapter) => chapter.attachments)),
   );
-  const relatedImportDrafts = store.pdfImportDrafts.filter(
-    (candidate) => candidate.scope === input.scope && candidate.libraryId === input.libraryId,
-  );
+  const relatedImportDrafts =
+    getServerStorageConfig().backend === 'file'
+      ? store.pdfImportDrafts.filter(
+          (candidate) => candidate.scope === input.scope && candidate.libraryId === input.libraryId,
+        )
+      : await listPostgresImportDrafts({
+          scope: input.scope,
+          libraryId: input.libraryId,
+        });
   await deleteAttachmentObjects(attachments);
   await deleteImportDraftObjects(relatedImportDrafts);
   await deleteImageFileRecord(buildTextbookCoverImageId(input.scope, input.libraryId));
-  store.pdfImportDrafts = store.pdfImportDrafts.filter(
-    (candidate) => !(candidate.scope === input.scope && candidate.libraryId === input.libraryId),
-  );
+  if (getServerStorageConfig().backend === 'file') {
+    store.pdfImportDrafts = store.pdfImportDrafts.filter(
+      (candidate) => !(candidate.scope === input.scope && candidate.libraryId === input.libraryId),
+    );
+  } else {
+    await deletePostgresImportDraftsByLibrary(input.scope, input.libraryId);
+  }
   setLibrariesForView(store, input.scope, removeLibrary(libraries, input.libraryId), input.view);
   await writeStore(store);
 }
@@ -940,7 +1431,32 @@ export async function deleteTextbookLibrary(input: {
 export async function publishOfficialTextbookLibraries(
   publishedByUserId: string,
 ): Promise<TextbookLibraryRecord[]> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const draftLibraries = await listPostgresLibraries({
+      scope: 'official',
+      view: 'draft',
+    });
+    const publishedAt = Date.now();
+    const publishedLibraries: TextbookLibraryRecord[] = [];
+    for (const library of draftLibraries) {
+      const storedCover = await persistTextbookLibraryCover({
+        ...structuredClone(library),
+        updatedAt: publishedAt,
+      });
+      publishedLibraries.push(
+        normalizeLibraryRecord({
+          ...structuredClone(library),
+          cover: storedCover,
+          publishedAt,
+          publishedByUserId,
+          updatedAt: publishedAt,
+        }),
+      );
+    }
+    await replacePostgresLibraries('official', 'published', publishedLibraries);
+    return structuredClone(publishedLibraries);
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const publishedAt = Date.now();
   const publishedLibraries: TextbookLibraryRecord[] = [];
   for (const library of store.officialDraft) {
@@ -966,7 +1482,82 @@ export async function publishOfficialTextbookLibraries(
 export async function saveTextbookAttachment(
   input: SaveTextbookAttachmentInput,
 ): Promise<TextbookAttachmentRecord> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const library = await getPostgresLibrary({
+      scope: input.scope,
+      view: input.view,
+      libraryId: input.libraryId,
+    });
+    if (!library) {
+      throw new Error('TEXTBOOK_LIBRARY_NOT_FOUND');
+    }
+    if (input.scope === 'personal' && input.ownerUserId && library.ownerUserId !== input.ownerUserId) {
+      throw new Error('TEXTBOOK_LIBRARY_FORBIDDEN');
+    }
+
+    const chapter = findChapterInLibrary(library, input.chapterId);
+    if (!chapter) {
+      throw new Error('TEXTBOOK_CHAPTER_NOT_FOUND');
+    }
+
+    const attachmentId = randomUUID();
+    const now = Date.now();
+    let storageKey = '';
+    let objectKey: string | undefined;
+
+    const config = getServerStorageConfig();
+    if (config.backend === 'file') {
+      const filePath = buildTextbookAttachmentFilePath(
+        input.scope,
+        input.libraryId,
+        input.chapterId,
+        attachmentId,
+        input.filename,
+        input.mimeType,
+      );
+      await ensureDir(path.dirname(filePath));
+      await fs.writeFile(filePath, input.buffer);
+      storageKey = path.relative(config.storageRoot, filePath).replace(/\\/g, '/');
+    } else {
+      objectKey = buildTextbookAttachmentObjectKey(
+        config.objectKeyPrefix,
+        input.scope,
+        input.libraryId,
+        input.chapterId,
+        attachmentId,
+        input.filename,
+        input.mimeType,
+      );
+      await putObjectToStorage(config, objectKey, input.buffer, input.mimeType);
+      storageKey = objectKey;
+    }
+
+    const attachment: TextbookAttachmentRecord = {
+      id: attachmentId,
+      filename: input.filename,
+      title: input.title?.trim() || input.filename,
+      mimeType: input.mimeType,
+      type: input.type,
+      size: input.size,
+      description: input.description?.trim() || undefined,
+      order: input.order ?? chapter.attachments.length,
+      uploadedAt: now,
+      updatedAt: now,
+      status: 'uploaded',
+      storageKey,
+      objectKey,
+      sourcePdf: input.sourcePdf,
+    };
+
+    chapter.attachments = [...chapter.attachments, attachment].sort((a, b) => a.order - b.order);
+    library.updatedAt = now;
+    await upsertPostgresLibrary(
+      normalizeLibraryRecord(library),
+      normalizeLibraryViewForScope(input.scope, input.view),
+    );
+    return structuredClone(attachment);
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const libraries = getLibrariesForView(store, input.scope, input.view);
   const libraryIndex = libraries.findIndex((library) => library.id === input.libraryId);
   if (libraryIndex < 0) {
@@ -1042,6 +1633,9 @@ export async function saveTextbookAttachment(
 export async function listTextbookPdfImportDrafts(
   options: ListTextbookPdfImportDraftsOptions,
 ): Promise<TextbookPdfImportDraftRecord[]> {
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    return (await listPostgresImportDrafts(options)).map((draft) => structuredClone(draft));
+  }
   const store = await readStore();
   return store.pdfImportDrafts
     .filter((draft) => matchesImportDraftQuery(draft, options))
@@ -1051,6 +1645,10 @@ export async function listTextbookPdfImportDrafts(
 export async function getTextbookPdfImportDraft(
   draftId: string,
 ): Promise<TextbookPdfImportDraftRecord | null> {
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const draft = await getPostgresImportDraft(draftId);
+    return draft ? structuredClone(draft) : null;
+  }
   const store = await readStore();
   const draft = store.pdfImportDrafts.find((candidate) => candidate.id === draftId) ?? null;
   return draft ? structuredClone(draft) : null;
@@ -1059,9 +1657,17 @@ export async function getTextbookPdfImportDraft(
 export async function createTextbookPdfImportDraft(
   input: CreateTextbookPdfImportDraftInput,
 ): Promise<TextbookPdfImportDraftRecord> {
-  const store = await readStore();
-  const libraries = getLibrariesForView(store, input.scope, input.view);
-  const library = libraries.find((candidate) => candidate.id === input.libraryId);
+  const isPostgres = getServerStorageConfig().backend === 'postgres-object-storage';
+  const store = isPostgres ? null : await readStore({ includeImportDrafts: false });
+  const library = isPostgres
+    ? await getPostgresLibrary({
+        scope: input.scope,
+        view: input.view,
+        libraryId: input.libraryId,
+      })
+    : (getLibrariesForView(store!, input.scope, input.view).find(
+        (candidate) => candidate.id === input.libraryId,
+      ) ?? null);
   if (!library) {
     throw new Error('TEXTBOOK_LIBRARY_NOT_FOUND');
   }
@@ -1073,12 +1679,21 @@ export async function createTextbookPdfImportDraft(
     throw new Error('TEXTBOOK_VOLUME_NOT_FOUND');
   }
 
-  const existingDraft = store.pdfImportDrafts.find(
-    (draft) =>
-      draft.scope === input.scope &&
-      draft.libraryId === input.libraryId &&
-      draft.volumeId === input.volumeId,
-  );
+  const existingDraft =
+    !isPostgres
+      ? store!.pdfImportDrafts.find(
+          (draft) =>
+            draft.scope === input.scope &&
+            draft.libraryId === input.libraryId &&
+            draft.volumeId === input.volumeId,
+        )
+      : (
+          await listPostgresImportDrafts({
+            scope: input.scope,
+            libraryId: input.libraryId,
+            volumeId: input.volumeId,
+          })
+        )[0];
   if (existingDraft) {
     throw new Error('TEXTBOOK_IMPORT_DRAFT_ALREADY_EXISTS');
   }
@@ -1135,14 +1750,41 @@ export async function createTextbookPdfImportDraft(
     conflictNotes: [],
     lowConfidencePages: [],
   });
-  store.pdfImportDrafts = [...store.pdfImportDrafts, draft];
-  await writeStore(store);
+  if (!isPostgres) {
+    store!.pdfImportDrafts = [...store!.pdfImportDrafts, draft];
+    await writeStore(store!);
+  } else {
+    await upsertPostgresImportDraft(draft);
+  }
   return structuredClone(draft);
 }
 
 export async function saveTextbookPdfImportDraft(
   input: SaveTextbookPdfImportDraftInput,
 ): Promise<TextbookPdfImportDraftRecord> {
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const existing = await getPostgresImportDraft(input.draft.id);
+    if (!existing) {
+      throw new Error('TEXTBOOK_IMPORT_DRAFT_NOT_FOUND');
+    }
+    const nextDraft = normalizePdfImportDraft({
+      ...input.draft,
+      id: existing.id,
+      scope: existing.scope,
+      ownerUserId: existing.ownerUserId,
+      libraryId: existing.libraryId,
+      volumeId: existing.volumeId,
+      filename: existing.filename,
+      mimeType: existing.mimeType,
+      size: existing.size,
+      uploadedAt: existing.uploadedAt,
+      storageKey: existing.storageKey,
+      objectKey: existing.objectKey,
+      updatedAt: Date.now(),
+    });
+    await upsertPostgresImportDraft(nextDraft);
+    return structuredClone(nextDraft);
+  }
   const store = await readStore();
   const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === input.draft.id);
   if (draftIndex < 0) {
@@ -1172,6 +1814,32 @@ export async function saveTextbookPdfImportDraft(
 export async function updateTextbookPdfImportProcessing(
   input: UpdateTextbookPdfImportProcessingInput,
 ): Promise<TextbookPdfImportDraftRecord | null> {
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const current = await getPostgresImportDraft(input.draftId);
+    if (!current) {
+      return null;
+    }
+    const nextDraft = normalizePdfImportDraft({
+      ...current,
+      status: input.status,
+      parserJobId: input.parserJobId ?? current.parserJobId,
+      pageCount: input.pageCount ?? current.pageCount,
+      extractedText: input.extractedText ?? current.extractedText,
+      units: input.units ?? current.units,
+      unboundPages: input.unboundPages ?? current.unboundPages,
+      proposalSource: input.proposalSource ?? current.proposalSource,
+      proposalConfidence: input.proposalConfidence ?? current.proposalConfidence,
+      aiModel: input.aiModel ?? current.aiModel,
+      tocCandidatePages: input.tocCandidatePages ?? current.tocCandidatePages,
+      pageAnchors: input.pageAnchors ?? current.pageAnchors,
+      conflictNotes: input.conflictNotes ?? current.conflictNotes,
+      lowConfidencePages: input.lowConfidencePages ?? current.lowConfidencePages,
+      parseError: input.parseError,
+      updatedAt: Date.now(),
+    });
+    await upsertPostgresImportDraft(nextDraft);
+    return structuredClone(nextDraft);
+  }
   const store = await readStore();
   const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === input.draftId);
   if (draftIndex < 0) {
@@ -1231,6 +1899,27 @@ export async function readTextbookPdfImportDraftBlob(draftId: string): Promise<{
 }
 
 export async function deleteTextbookPdfImportDraft(draftId: string): Promise<boolean> {
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const draft = await getPostgresImportDraft(draftId);
+    if (!draft) {
+      return false;
+    }
+    if (draft.status === 'confirmed') {
+      throw new Error('TEXTBOOK_IMPORT_DRAFT_IN_USE');
+    }
+
+    const config = getServerStorageConfig();
+    if (draft.storageKey) {
+      if (config.backend === 'file') {
+        const filePath = path.join(config.storageRoot, draft.storageKey);
+        await fs.rm(filePath, { force: true }).catch(() => {});
+      } else if (draft.objectKey || draft.storageKey) {
+        await deleteObjectsFromStorage(config, [draft.objectKey ?? draft.storageKey]);
+      }
+    }
+    await deletePostgresImportDraftById(draftId);
+    return true;
+  }
   const store = await readStore();
   const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === draftId);
   if (draftIndex < 0) {
@@ -1258,21 +1947,27 @@ export async function deleteTextbookPdfImportDraft(draftId: string): Promise<boo
 export async function confirmTextbookPdfImportDraft(
   draftId: string,
 ): Promise<{ draft: TextbookPdfImportDraftRecord; library: TextbookLibraryRecord }> {
-  const store = await readStore();
-  const draftIndex = store.pdfImportDrafts.findIndex((candidate) => candidate.id === draftId);
-  if (draftIndex < 0) {
+  const isPostgres = getServerStorageConfig().backend === 'postgres-object-storage';
+  const store = isPostgres ? null : await readStore({ includeImportDrafts: true });
+  const draft = isPostgres
+    ? await getPostgresImportDraft(draftId)
+    : store?.pdfImportDrafts.find((candidate) => candidate.id === draftId) ?? null;
+  if (!draft) {
     throw new Error('TEXTBOOK_IMPORT_DRAFT_NOT_FOUND');
   }
-
-  const draft = store.pdfImportDrafts[draftIndex];
   const view: TextbookLibraryView = 'draft';
-  const libraries = getLibrariesForView(store, draft.scope, view);
-  const libraryIndex = libraries.findIndex((candidate) => candidate.id === draft.libraryId);
-  if (libraryIndex < 0) {
+  const library = isPostgres
+    ? await getPostgresLibrary({
+        scope: draft.scope,
+        view,
+        libraryId: draft.libraryId,
+      })
+    : (getLibrariesForView(store!, draft.scope, view).find(
+        (candidate) => candidate.id === draft.libraryId,
+      ) ?? null);
+  if (!library) {
     throw new Error('TEXTBOOK_LIBRARY_NOT_FOUND');
   }
-
-  const library = libraries[libraryIndex];
   const volume = findVolumeInLibrary(library, draft.volumeId);
   if (!volume) {
     throw new Error('TEXTBOOK_VOLUME_NOT_FOUND');
@@ -1325,27 +2020,63 @@ export async function confirmTextbookPdfImportDraft(
 
   volume.units = importedUnits;
   library.updatedAt = Date.now();
-  setLibrariesForView(store, draft.scope, upsertLibrary(libraries, normalizeLibraryRecord(library)), view);
+  const normalizedLibrary = normalizeLibraryRecord(library);
+  if (isPostgres) {
+    await upsertPostgresLibrary(normalizedLibrary, view);
+  } else {
+    const libraries = getLibrariesForView(store!, draft.scope, view);
+    setLibrariesForView(store!, draft.scope, upsertLibrary(libraries, normalizedLibrary), view);
+  }
 
-  store.pdfImportDrafts[draftIndex] = normalizePdfImportDraft({
+  const nextDraft = normalizePdfImportDraft({
     ...draft,
     status: 'confirmed',
     updatedAt: Date.now(),
   });
+  if (!isPostgres) {
+    const draftIndex = store!.pdfImportDrafts.findIndex((candidate) => candidate.id === draftId);
+    store!.pdfImportDrafts[draftIndex] = nextDraft;
+  }
 
   await deleteAttachmentObjects(oldAttachments);
-  await writeStore(store);
+  if (isPostgres) {
+    await upsertPostgresImportDraft(nextDraft);
+  } else {
+    await writeStore(store!);
+  }
 
   return {
-    draft: structuredClone(store.pdfImportDrafts[draftIndex]),
-    library: structuredClone(normalizeLibraryRecord(library)),
+    draft: structuredClone(nextDraft),
+    library: structuredClone(normalizedLibrary),
   };
 }
 
 export async function findTextbookAttachment(
   attachmentId: string,
 ): Promise<TextbookAttachmentLocation | null> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const collections: Array<{
+      source: TextbookAttachmentLocation['source'];
+      scope: TextbookLibraryScope;
+      view?: TextbookLibraryView;
+    }> = [
+      { source: 'official-published', scope: 'official', view: 'published' },
+      { source: 'official-draft', scope: 'official', view: 'draft' },
+      { source: 'personal', scope: 'personal', view: 'draft' },
+    ];
+    for (const collection of collections) {
+      const libraries = await listPostgresLibraries({
+        scope: collection.scope,
+        view: collection.view,
+      });
+      const location = findAttachmentInLibraries(libraries, collection.source, attachmentId);
+      if (location) {
+        return location;
+      }
+    }
+    return null;
+  }
+  const store = await readStore({ includeImportDrafts: false });
   return (
     findAttachmentInLibraries(store.officialPublished, 'official-published', attachmentId) ??
     findAttachmentInLibraries(store.officialDraft, 'official-draft', attachmentId) ??
@@ -1389,7 +2120,58 @@ export async function readTextbookAttachmentBlob(attachmentId: string): Promise<
 export async function updateTextbookAttachmentProcessing(
   input: UpdateTextbookAttachmentProcessingInput,
 ): Promise<TextbookAttachmentRecord | null> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const collections: Array<{
+      scope: TextbookLibraryScope;
+      view?: TextbookLibraryView;
+    }> = [
+      { scope: 'official', view: 'draft' },
+      { scope: 'official', view: 'published' },
+      { scope: 'personal', view: 'draft' },
+    ];
+
+    for (const collection of collections) {
+      const libraries = await listPostgresLibraries({
+        scope: collection.scope,
+        view: collection.view,
+      });
+      for (const library of libraries) {
+        for (const volume of library.volumes) {
+          for (const unit of volume.units) {
+            const chapter = unit.chapters.find((candidate) =>
+              candidate.attachments.some((attachment) => attachment.id === input.attachmentId),
+            );
+            if (!chapter) {
+              continue;
+            }
+
+            const attachmentIndex = chapter.attachments.findIndex(
+              (attachment) => attachment.id === input.attachmentId,
+            );
+            const nextAttachment = {
+              ...chapter.attachments[attachmentIndex],
+              status: input.status,
+              parserJobId: input.parserJobId ?? chapter.attachments[attachmentIndex].parserJobId,
+              extractedText: input.extractedText,
+              extractedSummary: input.extractedSummary,
+              parseError: input.parseError,
+              updatedAt: Date.now(),
+            };
+            chapter.attachments[attachmentIndex] = nextAttachment;
+            library.updatedAt = Date.now();
+            await upsertPostgresLibrary(
+              normalizeLibraryRecord(library),
+              normalizeLibraryViewForScope(collection.scope, collection.view),
+            );
+            return structuredClone(nextAttachment);
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const collections: Array<{
     scope: TextbookLibraryScope;
     view?: TextbookLibraryView;
@@ -1447,7 +2229,54 @@ export async function updateTextbookAttachmentProcessing(
 }
 
 export async function deleteTextbookAttachment(attachmentId: string): Promise<boolean> {
-  const store = await readStore();
+  if (getServerStorageConfig().backend === 'postgres-object-storage') {
+    const collections: Array<{
+      scope: TextbookLibraryScope;
+      view?: TextbookLibraryView;
+    }> = [
+      { scope: 'official', view: 'draft' },
+      { scope: 'official', view: 'published' },
+      { scope: 'personal', view: 'draft' },
+    ];
+
+    for (const collection of collections) {
+      const libraries = await listPostgresLibraries({
+        scope: collection.scope,
+        view: collection.view,
+      });
+      for (const library of libraries) {
+        for (const volume of library.volumes) {
+          for (const unit of volume.units) {
+            const index = unit.chapters.findIndex((chapter) =>
+              chapter.attachments.some((attachment) => attachment.id === attachmentId),
+            );
+            if (index < 0) {
+              continue;
+            }
+
+            const chapter = unit.chapters[index];
+            const attachmentIndex = chapter.attachments.findIndex(
+              (attachment) => attachment.id === attachmentId,
+            );
+            const deletedAttachment = chapter.attachments[attachmentIndex];
+            chapter.attachments = chapter.attachments.filter(
+              (attachment) => attachment.id !== attachmentId,
+            );
+            library.updatedAt = Date.now();
+            await upsertPostgresLibrary(
+              normalizeLibraryRecord(library),
+              normalizeLibraryViewForScope(collection.scope, collection.view),
+            );
+            await deleteAttachmentObjects([deletedAttachment]);
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+  const store = await readStore({ includeImportDrafts: false });
   const collections: Array<{
     scope: TextbookLibraryScope;
     view?: TextbookLibraryView;
