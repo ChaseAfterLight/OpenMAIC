@@ -4,10 +4,6 @@ import { useState, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   PanelLeftClose,
-  PieChart,
-  Cpu,
-  MousePointer2,
-  BookOpen,
   Globe,
   AlertCircle,
   RefreshCw,
@@ -16,8 +12,9 @@ import { cn } from '@/lib/utils';
 import { ThumbnailSlide } from '@/components/slide-renderer/components/ThumbnailSlide';
 import { useStageStore, useCanvasStore } from '@/lib/store';
 import { useI18n } from '@/lib/hooks/use-i18n';
-import type { SceneType, SlideContent } from '@/lib/types/stage';
+import type { SlideContent } from '@/lib/types/stage';
 import { PENDING_SCENE_ID } from '@/lib/store/stage';
+import { getSceneTypeIcon } from '@/lib/ui/scene-type-icon';
 
 interface SceneSidebarProps {
   readonly collapsed: boolean;
@@ -89,16 +86,6 @@ export function SceneSidebar({
     },
     [sidebarWidth],
   );
-
-  const getSceneTypeIcon = (type: SceneType) => {
-    const icons = {
-      slide: BookOpen,
-      quiz: PieChart,
-      interactive: MousePointer2,
-      pbl: Cpu,
-    };
-    return icons[type] || BookOpen;
-  };
 
   const displayWidth = collapsed ? 0 : sidebarWidth;
 

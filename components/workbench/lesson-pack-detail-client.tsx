@@ -12,7 +12,6 @@ import {
   Loader2,
   PackageOpen,
   PlaySquare,
-  Presentation,
   RefreshCw,
   Save,
   ScrollText,
@@ -40,8 +39,9 @@ import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store';
 import type { SceneOutline } from '@/lib/types/generation';
-import type { Scene } from '@/lib/types/stage';
+import type { Scene, SceneType } from '@/lib/types/stage';
 import type { Slide } from '@/lib/types/slides';
+import { SCENE_TYPE_ICON } from '@/lib/ui/scene-type-icon';
 import {
   getFirstSlideByStages,
   listLessonPackVersions,
@@ -165,6 +165,8 @@ export function LessonPackDetailClient() {
   const { locale } = useI18n();
   const activeLocale = locale === 'zh-CN' ? 'zh-CN' : 'en-US';
   const copy = detailCopy[activeLocale];
+  const SlideSceneIcon = SCENE_TYPE_ICON.slide;
+  const PracticeSceneIcon = SCENE_TYPE_ICON.interactive;
 
   const stage = useStageStore((s) => s.stage);
   const scenes = useStageStore((s) => s.scenes);
@@ -649,8 +651,8 @@ export function LessonPackDetailClient() {
             <TabsList className="inline-flex h-14 items-center justify-start gap-1 rounded-[1.25rem] bg-white/60 p-1.5 shadow-sm ring-1 ring-slate-900/5 backdrop-blur-md dark:bg-slate-900/60 dark:ring-white/10">
               {[
                 { value: 'plan', icon: ScrollText, label: copy.lessonPlan },
-                { value: 'slides', icon: Presentation, label: copy.slides },
-                { value: 'practice', icon: PackageOpen, label: copy.practice },
+                { value: 'slides', icon: SlideSceneIcon, label: copy.slides },
+                { value: 'practice', icon: PracticeSceneIcon, label: copy.practice },
                 { value: 'versions', icon: History, label: copy.versions },
                 { value: 'export', icon: FileOutput, label: copy.export },
               ].map((tab) => (
@@ -870,7 +872,7 @@ export function LessonPackDetailClient() {
                       onClick={exportPPTX} 
                       disabled={exporting || slideScenes.length === 0}
                     >
-                      {exporting ? <Loader2 className="mr-3 size-6 animate-spin" /> : <Presentation className="mr-3 size-6" />}
+                      {exporting ? <Loader2 className="mr-3 size-6 animate-spin" /> : <SlideSceneIcon className="mr-3 size-6" />}
                       {copy.pptx}
                     </Button>
                     <Button 
@@ -912,10 +914,33 @@ function VisualSceneTile({
   packId: string;
 }) {
   const router = useRouter();
-  const isInteractive = scene.content.type === 'quiz' || scene.content.type === 'interactive';
-  const typeLabel = scene.content.type === 'slide' ? copy.slideType
-    : scene.content.type === 'quiz' ? copy.quizType
+  const sceneType: SceneType = scene.content.type;
+  const isPracticeType = sceneType !== 'slide';
+  const typeLabel = sceneType === 'slide' ? copy.slideType
+    : sceneType === 'quiz' ? copy.quizType
     : copy.interactiveType;
+  const SceneTypeIcon = SCENE_TYPE_ICON[sceneType];
+  const visualClass = sceneType === 'slide'
+    ? 'bg-gradient-to-br from-slate-50 to-indigo-50/50 dark:from-slate-900 dark:to-indigo-950/30'
+    : sceneType === 'quiz'
+      ? 'bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-950/40 dark:to-amber-950/30'
+      : sceneType === 'interactive'
+        ? 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-teal-950/30'
+        : 'bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/30';
+  const iconClass = sceneType === 'slide'
+    ? 'text-indigo-300 dark:text-indigo-700'
+    : sceneType === 'quiz'
+      ? 'text-orange-300 dark:text-orange-700'
+      : sceneType === 'interactive'
+        ? 'text-emerald-300 dark:text-emerald-700'
+        : 'text-blue-300 dark:text-blue-700';
+  const badgeClass = sceneType === 'slide'
+    ? ''
+    : sceneType === 'quiz'
+      ? 'bg-orange-500 hover:bg-orange-600 text-white'
+      : sceneType === 'interactive'
+        ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+        : 'bg-blue-500 hover:bg-blue-600 text-white';
 
   const handleClick = () => {
     // 跳转到编辑器，并通过 URL 参数指定场景和来源
@@ -928,15 +953,11 @@ function VisualSceneTile({
       className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md dark:border-slate-800 dark:bg-slate-950 cursor-pointer"
     >
       {/* 模拟 16:9 画布区域 */}
-      <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${isInteractive ? 'bg-gradient-to-br from-orange-50 to-rose-50 dark:from-orange-950/40 dark:to-rose-950/40' : 'bg-gradient-to-br from-slate-50 to-indigo-50/50 dark:from-slate-900 dark:to-indigo-950/30'}`}>
+      <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${visualClass}`}>
         <div className="absolute left-3 top-3 flex size-6 items-center justify-center rounded-full bg-white/80 text-xs font-bold text-slate-700 shadow-sm backdrop-blur dark:bg-slate-800/80 dark:text-slate-300">
           {scene.order}
         </div>
-        {isInteractive ? (
-          <PackageOpen className="size-10 text-orange-300 dark:text-orange-700" />
-        ) : (
-          <Presentation className="size-10 text-indigo-200 dark:text-indigo-800" />
-        )}
+        <SceneTypeIcon className={`size-10 ${iconClass}`} />
       </div>
 
       {/* 信息区域 */}
@@ -945,7 +966,7 @@ function VisualSceneTile({
           {scene.title}
         </h3>
         <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-          <Badge variant={isInteractive ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${isInteractive ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}`}>
+          <Badge variant={isPracticeType ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${badgeClass}`}>
             {typeLabel}
           </Badge>
           <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
@@ -969,23 +990,40 @@ function PendingSceneTile({
     pendingScene: string;
   };
 }) {
-  const isInteractive =
-    outline.type === 'quiz' || outline.type === 'interactive' || outline.type === 'pbl';
-  const typeLabel = outline.type === 'slide'
+  const sceneType: SceneType = outline.type;
+  const isPracticeType =
+    sceneType === 'quiz' || sceneType === 'interactive' || sceneType === 'pbl';
+  const typeLabel = sceneType === 'slide'
     ? copy.slideType
-    : outline.type === 'quiz'
+    : sceneType === 'quiz'
       ? copy.quizType
       : copy.interactiveType;
+  const SceneTypeIcon = SCENE_TYPE_ICON[sceneType];
+  const visualClass = sceneType === 'slide'
+    ? 'bg-gradient-to-br from-slate-50 to-indigo-50/60 dark:from-slate-900 dark:to-indigo-950/20'
+    : sceneType === 'quiz'
+      ? 'bg-gradient-to-br from-orange-50/80 to-amber-50/80 dark:from-orange-950/20 dark:to-amber-950/20'
+      : sceneType === 'interactive'
+        ? 'bg-gradient-to-br from-emerald-50/80 to-teal-50/80 dark:from-emerald-950/20 dark:to-teal-950/20'
+        : 'bg-gradient-to-br from-blue-50/80 to-indigo-50/80 dark:from-blue-950/20 dark:to-indigo-950/20';
+  const badgeClass = sceneType === 'slide'
+    ? ''
+    : sceneType === 'quiz'
+      ? 'bg-orange-500 hover:bg-orange-600 text-white'
+      : sceneType === 'interactive'
+        ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+        : 'bg-blue-500 hover:bg-blue-600 text-white';
 
   return (
     <div className="group flex flex-col overflow-hidden rounded-2xl border border-dashed border-indigo-200/70 bg-white shadow-sm dark:border-indigo-500/30 dark:bg-slate-950">
-      <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${isInteractive ? 'bg-gradient-to-br from-orange-50/80 to-rose-50/80 dark:from-orange-950/20 dark:to-rose-950/20' : 'bg-gradient-to-br from-slate-50 to-indigo-50/60 dark:from-slate-900 dark:to-indigo-950/20'}`}>
+      <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${visualClass}`}>
         <div className="absolute left-3 top-3 flex size-6 items-center justify-center rounded-full bg-white/80 text-xs font-bold text-slate-700 shadow-sm backdrop-blur dark:bg-slate-800/80 dark:text-slate-300">
           {outline.order}
         </div>
         <div className="flex flex-col items-center gap-3 text-center">
           <Loader2 className="size-8 animate-spin text-indigo-400 dark:text-indigo-500" />
           <Badge variant="outline" className="border-indigo-200 bg-white/80 text-indigo-700 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-indigo-300">
+            <SceneTypeIcon className="mr-1.5 inline size-3 align-[-1px]" />
             {copy.pendingScene}
           </Badge>
         </div>
@@ -999,7 +1037,7 @@ function PendingSceneTile({
           {outline.description}
         </p>
         <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-          <Badge variant={isInteractive ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${isInteractive ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}`}>
+          <Badge variant={isPracticeType ? 'default' : 'secondary'} className={`rounded-md px-2 py-0.5 text-[10px] uppercase font-mono ${badgeClass}`}>
             {typeLabel}
           </Badge>
           <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
