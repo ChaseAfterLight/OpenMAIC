@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowUpRight,
@@ -188,6 +188,58 @@ function getDisplayStatus(item: StageListItem) {
     return item.lessonPack.status;
   }
   return item.sceneCount > 0 ? 'ready' : 'draft';
+}
+
+function LessonPackThumbnail({
+  slide,
+  sceneCount,
+  sceneCountLabel,
+}: {
+  slide?: Slide;
+  sceneCount: number;
+  sceneCountLabel: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      setContainerWidth(Math.round(entry.contentRect.width));
+    });
+
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  const canRenderThumbnail = Boolean(slide) && containerWidth > 0;
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative aspect-[16/9] w-full bg-slate-100 dark:bg-slate-950"
+    >
+      <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-105">
+        {canRenderThumbnail ? (
+          <ThumbnailSlide
+            slide={slide}
+            size={containerWidth}
+            viewportSize={slide.viewportSize ?? 1000}
+            viewportRatio={slide.viewportRatio ?? 0.5625}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-slate-800/50">
+            <div className="flex items-center gap-2 rounded-xl bg-white/80 px-4 py-2 text-sm font-medium text-slate-500 shadow-sm backdrop-blur dark:bg-slate-900/80 dark:text-slate-400">
+              <Monitor className="size-4" />
+              {sceneCount} {sceneCountLabel}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function LessonPackWorkbenchClient() {
@@ -486,24 +538,12 @@ export function LessonPackWorkbenchClient() {
                   onClick={() => router.push(`/packs/${classroom.id}`)}
                   className="relative block w-full overflow-hidden text-left"
                 >
-                  <div className="relative aspect-[16/9] w-full bg-slate-100 dark:bg-slate-950">
-                    <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-105">
-                      {thumbnails[classroom.id] ? (
-                        <ThumbnailSlide
-                          slide={thumbnails[classroom.id]}
-                          size={560}
-                          viewportSize={thumbnails[classroom.id].viewportSize ?? 1000}
-                          viewportRatio={thumbnails[classroom.id].viewportRatio ?? 0.5625}
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-slate-800/50">
-                          <div className="flex items-center gap-2 rounded-xl bg-white/80 px-4 py-2 text-sm font-medium text-slate-500 shadow-sm backdrop-blur dark:bg-slate-900/80 dark:text-slate-400">
-                            <Monitor className="size-4" />
-                            {classroom.sceneCount} {copy.sceneCount}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  <div className="relative">
+                    <LessonPackThumbnail
+                      slide={thumbnails[classroom.id]}
+                      sceneCount={classroom.sceneCount}
+                      sceneCountLabel={copy.sceneCount}
+                    />
 
                     <div className="absolute right-3 top-3 z-10">
                       <Badge

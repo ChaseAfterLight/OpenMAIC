@@ -461,6 +461,42 @@ export function LessonPackDetailClient() {
   }, [fallbackGeneratedScenes, fallbackTotalScenes, liveJob, liveProgressValue]);
   const showCompactProgress = !!liveJob || (!loading && stage?.lessonPack?.status === 'in_progress');
   const compactProgressMessage = liveJob?.message || copy.syncingProgress;
+  const heroPreviewSlide = useMemo(() => {
+    if (thumbnail) return thumbnail;
+
+    const sceneWithPreview = scenes.find(
+      (scene) => scene.content.type === 'slide' || (scene.whiteboards?.length ?? 0) > 0,
+    );
+
+    if (!sceneWithPreview) return undefined;
+    return sceneWithPreview.content.type === 'slide'
+      ? sceneWithPreview.content.canvas
+      : sceneWithPreview.whiteboards?.[0];
+  }, [scenes, thumbnail]);
+  const heroThumbnailRef = useRef<HTMLDivElement>(null);
+  const [heroThumbnailWidth, setHeroThumbnailWidth] = useState(0);
+  const heroThumbnailRatio =
+    heroPreviewSlide &&
+    Number.isFinite(heroPreviewSlide.viewportRatio) &&
+    heroPreviewSlide.viewportRatio > 0
+      ? heroPreviewSlide.viewportRatio
+      : 0.5625;
+  const heroThumbnailSize = heroThumbnailWidth > 0 ? heroThumbnailWidth : 280;
+
+  useEffect(() => {
+    const element = heroThumbnailRef.current;
+    if (!element) return;
+
+    const syncWidth = () => setHeroThumbnailWidth(Math.round(element.getBoundingClientRect().width));
+    syncWidth();
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      setHeroThumbnailWidth(Math.round(entry.contentRect.width));
+    });
+
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   const setTab = (value: string) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -544,13 +580,17 @@ export function LessonPackDetailClient() {
           <div className="relative flex flex-col gap-8 p-8 md:p-10 lg:flex-row lg:items-center lg:justify-between">
             {/* 左侧：缩略图与信息 */}
             <div className="flex flex-col gap-8 sm:flex-row sm:items-center">
-              <div className="group relative aspect-[16/10] w-full max-w-[280px] shrink-0 overflow-hidden rounded-[1.5rem] bg-slate-100 shadow-inner ring-1 ring-slate-900/5 dark:bg-slate-950 dark:ring-white/10 sm:w-64">
-                {thumbnail ? (
+              <div
+                ref={heroThumbnailRef}
+                className="group relative w-full max-w-[280px] shrink-0 overflow-hidden rounded-[1.5rem] bg-slate-100 shadow-inner ring-1 ring-slate-900/5 dark:bg-slate-950 dark:ring-white/10 sm:w-64"
+                style={{ aspectRatio: `${1 / heroThumbnailRatio}` }}
+              >
+                {heroPreviewSlide ? (
                   <ThumbnailSlide
-                    slide={thumbnail}
-                    size={400}
-                    viewportSize={thumbnail.viewportSize ?? 1000}
-                    viewportRatio={thumbnail.viewportRatio ?? 0.5625}
+                    slide={heroPreviewSlide}
+                    size={heroThumbnailSize}
+                    viewportSize={heroPreviewSlide.viewportSize ?? 1000}
+                    viewportRatio={heroPreviewSlide.viewportRatio ?? 0.5625}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-950/50 dark:to-violet-950/50">
@@ -941,6 +981,22 @@ function VisualSceneTile({
       : sceneType === 'interactive'
         ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
         : 'bg-blue-500 hover:bg-blue-600 text-white';
+  const previewSlide: Slide | undefined =
+    scene.content.type === 'slide' ? scene.content.canvas : scene.whiteboards?.[0];
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [previewWidth, setPreviewWidth] = useState(0);
+
+  useEffect(() => {
+    const element = previewRef.current;
+    if (!element) return;
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      setPreviewWidth(Math.round(entry.contentRect.width));
+    });
+
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   const handleClick = () => {
     // 跳转到编辑器，并通过 URL 参数指定场景和来源
@@ -953,11 +1009,25 @@ function VisualSceneTile({
       className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md dark:border-slate-800 dark:bg-slate-950 cursor-pointer"
     >
       {/* 模拟 16:9 画布区域 */}
-      <div className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${visualClass}`}>
+      <div
+        ref={previewRef}
+        className={`relative flex aspect-[16/9] w-full items-center justify-center overflow-hidden ${visualClass}`}
+      >
+        {previewSlide && previewWidth > 0 ? (
+          <div className="absolute inset-0 transition-transform duration-500 group-hover:scale-[1.02]">
+            <ThumbnailSlide
+              slide={previewSlide}
+              size={previewWidth}
+              viewportSize={previewSlide.viewportSize ?? 1000}
+              viewportRatio={previewSlide.viewportRatio ?? 0.5625}
+            />
+          </div>
+        ) : (
+          <SceneTypeIcon className={`size-10 ${iconClass}`} />
+        )}
         <div className="absolute left-3 top-3 flex size-6 items-center justify-center rounded-full bg-white/80 text-xs font-bold text-slate-700 shadow-sm backdrop-blur dark:bg-slate-800/80 dark:text-slate-300">
           {scene.order}
         </div>
-        <SceneTypeIcon className={`size-10 ${iconClass}`} />
       </div>
 
       {/* 信息区域 */}
