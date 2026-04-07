@@ -282,7 +282,7 @@ export function TextbookPdfImportReviewPanel({
                               {/* 页码与状态单独一行 */}
                               <div className="flex items-center justify-between gap-2 pl-3.5">
                                 <div className="flex items-center gap-1.5 bg-slate-100/50 rounded p-0.5 shrink-0 border border-slate-200/60">
-                                  <span className="text-[10px] text-slate-400 font-semibold px-1 select-none">P.</span>
+                                  <span className="text-[10px] text-slate-400 font-semibold px-1 select-none" title="PDF 原始页码">PDF</span>
                                   <Input type="number" min={1} value={chapter.pageStart} onChange={(e) => onUpdateChapter(unit.id, chapter.id, { pageStart: Number(e.target.value) || 1 })} className="h-5 w-10 text-center text-xs p-0 border-none bg-white shadow-sm focus-visible:ring-1" />
                                   <span className="text-[10px] text-slate-400 select-none">-</span>
                                   <Input type="number" min={1} value={chapter.pageEnd} onChange={(e) => onUpdateChapter(unit.id, chapter.id, { pageEnd: Number(e.target.value) || 1 })} className="h-5 w-10 text-center text-xs p-0 border-none bg-white shadow-sm focus-visible:ring-1" />

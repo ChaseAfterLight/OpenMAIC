@@ -56,26 +56,7 @@ describe('textbook pdf import parser', () => {
     ]);
   });
 
-  it('removes front-matter boilerplate from ai-bound page text', () => {
-    const cleaned = __testables.sanitizePageTextForAi(`
-书名
-主编
-出版发行
-ISBN 978-7-5552-8246-4
-图书在版编目（CIP）数据
-第一单元 太阳与影子
-第一课 影子
-［1］
-`);
-
-    expect(cleaned).not.toContain('ISBN');
-    expect(cleaned).not.toContain('出版发行');
-    expect(cleaned).toContain('第一单元 太阳与影子');
-    expect(cleaned).toContain('第一课 影子');
-    expect(cleaned).toContain('［1］');
-  });
-
-  it('builds AI extraction context from front pages', () => {
+  it('builds AI extraction context from raw front pages', () => {
     const context = __testables.buildAiExtractionContext([
       '封面\nISBN 978-7-5552-8246-4\n出版发行\n目录\n第一单元 ........ 3\n第二单元 ........ 12',
       '目录\n第一单元 ........ 3\n第二单元 ........ 12',
@@ -85,7 +66,7 @@ ISBN 978-7-5552-8246-4
     expect(context.tocCandidatePages).toContain(2);
     expect(context.sampledPages[1]?.rawPage).toBe(2);
     expect(context.sampledPages[1]?.tocScore).toBeGreaterThan(0);
-    expect(context.sampledPages[0]?.textPreview).not.toContain('ISBN');
+    expect(context.sampledPages[0]?.textPreview).toContain('ISBN');
     expect(context.sampledPages[0]?.textPreview).toContain('第一单元');
   });
 
@@ -101,7 +82,7 @@ ISBN 978-7-5552-8246-4
     expect(context.tocCandidatePages).toContain(12);
   });
 
-  it('maps AI printed pages to raw pages and marks low-confidence chapters without rule merging', () => {
+  it('maps AI printed pages to raw pdf pages while preserving printed page metadata', () => {
     const aiProposal = __testables.buildAiProposal(
       [
         '封面',
@@ -129,10 +110,71 @@ ISBN 978-7-5552-8246-4
 
     expect(aiProposal).not.toBeNull();
     expect(aiProposal?.proposalSource).toBe('ai');
-    expect(aiProposal?.pageAnchors).toHaveLength(1);
+    expect(aiProposal?.pageAnchors).toEqual([
+      { printedPage: 1, rawPage: 4, confidence: 0.91, source: 'ai' },
+      { printedPage: 2, rawPage: 5, confidence: 0.78, source: 'rules' },
+      { printedPage: 3, rawPage: 6, confidence: 0.78, source: 'rules' },
+    ]);
     expect(aiProposal?.units[0]?.chapters[0]?.pageStart).toBe(4);
+    expect(aiProposal?.units[0]?.chapters[0]?.pageEnd).toBe(4);
+    expect(aiProposal?.units[0]?.chapters[0]?.printedPage).toBe(1);
     expect(aiProposal?.units[0]?.chapters[1]?.pageStart).toBe(5);
+    expect(aiProposal?.units[0]?.chapters[1]?.pageEnd).toBe(6);
+    expect(aiProposal?.units[0]?.chapters[1]?.printedPage).toBe(2);
     expect(aiProposal?.lowConfidencePages).toContain(5);
+  });
+
+  it('prefers verified pdf anchors over inconsistent ai anchors and computes page ranges globally', () => {
+    const aiProposal = __testables.buildAiProposal(
+      [
+        '封面',
+        '目录\n课文\n1 小蝌蚪找妈妈 ........ 1\n识字\n1 场景歌 ........ 2\n4 曹冲称象 ........ 5',
+        '版权页',
+        '第一页正文\n1',
+        '第二页正文\n2',
+        '第三页正文\n3',
+        '第五页正文\n5',
+        '第六页正文\n6',
+      ],
+      {
+        pageAnchors: [
+          { printedPage: 1, rawPage: 2, confidence: 1 },
+          { printedPage: 2, rawPage: 2, confidence: 1 },
+          { printedPage: 5, rawPage: 3, confidence: 1 },
+        ],
+        units: [
+          {
+            title: '课文',
+            confidence: 0.95,
+            chapters: [
+              { title: '1 小蝌蚪找妈妈', printedPage: 1, confidence: 0.95 },
+              { title: '4 曹冲称象', printedPage: 5, confidence: 0.95 },
+            ],
+          },
+          {
+            title: '识字',
+            confidence: 0.95,
+            chapters: [{ title: '1 场景歌', printedPage: 2, confidence: 0.95 }],
+          },
+        ],
+      },
+      'openai/gpt-4o-mini',
+    );
+
+    expect(aiProposal).not.toBeNull();
+    expect(aiProposal?.pageAnchors).toEqual([
+      { printedPage: 1, rawPage: 4, confidence: 0.78, source: 'rules' },
+      { printedPage: 2, rawPage: 5, confidence: 0.78, source: 'rules' },
+      { printedPage: 3, rawPage: 6, confidence: 0.78, source: 'rules' },
+      { printedPage: 5, rawPage: 7, confidence: 0.78, source: 'rules' },
+      { printedPage: 6, rawPage: 8, confidence: 0.78, source: 'rules' },
+    ]);
+    expect(aiProposal?.units[0]?.chapters[0]?.pageStart).toBe(4);
+    expect(aiProposal?.units[0]?.chapters[0]?.pageEnd).toBe(4);
+    expect(aiProposal?.units[1]?.chapters[0]?.pageStart).toBe(5);
+    expect(aiProposal?.units[1]?.chapters[0]?.pageEnd).toBe(6);
+    expect(aiProposal?.units[0]?.chapters[1]?.pageStart).toBe(7);
+    expect(aiProposal?.units[0]?.chapters[1]?.pageEnd).toBe(8);
   });
 
   it('accepts AI payloads with more than sixteen page anchors and deduplicates conflicts', () => {

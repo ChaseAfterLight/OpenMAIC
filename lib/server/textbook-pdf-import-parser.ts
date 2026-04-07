@@ -493,55 +493,6 @@ function splitLines(text: string): string[] {
     .filter(Boolean);
 }
 
-function isMetadataNoiseLine(line: string): boolean {
-  const compact = compactWhitespace(line);
-  if (!compact) {
-    return true;
-  }
-
-  if (!/[A-Za-z0-9\u4e00-\u9fa5]/.test(compact)) {
-    return true;
-  }
-
-  const metadataPatterns = [
-    /^(书名|主编|出版发行|本社网址|策划|责任编辑|封面设计|制版|印刷|出版日期|开本|印张|字数|书号|定价)$/,
-    /图书在版编目|CIP|ISBN|版权所有|版权页|出版单位|出版者|出版地址/,
-    /^(作者|作 者|编者|主编|副主编|责任编辑|编校|校对|美术编辑|装帧)$/,
-    /^(地址|电话|邮编|网址|电子邮箱)([:：].*)?$/,
-    /^https?:\/\//i,
-    /^www\./i,
-  ];
-
-  return metadataPatterns.some((pattern) => pattern.test(compact));
-}
-
-function sanitizePageTextForAi(pageText: string): string {
-  const lines = splitLines(pageText);
-  const keepTocMarkers = scoreTocPage(pageText) >= 4;
-  const cleanedLines = lines.filter((line) => {
-    if (isMetadataNoiseLine(line)) {
-      return false;
-    }
-
-    const compact = compactWhitespace(line);
-    if (!keepTocMarkers && (/^［\d+］$/.test(compact) || /^\d+$/.test(compact))) {
-      return false;
-    }
-
-    if (!keepTocMarkers && /^[·•●\-—_…\s\d]+$/.test(compact)) {
-      return false;
-    }
-
-    return true;
-  });
-
-  return cleanedLines.join('\n').trim();
-}
-
-function sanitizePageTextsForAi(pageTexts: string[]): string[] {
-  return pageTexts.map((pageText) => sanitizePageTextForAi(pageText));
-}
-
 function clampConfidence(value: number | undefined, fallback = 0): number {
   return Math.max(0, Math.min(1, Number(value) || fallback));
 }
@@ -816,6 +767,56 @@ function collectRulePageAnchors(pageTexts: string[]): TextbookPdfImportPageAncho
     });
   }
   return anchors;
+}
+
+function mergePageAnchors(
+  ...groups: TextbookPdfImportPageAnchor[][]
+): TextbookPdfImportPageAnchor[] {
+  const bestByPrintedPage = new Map<number, TextbookPdfImportPageAnchor>();
+
+  for (const anchor of groups.flat()) {
+    const existing = bestByPrintedPage.get(anchor.printedPage);
+    if (
+      !existing ||
+      anchor.confidence > existing.confidence ||
+      (anchor.confidence === existing.confidence &&
+        existing.source !== 'rules' &&
+        anchor.source === 'rules') ||
+      (anchor.confidence === existing.confidence &&
+        anchor.source === existing.source &&
+        anchor.rawPage < existing.rawPage)
+    ) {
+      bestByPrintedPage.set(anchor.printedPage, anchor);
+    }
+  }
+
+  return [...bestByPrintedPage.values()].sort((left, right) => left.printedPage - right.printedPage);
+}
+
+function validateAiPageAnchors(
+  pageTexts: string[],
+  aiAnchors: TextbookPdfImportPageAnchor[],
+): {
+  verifiedAnchors: TextbookPdfImportPageAnchor[];
+  rejectedAnchors: TextbookPdfImportPageAnchor[];
+} {
+  const verifiedAnchors: TextbookPdfImportPageAnchor[] = [];
+  const rejectedAnchors: TextbookPdfImportPageAnchor[] = [];
+
+  for (const anchor of aiAnchors) {
+    const pageText = pageTexts[anchor.rawPage - 1] ?? '';
+    const printedPageCandidate = extractPrintedPageNumber(splitLines(pageText));
+    if (printedPageCandidate === anchor.printedPage) {
+      verifiedAnchors.push(anchor);
+      continue;
+    }
+    rejectedAnchors.push(anchor);
+  }
+
+  return {
+    verifiedAnchors,
+    rejectedAnchors,
+  };
 }
 
 function computeUnboundPages(pageCount: number, units: TextbookPdfImportUnitDraft[]): number[] {
@@ -1194,14 +1195,12 @@ function buildAiExtractionContext(
   pageTexts: string[],
   maxPages = DEFAULT_AI_MAX_PAGES,
 ): AiExtractionContext {
-  const cleanedPageTexts = sanitizePageTextsForAi(pageTexts);
   const sampledPages = pageTexts.slice(0, Math.max(1, maxPages)).map((pageText, index) => {
-    const cleanedPageText = cleanedPageTexts[index] ?? pageText;
     return {
       rawPage: index + 1,
       printedPageCandidate: extractPrintedPageNumber(splitLines(pageText)),
-      tocScore: scoreTocPage(cleanedPageText),
-      textPreview: splitLines(cleanedPageText).slice(0, 24).join('\n').slice(0, 2400),
+      tocScore: scoreTocPage(pageText),
+      textPreview: splitLines(pageText).slice(0, 24).join('\n').slice(0, 2400),
     };
   });
 
@@ -1556,10 +1555,11 @@ function buildPageMapper(
       };
     }
     if (typeof dominantOffset === 'number') {
+      const inferredSource = pageAnchors.some((anchor) => anchor.source === 'rules') ? 'rules' : 'ai';
       return {
         rawPage: printedPage + dominantOffset,
         confidence: clampConfidence(Math.max(0.55, dominantOffsetConfidence)),
-        source: 'ai' as const,
+        source: inferredSource,
       };
     }
     return null;
@@ -1578,7 +1578,39 @@ function buildAiProposal(
     source: 'ai',
   }));
   const conflictNotes: TextbookPdfImportConflictNote[] = [];
-  const mapPrintedPage = buildPageMapper(aiAnchors, conflictNotes);
+  const ruleAnchors = collectRulePageAnchors(pageTexts);
+  const { verifiedAnchors: verifiedAiAnchors, rejectedAnchors } = validateAiPageAnchors(
+    pageTexts,
+    aiAnchors,
+  );
+  const mappingAnchors =
+    ruleAnchors.length > 0
+      ? mergePageAnchors(ruleAnchors, verifiedAiAnchors)
+      : verifiedAiAnchors.length > 0
+        ? verifiedAiAnchors
+        : aiAnchors;
+
+  if (rejectedAnchors.length > 0) {
+    conflictNotes.push(
+      createConflictNote(
+        'mapping-low-confidence',
+        `已忽略 ${rejectedAnchors.length} 个与 PDF 实际页码不一致的 AI 锚点`,
+        {
+          source: 'ai',
+        },
+      ),
+    );
+  }
+
+  if (ruleAnchors.length > 0 && mappingAnchors.some((anchor) => anchor.source === 'rules')) {
+    conflictNotes.push(
+      createConflictNote('mapping-low-confidence', '页码映射已优先使用 PDF 实际页码锚点校正 AI 结果', {
+        source: 'rules',
+      }),
+    );
+  }
+
+  const mapPrintedPage = buildPageMapper(mappingAnchors, conflictNotes);
   const units: TextbookPdfImportUnitDraft[] = [];
   const pageCount = Math.max(1, pageTexts.length);
 
@@ -1641,9 +1673,18 @@ function buildAiProposal(
   }
 
   const flatChapters = units.flatMap((unit) => unit.chapters);
-  for (let index = 0; index < flatChapters.length; index += 1) {
-    const current = flatChapters[index];
-    const next = flatChapters[index + 1];
+  const globalChapters = [...flatChapters].sort((left, right) => {
+    if (left.pageStart !== right.pageStart) {
+      return left.pageStart - right.pageStart;
+    }
+    if ((left.printedPage ?? Number.MAX_SAFE_INTEGER) !== (right.printedPage ?? Number.MAX_SAFE_INTEGER)) {
+      return (left.printedPage ?? Number.MAX_SAFE_INTEGER) - (right.printedPage ?? Number.MAX_SAFE_INTEGER);
+    }
+    return left.order - right.order;
+  });
+  for (let index = 0; index < globalChapters.length; index += 1) {
+    const current = globalChapters[index];
+    const next = globalChapters[index + 1];
     current.pageEnd = next ? Math.max(current.pageStart, next.pageStart - 1) : pageCount;
   }
 
@@ -1651,7 +1692,7 @@ function buildAiProposal(
     units,
     proposalSource: 'ai',
     tocCandidatePages: findTocCandidatePages(pageTexts),
-    pageAnchors: aiAnchors,
+    pageAnchors: mappingAnchors,
     conflictNotes,
     aiModel,
   });
@@ -1669,16 +1710,15 @@ async function buildImportProposal(
     }>;
   },
 ): Promise<ProposalResult> {
-  const cleanedPageTexts = sanitizePageTextsForAi(pageTexts);
   log.info(
     `开始生成教材 PDF 导入提议: pages=${pageTexts.length}, aiEnabled=${isAiImportEnabled()}, aiModel=${process.env.TEXTBOOK_PDF_IMPORT_AI_MODEL?.trim() || process.env.DEFAULT_MODEL || 'gpt-4o-mini'}`,
   );
-  const aiAttempt = await runAiTocExtraction(cleanedPageTexts, pdf);
+  const aiAttempt = await runAiTocExtraction(pageTexts, pdf);
   if (aiAttempt.note) {
     log.info(`AI 解析提示: ${aiAttempt.note.code} - ${aiAttempt.note.message}`);
   }
   const aiProposal = aiAttempt.extraction
-    ? buildAiProposal(cleanedPageTexts, aiAttempt.extraction, aiAttempt.modelString)
+    ? buildAiProposal(pageTexts, aiAttempt.extraction, aiAttempt.modelString)
     : null;
   if (aiProposal) {
     log.info(
@@ -1737,19 +1777,13 @@ export async function runTextbookPdfImportProcessing(draftId: string): Promise<v
 
     const pdf = await getDocumentProxy(new Uint8Array(blob.buffer));
     const { totalPages, text: pageTexts } = await extractText(pdf);
-    const cleanedPageTexts = sanitizePageTextsForAi(pageTexts);
     const mergedText = pageTexts.join('\n');
-    const cleanedMergedText = cleanedPageTexts.join('\n');
     log.info(
-      `教材 PDF 文本抽取完成: draftId=${draftId}, totalPages=${totalPages}, extractedPages=${pageTexts.length}, textChars=${mergedText.length}, cleanedChars=${cleanedMergedText.length}`,
+      `教材 PDF 文本抽取完成: draftId=${draftId}, totalPages=${totalPages}, extractedPages=${pageTexts.length}, textChars=${mergedText.length}`,
     );
     log.debug('教材 PDF 前几页文本预览', {
       draftId,
       firstPages: pageTexts.slice(0, Math.min(5, pageTexts.length)).map((text, index) => ({
-        page: index + 1,
-        preview: text.slice(0, 160),
-      })),
-      cleanedFirstPages: cleanedPageTexts.slice(0, Math.min(5, cleanedPageTexts.length)).map((text, index) => ({
         page: index + 1,
         preview: text.slice(0, 160),
       })),
@@ -1797,6 +1831,4 @@ export const __testables = {
   buildProposal: buildRuleProposal,
   parseAiTocExtractionResponse,
   parseAiTocExtractionResponseDetailed,
-  sanitizePageTextForAi,
-  sanitizePageTextsForAi,
 };
