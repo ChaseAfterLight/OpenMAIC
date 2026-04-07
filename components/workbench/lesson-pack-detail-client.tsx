@@ -44,10 +44,12 @@ import type { Slide } from '@/lib/types/slides';
 import { SCENE_TYPE_ICON } from '@/lib/ui/scene-type-icon';
 import {
   getFirstSlideByStages,
+  listStages,
   listLessonPackVersions,
   loadStageData,
   loadStageOutlines,
   restoreLessonPackVersion,
+  saveStageData,
   saveLessonPackVersion,
 } from '@/lib/utils/stage-storage';
 
@@ -98,6 +100,22 @@ const detailCopy = {
     slideType: '演示',
     quizType: '测验',
     interactiveType: '互动',
+    gradeSubject: '学段学科',
+    lessonTypeDuration: '课型时长',
+    textbookChapter: '教材章节',
+    contentStats: '内容统计',
+    metadataCompletionHint: '缺少信息时可直接补充，也可从已有课程中选择。',
+    gradePlaceholder: '填写或选择学段',
+    subjectPlaceholder: '填写或选择学科',
+    editionPlaceholder: '填写或选择教材版本',
+    unitPlaceholder: '填写或选择单元',
+    chapterPlaceholder: '填写或选择章节',
+    saveMetadata: '保存课堂信息',
+    savingMetadata: '保存中...',
+    edit: '编辑',
+    cancel: '取消',
+    metadataSaved: '课堂信息已更新',
+    metadataSaveFailed: '保存课堂信息失败，请重试',
   },
   'en-US': {
     back: 'Back to workbench',
@@ -145,6 +163,23 @@ const detailCopy = {
     slideType: 'Slide',
     quizType: 'Quiz',
     interactiveType: 'Interactive',
+    gradeSubject: 'Grade / Subject',
+    lessonTypeDuration: 'Lesson type / duration',
+    textbookChapter: 'Textbook chapter',
+    contentStats: 'Content stats',
+    metadataCompletionHint:
+      'Missing fields can be filled manually or selected from existing lesson packs.',
+    gradePlaceholder: 'Type or pick grade',
+    subjectPlaceholder: 'Type or pick subject',
+    editionPlaceholder: 'Type or pick edition',
+    unitPlaceholder: 'Type or pick unit',
+    chapterPlaceholder: 'Type or pick chapter',
+    saveMetadata: 'Save metadata',
+    savingMetadata: 'Saving...',
+    edit: 'Edit',
+    cancel: 'Cancel',
+    metadataSaved: 'Lesson metadata updated',
+    metadataSaveFailed: 'Failed to update lesson metadata',
   },
 } as const;
 
@@ -155,6 +190,33 @@ function formatDate(locale: 'zh-CN' | 'en-US', timestamp: number) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+type MetadataSuggestions = {
+  grades: string[];
+  subjects: string[];
+  textbookEditions: string[];
+  units: string[];
+  chapters: string[];
+};
+
+const EMPTY_METADATA_SUGGESTIONS: MetadataSuggestions = {
+  grades: [],
+  subjects: [],
+  textbookEditions: [],
+  units: [],
+  chapters: [],
+};
+
+function buildUniqueSortedValues(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])].sort((a, b) =>
+    a.localeCompare(b, 'zh-CN'),
+  );
+}
+
+function trimOrUndefined(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function LessonPackDetailClient() {
@@ -179,6 +241,19 @@ export function LessonPackDetailClient() {
   const [versionNote, setVersionNote] = useState('');
   const [liveJob, setLiveJob] = useState<ClassroomJobStreamState | null>(null);
   const [resolvingLiveJob, setResolvingLiveJob] = useState(false);
+  const [metadataSuggestions, setMetadataSuggestions] = useState<MetadataSuggestions>(
+    EMPTY_METADATA_SUGGESTIONS,
+  );
+  const [metadataDraft, setMetadataDraft] = useState({
+    grade: '',
+    subject: '',
+    textbookEdition: '',
+    unit: '',
+    chapter: '',
+  });
+  const [editingGradeSubject, setEditingGradeSubject] = useState(false);
+  const [editingTextbookChapter, setEditingTextbookChapter] = useState(false);
+  const [savingMetadata, setSavingMetadata] = useState(false);
   const { exporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const previousExporting = useRef(false);
   const liveJobStreamCloseRef = useRef<(() => void) | null>(null);
@@ -245,12 +320,22 @@ export function LessonPackDetailClient() {
         });
       }
 
-      const [packVersions, thumbs] = await Promise.all([
+      const [packVersions, thumbs, classrooms] = await Promise.all([
         listLessonPackVersions(packId),
         getFirstSlideByStages([packId]),
+        listStages(),
       ]);
       setVersions(packVersions);
       setThumbnail(thumbs[packId]);
+      setMetadataSuggestions({
+        grades: buildUniqueSortedValues(classrooms.map((item) => item.lessonPack.grade)),
+        subjects: buildUniqueSortedValues(classrooms.map((item) => item.lessonPack.subject)),
+        textbookEditions: buildUniqueSortedValues(
+          classrooms.map((item) => item.lessonPack.textbookEdition),
+        ),
+        units: buildUniqueSortedValues(classrooms.map((item) => item.lessonPack.unit)),
+        chapters: buildUniqueSortedValues(classrooms.map((item) => item.lessonPack.chapter)),
+      });
     } catch (loadError) {
       if (!silent) {
         setError(loadError instanceof Error ? loadError.message : copy.failed);
@@ -261,6 +346,17 @@ export function LessonPackDetailClient() {
       }
     }
   }, [copy.failed, packId]);
+
+  useEffect(() => {
+    if (!stage) return;
+    setMetadataDraft({
+      grade: stage.lessonPack?.grade ?? '',
+      subject: stage.lessonPack?.subject ?? '',
+      textbookEdition: stage.lessonPack?.textbookEdition ?? '',
+      unit: stage.lessonPack?.unit ?? '',
+      chapter: stage.lessonPack?.chapter ?? '',
+    });
+  }, [stage]);
 
   useEffect(() => {
     void loadPack();
@@ -435,6 +531,18 @@ export function LessonPackDetailClient() {
     [packId],
   );
   const hasPendingOutlineReview = outlines.length > 0 && scenes.length === 0;
+  const hasGradeSubject = Boolean(stage?.lessonPack?.grade && stage?.lessonPack?.subject);
+  const hasTextbookChapter = Boolean(stage?.lessonPack?.chapter);
+  const editingMetadata = editingGradeSubject || editingTextbookChapter;
+  const needsMetadataCompletion = !hasGradeSubject || !hasTextbookChapter;
+  const showGradeSubjectEditor = !hasGradeSubject || editingGradeSubject;
+  const showTextbookChapterEditor = !hasTextbookChapter || editingTextbookChapter;
+  const shouldShowMetadataSave = needsMetadataCompletion || editingMetadata;
+  const gradeOptionsId = `metadata-grade-options-${packId}`;
+  const subjectOptionsId = `metadata-subject-options-${packId}`;
+  const editionOptionsId = `metadata-edition-options-${packId}`;
+  const unitOptionsId = `metadata-unit-options-${packId}`;
+  const chapterOptionsId = `metadata-chapter-options-${packId}`;
   const liveProgressValue = useMemo(() => {
     if (!liveJob) return 0;
     return Math.max(2, Math.min(100, liveJob.progress || 0));
@@ -519,6 +627,63 @@ export function LessonPackDetailClient() {
     await restoreLessonPackVersion(packId, versionId);
     toast.success(copy.restored);
     await loadPack();
+  };
+
+  const handleStartMetadataEdit = () => {
+    setEditingGradeSubject(true);
+    setEditingTextbookChapter(true);
+  };
+
+  const handleCancelMetadataEdit = () => {
+    if (!stage) return;
+    setMetadataDraft({
+      grade: stage.lessonPack?.grade ?? '',
+      subject: stage.lessonPack?.subject ?? '',
+      textbookEdition: stage.lessonPack?.textbookEdition ?? '',
+      unit: stage.lessonPack?.unit ?? '',
+      chapter: stage.lessonPack?.chapter ?? '',
+    });
+    setEditingGradeSubject(false);
+    setEditingTextbookChapter(false);
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!stage || !packId || savingMetadata) return;
+    setSavingMetadata(true);
+    try {
+      const nextLessonPack = {
+        ...(stage.lessonPack ?? { status: 'draft' as const }),
+        grade: trimOrUndefined(metadataDraft.grade),
+        subject: trimOrUndefined(metadataDraft.subject),
+        textbookEdition: trimOrUndefined(metadataDraft.textbookEdition),
+        unit: trimOrUndefined(metadataDraft.unit),
+        chapter: trimOrUndefined(metadataDraft.chapter),
+      };
+
+      const nextStage = {
+        ...stage,
+        lessonPack: nextLessonPack,
+        updatedAt: Date.now(),
+      };
+
+      const store = useStageStore.getState();
+      useStageStore.setState({ stage: nextStage });
+      await saveStageData(packId, {
+        stage: nextStage,
+        scenes: store.scenes,
+        currentSceneId: store.currentSceneId,
+        chats: store.chats,
+      });
+
+      setEditingGradeSubject(false);
+      setEditingTextbookChapter(false);
+      toast.success(copy.metadataSaved);
+    } catch (saveError) {
+      console.error(saveError);
+      toast.error(copy.metadataSaveFailed);
+    } finally {
+      setSavingMetadata(false);
+    }
   };
 
   // --- 全屏 Loading 态优化 ---
@@ -745,31 +910,157 @@ export function LessonPackDetailClient() {
 
                 <div className="space-y-6">
                   <Card className="rounded-3xl border-white/60 bg-white/70 shadow-sm backdrop-blur-md dark:border-white/5 dark:bg-slate-900/60">
-                    <CardHeader>
-                      <CardTitle className="text-lg">{copy.metadata}</CardTitle>
-                      <CardDescription>{copy.planSummary}</CardDescription>
+                    <CardHeader className="flex flex-row items-start justify-between gap-4">
+                      <div className="space-y-1.5">
+                        <CardTitle className="text-lg">{copy.metadata}</CardTitle>
+                        <CardDescription>{copy.planSummary}</CardDescription>
+                      </div>
+                      {(hasGradeSubject || hasTextbookChapter || editingMetadata) ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9 rounded-xl border-slate-200 bg-white/80 px-3 text-sm shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/80 dark:hover:bg-slate-800"
+                          disabled={savingMetadata}
+                          onClick={() => {
+                            if (editingMetadata) {
+                              handleCancelMetadataEdit();
+                              return;
+                            }
+                            handleStartMetadataEdit();
+                          }}
+                        >
+                          {editingMetadata ? copy.cancel : copy.edit}
+                        </Button>
+                      ) : null}
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
-                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">学段学科</span>
-                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{stage.lessonPack?.grade || '—'} / {stage.lessonPack?.subject || '—'}</span>
+                      {!hasGradeSubject || !hasTextbookChapter ? (
+                        <p className="rounded-xl bg-indigo-50/70 px-3 py-2 text-xs text-indigo-700 ring-1 ring-indigo-200/60 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/20">
+                          {copy.metadataCompletionHint}
+                        </p>
+                      ) : null}
+                      <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-500 dark:text-slate-400">{copy.gradeSubject}</span>
+                          {hasGradeSubject && !editingGradeSubject ? (
+                            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                              {stage.lessonPack?.grade || '—'} / {stage.lessonPack?.subject || '—'}
+                            </span>
+                          ) : null}
+                        </div>
+                        {showGradeSubjectEditor ? (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <Input
+                              list={gradeOptionsId}
+                              value={metadataDraft.grade}
+                              onChange={(event) =>
+                                setMetadataDraft((prev) => ({ ...prev, grade: event.target.value }))
+                              }
+                              placeholder={copy.gradePlaceholder}
+                              className="h-9 rounded-lg bg-white dark:bg-slate-900"
+                            />
+                            <Input
+                              list={subjectOptionsId}
+                              value={metadataDraft.subject}
+                              onChange={(event) =>
+                                setMetadataDraft((prev) => ({ ...prev, subject: event.target.value }))
+                              }
+                              placeholder={copy.subjectPlaceholder}
+                              className="h-9 rounded-lg bg-white dark:bg-slate-900"
+                            />
+                          </div>
+                        ) : null}
                       </div>
                       <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
-                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">课型时长</span>
+                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">{copy.lessonTypeDuration}</span>
                         <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{stage.lessonPack?.lessonType || '—'} / {stage.lessonPack?.durationMinutes ?? '—'} min</span>
                       </div>
-                      <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
-                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">教材章节</span>
-                        <span className="text-right text-sm font-semibold text-slate-900 dark:text-slate-100">
-                          {[stage.lessonPack?.textbookEdition, stage.lessonPack?.unit, stage.lessonPack?.chapter]
-                            .filter(Boolean)
-                            .join(' / ') || '—'}
-                        </span>
+                      <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-500 dark:text-slate-400">{copy.textbookChapter}</span>
+                          {hasTextbookChapter && !editingTextbookChapter ? (
+                            <span className="text-right text-sm font-semibold text-slate-900 dark:text-slate-100">
+                              {[stage.lessonPack?.textbookEdition, stage.lessonPack?.unit, stage.lessonPack?.chapter]
+                                .filter(Boolean)
+                                .join(' / ') || '—'}
+                            </span>
+                          ) : null}
+                        </div>
+                        {showTextbookChapterEditor ? (
+                          <div className="space-y-2">
+                            <Input
+                              list={editionOptionsId}
+                              value={metadataDraft.textbookEdition}
+                              onChange={(event) =>
+                                setMetadataDraft((prev) => ({
+                                  ...prev,
+                                  textbookEdition: event.target.value,
+                                }))
+                              }
+                              placeholder={copy.editionPlaceholder}
+                              className="h-9 rounded-lg bg-white dark:bg-slate-900"
+                            />
+                            <Input
+                              list={unitOptionsId}
+                              value={metadataDraft.unit}
+                              onChange={(event) =>
+                                setMetadataDraft((prev) => ({ ...prev, unit: event.target.value }))
+                              }
+                              placeholder={copy.unitPlaceholder}
+                              className="h-9 rounded-lg bg-white dark:bg-slate-900"
+                            />
+                            <Input
+                              list={chapterOptionsId}
+                              value={metadataDraft.chapter}
+                              onChange={(event) =>
+                                setMetadataDraft((prev) => ({ ...prev, chapter: event.target.value }))
+                              }
+                              placeholder={copy.chapterPlaceholder}
+                              className="h-9 rounded-lg bg-white dark:bg-slate-900"
+                            />
+                          </div>
+                        ) : null}
                       </div>
+                      {shouldShowMetadataSave ? (
+                        <Button
+                          className="h-10 w-full rounded-xl bg-indigo-600 text-white hover:bg-indigo-700"
+                          onClick={() => void handleSaveMetadata()}
+                          disabled={savingMetadata}
+                        >
+                          {savingMetadata ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                          {savingMetadata ? copy.savingMetadata : copy.saveMetadata}
+                        </Button>
+                      ) : null}
                       <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-950 dark:ring-slate-800">
-                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">内容统计</span>
+                        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">{copy.contentStats}</span>
                         <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{classroomItems.length} {copy.allPages} / {practiceItems.length} {copy.practicePages}</span>
                       </div>
+                      <datalist id={gradeOptionsId}>
+                        {metadataSuggestions.grades.map((option) => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
+                      <datalist id={subjectOptionsId}>
+                        {metadataSuggestions.subjects.map((option) => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
+                      <datalist id={editionOptionsId}>
+                        {metadataSuggestions.textbookEditions.map((option) => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
+                      <datalist id={unitOptionsId}>
+                        {metadataSuggestions.units.map((option) => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
+                      <datalist id={chapterOptionsId}>
+                        {metadataSuggestions.chapters.map((option) => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
                     </CardContent>
                   </Card>
                 </div>
