@@ -33,7 +33,12 @@ import {
 } from '@/lib/server/classroom-media-generation';
 import { getImageFileBlob } from '@/lib/server/storage-repository';
 import type { SpeechAction } from '@/lib/types/action';
-import type { ImageMapping, PdfImage, SceneOutline, UserRequirements } from '@/lib/types/generation';
+import type {
+  ImageMapping,
+  PdfImage,
+  SceneOutline,
+  UserRequirements,
+} from '@/lib/types/generation';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import type { Scene, Stage, LessonPackStatus } from '@/lib/types/stage';
@@ -735,7 +740,9 @@ export async function generateClassroom(
   let generatedScenes = store.getState().scenes.length;
   const completedSceneOrders = new Set(store.getState().scenes.map((scene) => scene.order));
   const allTitles = outlines.map((outline) => outline.title);
-  const initialPreviousScene = [...store.getState().scenes].sort((left, right) => left.order - right.order).at(-1);
+  const initialPreviousScene = [...store.getState().scenes]
+    .sort((left, right) => left.order - right.order)
+    .at(-1);
   let previousSpeeches =
     initialPreviousScene?.actions
       ?.filter((action): action is SpeechAction => action.type === 'speech')
