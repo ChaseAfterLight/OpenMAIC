@@ -238,6 +238,7 @@ function buildPreviewStage(session: GenerationSessionState): Stage {
             presets: k12Presets,
             locale,
             requirement: session.requirements.requirement,
+            supplementaryPdfName: session.pdfFileName,
           })
         : requirement || 'Untitled Classroom',
     description: '',
@@ -586,6 +587,7 @@ function GenerationPreviewContent() {
       moduleId: sessionSnapshot.requirements.moduleId,
       k12: sessionSnapshot.requirements.k12,
       requirement: sessionSnapshot.requirements.requirement,
+      pdfFileName: sessionSnapshot.pdfFileName,
       pdfContent: hasPdfContent
         ? {
             text: sessionSnapshot.pdfText || '',

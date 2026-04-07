@@ -55,6 +55,12 @@ function firstSentence(text: string): string {
     ?? '';
 }
 
+function extractFileStem(fileName: string | undefined): string {
+  if (!fileName) return '';
+  const baseName = fileName.split(/[\\/]/).pop() ?? fileName;
+  return collapseWhitespace(baseName.replace(/\.[^./\\]+$/, ''));
+}
+
 export function getK12OptionLabel(
   options: ModuleOption[] | undefined,
   id: string | undefined,
@@ -403,12 +409,14 @@ export function buildK12LessonPackTitle(args: {
   presets: K12ModulePresets | undefined;
   locale: SupportedLocale;
   requirement?: string;
+  supplementaryPdfName?: string;
 }): string {
-  const { input, presets, locale, requirement } = args;
+  const { input, presets, locale, requirement, supplementaryPdfName } = args;
   const fallbackRequirement = firstSentence(requirement || '');
+  const supplementaryPdfTitle = extractFileStem(supplementaryPdfName);
 
   if (!input) {
-    return truncateText(fallbackRequirement || '未命名备课包', 40);
+    return truncateText(supplementaryPdfTitle || fallbackRequirement || '未命名备课包', 40);
   }
 
   const selection = usesPresetTextbookSnapshot(input)
@@ -428,6 +436,11 @@ export function buildK12LessonPackTitle(args: {
   if (mainTopic) {
     const prefix = lessonTypeLabel ? `${lessonTypeLabel} · ` : '';
     return truncateText(`${prefix}${mainTopic}`, 48);
+  }
+
+  if (supplementaryPdfTitle) {
+    const prefix = lessonTypeLabel ? `${lessonTypeLabel} · ` : '';
+    return truncateText(`${prefix}${supplementaryPdfTitle}`, 48);
   }
 
   const gradeLabel = getK12OptionLabel(presets?.grades, input.gradeId, locale);

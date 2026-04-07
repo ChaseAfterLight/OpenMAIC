@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       ...(rawBody.moduleId ? { moduleId: rawBody.moduleId } : {}),
       ...(rawBody.k12 ? { k12: rawBody.k12 } : {}),
       requirement: rawBody.requirement || '',
+      ...(rawBody.pdfFileName ? { pdfFileName: rawBody.pdfFileName } : {}),
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
       ...(rawBody.pdfImages ? { pdfImages: rawBody.pdfImages as PdfImage[] } : {}),
       ...(rawBody.sceneOutlines ? { sceneOutlines: rawBody.sceneOutlines } : {}),

@@ -55,6 +55,7 @@ export interface GenerateClassroomInput {
   moduleId?: 'core' | 'k12';
   k12?: K12StructuredInput;
   requirement: string;
+  pdfFileName?: string;
   pdfContent?: { text: string; images: string[] };
   pdfImages?: PdfImage[];
   sceneOutlines?: SceneOutline[];
@@ -672,6 +673,7 @@ export async function generateClassroom(
               presets: k12Presets,
               locale: lang,
               requirement,
+              supplementaryPdfName: input.pdfFileName,
             })
           : outlines[0]?.title || requirement.slice(0, 50),
       description: undefined,
