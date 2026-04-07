@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, Sparkles, AlertCircle, AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ import type { Stage } from '@/lib/types/stage';
 import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
 import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
+import { getStorageAdapter } from '@/lib/storage';
 import {
   buildK12LessonPackTitle,
   buildK12TextbookResourceReferenceText,
@@ -46,6 +47,8 @@ import {
 import { setLiveClassroomJobId, clearLiveClassroomJobId } from '@/lib/client/classroom-live-job';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
 import { StepVisualizer } from './components/visualizers';
+import type { OutlineReviewDraft } from '@/lib/types/generation';
+import { loadStageData, loadStageOutlinesRecord, saveStageOutlinesRecord } from '@/lib/utils/stage-storage';
 
 const log = createLogger('GenerationPreview');
 
@@ -246,6 +249,58 @@ function buildPreviewStage(session: GenerationSessionState): Stage {
   };
 }
 
+function buildOutlineReviewDraft(session: GenerationSessionState): OutlineReviewDraft {
+  return {
+    requirements: session.requirements,
+    pdfText: session.pdfText,
+    pdfImages: session.pdfImages,
+    imageStorageIds: session.imageStorageIds,
+    imageMapping: session.imageMapping,
+    pdfStorageKey: session.pdfStorageKey,
+    pdfFileName: session.pdfFileName,
+    documentType: session.documentType,
+    pdfProviderId: session.pdfProviderId,
+    pdfProviderConfig: session.pdfProviderConfig,
+    selectedTextbookResources: session.selectedTextbookResources,
+    selectedTextbookResourcesParsed: session.selectedTextbookResourcesParsed,
+    researchContext: session.researchContext,
+    researchSources: session.researchSources,
+  };
+}
+
+async function persistOutlineReviewDraft(args: {
+  stage: Stage;
+  session: GenerationSessionState;
+  outlines: SceneOutline[];
+}): Promise<Stage> {
+  const storage = getStorageAdapter();
+  const now = Date.now();
+  const nextStage: Stage = {
+    ...args.stage,
+    createdAt: args.stage.createdAt || now,
+    updatedAt: now,
+  };
+
+  await storage.saveStageRecord({
+    id: nextStage.id,
+    ownerUserId: nextStage.ownerUserId,
+    name: nextStage.name,
+    description: nextStage.description,
+    createdAt: nextStage.createdAt,
+    updatedAt: nextStage.updatedAt,
+    lessonPack: nextStage.lessonPack,
+    language: nextStage.language,
+    style: nextStage.style,
+    agentIds: nextStage.agentIds,
+  });
+  await saveStageOutlinesRecord(nextStage.id, {
+    outlines: args.outlines,
+    reviewDraft: buildOutlineReviewDraft(args.session),
+  });
+
+  return nextStage;
+}
+
 function resolvePreviewAgents(previewStage?: Stage): PreviewAgent[] {
   const registry = useAgentRegistry.getState();
   const candidateIds =
@@ -266,6 +321,7 @@ function resolvePreviewAgents(previewStage?: Stage): PreviewAgent[] {
 
 function GenerationPreviewContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useI18n();
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -327,6 +383,7 @@ function GenerationPreviewContent() {
     }>
   >([]);
   const agentRevealResolveRef = useRef<(() => void) | null>(null);
+  const resumeStageId = searchParams.get('stageId');
 
   // Compute active steps based on session state
   const activeSteps = getActiveSteps(session);
@@ -338,26 +395,92 @@ function GenerationPreviewContent() {
     sessionStorage.setItem('generationSession', JSON.stringify(nextSession));
   };
 
-  // Load session from sessionStorage
+  // Load session from sessionStorage or resume a persisted outline review draft
   useEffect(() => {
     if (!authReady) return;
 
-    cleanupOldImages(24).catch((e) => log.error(e));
+    let cancelled = false;
 
-    const saved = sessionStorage.getItem('generationSession');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as GenerationSessionState;
-        if (!parsed.previewPhase) {
-          parsed.previewPhase = parsed.sceneOutlines?.length ? getOutlinePreviewPhase() : 'preparing';
+    const loadSession = async () => {
+      cleanupOldImages(24).catch((e) => log.error(e));
+
+      if (resumeStageId) {
+        try {
+          const [stageData, outlinesRecord] = await Promise.all([
+            loadStageData(resumeStageId),
+            loadStageOutlinesRecord(resumeStageId),
+          ]);
+
+          if (
+            stageData?.stage &&
+            outlinesRecord?.outlines?.length &&
+            outlinesRecord.reviewDraft
+          ) {
+            const restoredSession: GenerationSessionState = {
+              sessionId: `resume_${resumeStageId}`,
+              requirements: outlinesRecord.reviewDraft.requirements,
+              pdfText: outlinesRecord.reviewDraft.pdfText,
+              pdfImages: outlinesRecord.reviewDraft.pdfImages,
+              imageStorageIds: outlinesRecord.reviewDraft.imageStorageIds,
+              imageMapping: outlinesRecord.reviewDraft.imageMapping,
+              sceneOutlines: outlinesRecord.outlines,
+              currentStep: 'generating',
+              previewPhase: 'review',
+              previewStage: stageData.stage,
+              pdfStorageKey: outlinesRecord.reviewDraft.pdfStorageKey,
+              pdfFileName: outlinesRecord.reviewDraft.pdfFileName,
+              documentType: outlinesRecord.reviewDraft.documentType,
+              pdfProviderId: outlinesRecord.reviewDraft.pdfProviderId,
+              pdfProviderConfig: outlinesRecord.reviewDraft.pdfProviderConfig,
+              selectedTextbookResources: outlinesRecord.reviewDraft.selectedTextbookResources,
+              selectedTextbookResourcesParsed:
+                outlinesRecord.reviewDraft.selectedTextbookResourcesParsed,
+              researchContext: outlinesRecord.reviewDraft.researchContext,
+              researchSources: outlinesRecord.reviewDraft.researchSources,
+            };
+            if (!cancelled) {
+              setSession(restoredSession);
+              sessionStorage.setItem('generationSession', JSON.stringify(restoredSession));
+            }
+          }
+        } catch (error) {
+          log.error('Failed to restore outline review draft:', error);
+        } finally {
+          if (!cancelled) {
+            setSessionLoaded(true);
+          }
         }
-        setSession(parsed);
-      } catch (e) {
-        log.error('Failed to parse generation session:', e);
+        return;
       }
-    }
-    setSessionLoaded(true);
-  }, [authReady]);
+
+      const saved = sessionStorage.getItem('generationSession');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as GenerationSessionState;
+          if (!parsed.previewPhase) {
+            parsed.previewPhase = parsed.sceneOutlines?.length
+              ? getOutlinePreviewPhase()
+              : 'preparing';
+          }
+          if (!cancelled) {
+            setSession(parsed);
+          }
+        } catch (e) {
+          log.error('Failed to parse generation session:', e);
+        }
+      }
+
+      if (!cancelled) {
+        setSessionLoaded(true);
+      }
+    };
+
+    void loadSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, resumeStageId]);
 
   // Abort all in-flight requests on unmount
   useEffect(() => {
@@ -724,10 +847,20 @@ function GenerationPreviewContent() {
         return;
       }
 
-      persistSession({
+      const reviewSession: GenerationSessionState = {
         ...contentSession,
         previewPhase: 'review',
-      });
+      };
+      persistSession(reviewSession);
+      if (reviewSession.previewStage) {
+        void persistOutlineReviewDraft({
+          stage: reviewSession.previewStage,
+          session: reviewSession,
+          outlines: confirmedOutlines,
+        }).catch((persistError) => {
+          log.error('Failed to re-persist outline review draft:', persistError);
+        });
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsConfirmingOutlines(false);
@@ -1247,13 +1380,27 @@ function GenerationPreviewContent() {
             .catch(reject);
         });
 
-        const updatedSession = {
+        const draftStage = currentSession.previewStage ?? buildPreviewStage(currentSession);
+        const updatedSession: GenerationSessionState = {
           ...currentSession,
           sceneOutlines: outlines,
           previewPhase: getOutlinePreviewPhase(),
+          previewStage: draftStage,
         };
         persistSession(updatedSession);
         currentSession = updatedSession;
+        if (updatedSession.previewPhase === 'review') {
+          const persistedStage = await persistOutlineReviewDraft({
+            stage: draftStage,
+            session: updatedSession,
+            outlines,
+          });
+          currentSession = {
+            ...updatedSession,
+            previewStage: persistedStage,
+          };
+          persistSession(currentSession);
+        }
         setStreamingOutlines(outlines);
 
         // Outline generation succeeded — clear homepage draft cache
@@ -1410,10 +1557,22 @@ function GenerationPreviewContent() {
                     onChange={(outlines) => {
                       setError(null);
                       setStreamingOutlines(outlines);
-                      persistSession({
+                      const reviewStage = session.previewStage
+                        ? { ...session.previewStage, updatedAt: Date.now() }
+                        : buildPreviewStage(session);
+                      const nextSession: GenerationSessionState = {
                         ...session,
                         sceneOutlines: outlines,
                         previewPhase: 'review',
+                        previewStage: reviewStage,
+                      };
+                      persistSession(nextSession);
+                      void persistOutlineReviewDraft({
+                        stage: reviewStage,
+                        session: nextSession,
+                        outlines,
+                      }).catch((persistError) => {
+                        log.error('Failed to persist reviewed outlines:', persistError);
                       });
                     }}
                     onConfirm={(outlines) => void continueGeneration(outlines)}

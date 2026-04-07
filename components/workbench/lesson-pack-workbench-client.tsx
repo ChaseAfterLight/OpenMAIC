@@ -269,6 +269,13 @@ export function LessonPackWorkbenchClient() {
       );
   }, [chapterPath, classrooms, search, sortBy, statusFilter]);
 
+  const getContinueHref = useCallback((classroom: StageListItem) => {
+    const hasPendingOutlineReview = classroom.sceneCount === 0 && classroom.outlineCount > 0;
+    return hasPendingOutlineReview
+      ? `/generation-preview?stageId=${encodeURIComponent(classroom.id)}`
+      : `/classroom/${classroom.id}`;
+  }, []);
+
   const handleRename = async () => {
     if (!renameTarget) return;
     await renameStage(renameTarget.id, renameValue);
@@ -543,7 +550,7 @@ export function LessonPackWorkbenchClient() {
                             {copy.openPack}
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onClick={() => router.push(`/classroom/${classroom.id}`)}
+                            onClick={() => router.push(getContinueHref(classroom))}
                           >
                             <Pencil className="mr-2 size-4" />
                             {copy.continueEdit}

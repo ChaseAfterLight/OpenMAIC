@@ -26,7 +26,6 @@ import {
   Rocket,
   Clock,
   Check,
-  Settings2,
   FileImage
 } from 'lucide-react';
 import { nanoid } from 'nanoid';
@@ -53,6 +52,24 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
 
 type TabValue = 'content' | 'advanced' | 'materials' | 'aigen';
 
+function supportsAdvancedTab(_type: SceneOutline['type']) {
+  return false;
+}
+
+function supportsMaterialsTab(type: SceneOutline['type']) {
+  return type !== 'quiz' && type !== 'interactive';
+}
+
+function resolveNextTab(tab: TabValue, type: SceneOutline['type']): TabValue {
+  if (tab === 'advanced' && !supportsAdvancedTab(type)) {
+    return 'content';
+  }
+  if (tab === 'materials' && !supportsMaterialsTab(type)) {
+    return supportsAdvancedTab(type) ? 'advanced' : 'content';
+  }
+  return tab;
+}
+
 export function OutlinesEditor({
   outlines,
   onChange,
@@ -76,7 +93,9 @@ export function OutlinesEditor({
   const sanitizeOutlines = (nextOutlines: SceneOutline[]) =>
     nextOutlines.map((outline) => ({
       ...outline,
-      suggestedImageIds: (outline.suggestedImageIds || []).filter((id) => availableImageIds.has(id)),
+      suggestedImageIds: supportsMaterialsTab(outline.type)
+        ? (outline.suggestedImageIds || []).filter((id) => availableImageIds.has(id))
+        : [],
     }));
 
   // === 列表操作 ===
@@ -213,7 +232,7 @@ export function OutlinesEditor({
                     key={outline.id}
                     onClick={() => {
                       setActiveIndex(index);
-                      if (outline.type === 'slide' && activeTab === 'advanced') setActiveTab('content');
+                      setActiveTab((currentTab) => resolveNextTab(currentTab, outline.type));
                     }}
                     className={`group relative flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer text-sm transition-all border ${
                       activeIndex === index ? 'bg-primary/10 border-primary/20 font-medium text-primary' : 'bg-transparent border-transparent hover:bg-muted/50'
@@ -258,12 +277,13 @@ export function OutlinesEditor({
                 </div>
                 <div className="flex flex-col items-end gap-2 pt-4">
                   <Select value={activeOutline.type} onValueChange={(v) => {
-                    updateOutline({ type: v as SceneOutline['type'] });
-                    if (v === 'slide' && activeTab === 'advanced') setActiveTab('content');
+                    const nextType = v as SceneOutline['type'];
+                    updateOutline({ type: nextType });
+                    setActiveTab((currentTab) => resolveNextTab(currentTab, nextType));
                   }} disabled={isLoading}>
                     <SelectTrigger className="w-32 h-9 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="slide">标准讲解</SelectItem>
+                      <SelectItem value="slide">演示讲解</SelectItem>
                       <SelectItem value="quiz">随堂测验</SelectItem>
                       <SelectItem value="interactive">互动实验</SelectItem>
                       <SelectItem value="pbl">PBL 探究</SelectItem>
@@ -284,26 +304,19 @@ export function OutlinesEditor({
                   <BookOpen className="size-4"/> 基础内容
                 </button>
                 
-                <button
-                  onClick={() => setActiveTab('advanced')}
-                  disabled={activeOutline.type === 'slide'}
-                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed ${activeTab === 'advanced' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                >
-                  <Settings2 className="size-4"/> 
-                  {activeOutline.type === 'quiz' ? '测验规则' : activeOutline.type === 'interactive' ? '互动设定' : activeOutline.type === 'pbl' ? 'PBL规划' : '高级配置'}
-                </button>
-                
-                <button
-                  onClick={() => setActiveTab('materials')}
-                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 relative ${activeTab === 'materials' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                >
-                  <FileImage className="size-4"/> 图片素材
-                  {activeSuggestedImageIds.length > 0 && (
-                    <span className="ml-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
-                      {activeSuggestedImageIds.length}
-                    </span>
-                  )}
-                </button>
+                {supportsMaterialsTab(activeOutline.type) && (
+                  <button
+                    onClick={() => setActiveTab('materials')}
+                    className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 relative ${activeTab === 'materials' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <FileImage className="size-4"/> 图片素材
+                    {activeSuggestedImageIds.length > 0 && (
+                      <span className="ml-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
+                        {activeSuggestedImageIds.length}
+                      </span>
+                    )}
+                  </button>
+                )}
 
                 <button
                   onClick={() => setActiveTab('aigen')}
@@ -352,7 +365,7 @@ export function OutlinesEditor({
                   )}
 
                   {/* 2. 动态高级配置 */}
-                  {activeTab === 'advanced' && activeOutline.type !== 'slide' && (
+                  {activeTab === 'advanced' && supportsAdvancedTab(activeOutline.type) && (
                     <div className="h-full overflow-y-auto rounded-xl border bg-background p-6 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 scrollbar-hide">
                     
                     {/* === 测验 Quiz 完整配置 === */}
@@ -466,7 +479,7 @@ export function OutlinesEditor({
                   )}
 
                   {/* 3. 图片素材画廊 (绝不裁切，保证阅读体验) */}
-                  {activeTab === 'materials' && (
+                  {activeTab === 'materials' && supportsMaterialsTab(activeOutline.type) && (
                     <div className="flex h-full min-h-0 flex-col space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="flex items-center justify-between pb-2 border-b">
                       <div>

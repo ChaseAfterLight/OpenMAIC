@@ -15,7 +15,7 @@ import type {
   ToolCallRecord,
   ToolCallRequest,
 } from '@/lib/types/chat';
-import type { SceneOutline } from '@/lib/types/generation';
+import type { OutlineReviewDraft, SceneOutline } from '@/lib/types/generation';
 import type { UIMessage } from 'ai';
 import { createLogger } from '@/lib/logger';
 
@@ -141,6 +141,7 @@ export interface PlaybackStateRecord {
 export interface StageOutlinesRecord {
   stageId: string; // Primary key (FK -> stages.id)
   outlines: SceneOutline[];
+  reviewDraft?: OutlineReviewDraft;
   createdAt: number;
   updatedAt: number;
 }

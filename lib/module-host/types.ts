@@ -111,7 +111,6 @@ export interface BusinessModule {
   home: BusinessModuleHomeCopy;
   settingsSchema?: unknown;
   presets?: Record<string, unknown>;
-  promptPacks?: Record<string, string>;
   hooks?: {
     beforeInput?: (ctx: unknown) => Promise<unknown> | unknown;
     validateInput?: (

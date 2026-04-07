@@ -55,6 +55,7 @@ const detailCopy = {
   'zh-CN': {
     back: '返回工作台',
     continueEdit: '进入编辑器',
+    continueReview: '继续审核大纲',
     saveVersion: '保存为版本',
     versionNote: '版本备注（可选，例如：第一版草稿）',
     lessonPlan: '教学设计',
@@ -101,6 +102,7 @@ const detailCopy = {
   'en-US': {
     back: 'Back to workbench',
     continueEdit: 'Open in Editor',
+    continueReview: 'Resume outline review',
     saveVersion: 'Save as version',
     versionNote: 'Version note (optional)',
     lessonPlan: 'Lesson Plan',
@@ -426,6 +428,11 @@ export function LessonPackDetailClient() {
     }
     return `/classroom/${packId}?jobId=${encodeURIComponent(liveJob.jobId)}`;
   }, [liveJob?.jobId, packId]);
+  const reviewHref = useMemo(
+    () => `/generation-preview?stageId=${encodeURIComponent(packId)}`,
+    [packId],
+  );
+  const hasPendingOutlineReview = outlines.length > 0 && scenes.length === 0;
   const liveProgressValue = useMemo(() => {
     if (!liveJob) return 0;
     return Math.max(2, Math.min(100, liveJob.progress || 0));
@@ -616,10 +623,10 @@ export function LessonPackDetailClient() {
               <Button 
                 size="lg" 
                 className="w-full rounded-xl bg-indigo-600 text-base font-semibold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 sm:w-auto" 
-                onClick={() => router.push(classroomHref)}
+                onClick={() => router.push(hasPendingOutlineReview ? reviewHref : classroomHref)}
               >
                 <ExternalLink className="mr-2 size-5" />
-                {copy.continueEdit}
+                {hasPendingOutlineReview ? copy.continueReview : copy.continueEdit}
               </Button>
               <div className="flex w-full gap-3 sm:w-auto">
                 <Button variant="secondary" className="flex-1 rounded-xl bg-white shadow-sm hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 sm:flex-none" onClick={() => router.push('/')}>

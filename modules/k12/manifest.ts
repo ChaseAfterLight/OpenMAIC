@@ -129,9 +129,4 @@ export const k12ModuleManifest: BusinessModule = {
     lessonTypeProfile: newLessonTypePreset,
     ...k12Presets,
   },
-  promptPacks: {
-    outline: 'k12-outline',
-    lesson: 'k12-lesson',
-    validation: 'k12-validation',
-  },
 };

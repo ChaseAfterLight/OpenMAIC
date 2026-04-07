@@ -7,7 +7,8 @@
 
 import { Stage, Scene } from '../types/stage';
 import { ChatSession } from '../types/chat';
-import type { SceneOutline } from '@/lib/types/generation';
+import type { OutlineReviewDraft, SceneOutline } from '@/lib/types/generation';
+import type { StageOutlinesRecord } from '@/lib/utils/database';
 import { saveChatSessions, loadChatSessions, deleteChatSessions } from './chat-storage';
 import { clearPlaybackState } from './playback-storage';
 import { createLogger } from '@/lib/logger';
@@ -33,6 +34,7 @@ export interface StageListItem {
   name: string;
   description?: string;
   sceneCount: number;
+  outlineCount: number;
   createdAt: number;
   updatedAt: number;
   lessonPack: NonNullable<Stage['lessonPack']>;
@@ -163,13 +165,17 @@ export async function listStages(): Promise<StageListItem[]> {
     const stageList: StageListItem[] = await Promise.all(
       stages.map(async (stage) => {
         const normalizedStage = ensureStageLessonPack(stage);
-        const sceneCount = await storage.countScenesByStageId(stage.id);
+        const [sceneCount, outlinesRecord] = await Promise.all([
+          storage.countScenesByStageId(stage.id),
+          storage.getStageOutlinesRecord(stage.id),
+        ]);
 
         return {
           id: stage.id,
           name: stage.name,
           description: stage.description,
           sceneCount,
+          outlineCount: outlinesRecord?.outlines?.length ?? 0,
           createdAt: stage.createdAt,
           updatedAt: stage.updatedAt,
           lessonPack: normalizedStage.lessonPack!,
@@ -257,12 +263,24 @@ export async function stageExists(stageId: string): Promise<boolean> {
  * Persist outlines for resume-on-refresh.
  */
 export async function saveStageOutlines(stageId: string, outlines: SceneOutline[]): Promise<void> {
+  return saveStageOutlinesRecord(stageId, { outlines });
+}
+
+export async function saveStageOutlinesRecord(
+  stageId: string,
+  options: {
+    outlines: SceneOutline[];
+    reviewDraft?: OutlineReviewDraft;
+  },
+): Promise<void> {
   const storage = getStorageAdapter();
+  const existing = await storage.getStageOutlinesRecord(stageId);
   const now = Date.now();
   await storage.saveStageOutlinesRecord({
     stageId,
-    outlines,
-    createdAt: now,
+    outlines: options.outlines,
+    reviewDraft: options.reviewDraft,
+    createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   });
 }
@@ -274,6 +292,13 @@ export async function loadStageOutlines(stageId: string): Promise<SceneOutline[]
   const storage = getStorageAdapter();
   const record = await storage.getStageOutlinesRecord(stageId);
   return record?.outlines || [];
+}
+
+export async function loadStageOutlinesRecord(
+  stageId: string,
+): Promise<StageOutlinesRecord | undefined> {
+  const storage = getStorageAdapter();
+  return storage.getStageOutlinesRecord(stageId);
 }
 
 export async function saveLessonPackVersion(

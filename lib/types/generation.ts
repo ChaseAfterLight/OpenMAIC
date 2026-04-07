@@ -7,7 +7,7 @@
 
 import type { ActionType } from './action';
 import type { MediaGenerationRequest } from '@/lib/media/types';
-import type { K12StructuredInput } from '@/lib/module-host/types';
+import type { K12StructuredInput, K12TextbookResource } from '@/lib/module-host/types';
 
 // ==================== PDF Image Types ====================
 
@@ -72,6 +72,26 @@ export interface UserRequirements {
   userNickname?: string; // Student nickname for personalization
   userBio?: string; // Student background for personalization
   webSearch?: boolean; // Enable web search for richer context
+}
+
+/**
+ * Persisted client-side draft used to resume outline review from a lesson pack.
+ */
+export interface OutlineReviewDraft {
+  requirements: UserRequirements;
+  pdfText: string;
+  pdfImages?: PdfImage[];
+  imageStorageIds?: string[];
+  imageMapping?: ImageMapping;
+  pdfStorageKey?: string;
+  pdfFileName?: string;
+  documentType?: 'pdf' | 'text';
+  pdfProviderId?: string;
+  pdfProviderConfig?: { apiKey?: string; baseUrl?: string };
+  selectedTextbookResources?: K12TextbookResource[];
+  selectedTextbookResourcesParsed?: boolean;
+  researchContext?: string;
+  researchSources?: Array<{ title: string; url: string }>;
 }
 
 /**
