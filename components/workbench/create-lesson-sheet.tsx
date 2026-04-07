@@ -129,7 +129,7 @@ export function CreateLessonSheet({
   const currentModelId = useSettingsStore((s) => s.modelId);
   const [form, setForm] = useState<FormState>(initialFormState);
   const [k12Form, setK12Form] = useState<K12StructuredInput>(() =>
-    getDefaultK12StructuredInput(k12Presets),
+    getDefaultK12StructuredInput(k12Presets, { includeGradeAndSubject: false }),
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);

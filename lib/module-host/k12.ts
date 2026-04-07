@@ -66,8 +66,21 @@ export function getK12OptionLabel(
 
 export function getDefaultK12StructuredInput(
   presets?: K12ModulePresets,
+  options?: {
+    includeGradeAndSubject?: boolean;
+  },
 ): K12StructuredInput {
-  return syncK12StructuredInput(presets?.defaults ?? FALLBACK_K12_INPUT, presets);
+  const synced = syncK12StructuredInput(presets?.defaults ?? FALLBACK_K12_INPUT, presets);
+  if (options?.includeGradeAndSubject === false) {
+    return {
+      ...synced,
+      gradeId: '',
+      gradeLabel: undefined,
+      subjectId: '',
+      subjectLabel: undefined,
+    };
+  }
+  return synced;
 }
 
 export function getMatchingTextbookEditions(
