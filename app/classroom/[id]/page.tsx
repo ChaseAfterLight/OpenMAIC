@@ -21,6 +21,8 @@ import {
   getLiveRegeneratingSceneId,
   setLiveRegeneratingSceneId,
   clearLiveRegeneratingSceneId,
+  getLiveLocallyEditedSceneIds,
+  clearLiveLocallyEditedScenes,
 } from '@/lib/client/classroom-live-job';
 import { PENDING_SCENE_ID } from '@/lib/store/stage';
 import type { Stage as StageType, Scene as SceneType } from '@/lib/types/stage';
@@ -70,6 +72,7 @@ export default function ClassroomDetailPage() {
     }
     if (!jobId) {
       clearLiveRegeneratingSceneId(classroomId);
+      clearLiveLocallyEditedScenes(classroomId);
     }
     setResolvedLiveJobId(jobId);
     setRegeneratingSceneId(jobId ? rememberedRegeneratingSceneId : null);
@@ -115,6 +118,7 @@ export default function ClassroomDetailPage() {
       outlines?: SceneOutline[];
     }) => {
       const state = useStageStore.getState();
+      const locallyEditedSceneIds = new Set(getLiveLocallyEditedSceneIds(classroomId));
       const currentSceneId = state.currentSceneId;
       const currentScene = currentSceneId
         ? state.scenes.find((scene) => scene.id === currentSceneId) ?? null
@@ -124,7 +128,9 @@ export default function ClassroomDetailPage() {
       const mergedScenes = classroom.scenes.map((scene) =>
         currentSceneId && scene.id === currentSceneId
           ? (state.scenes.find((existing) => existing.id === scene.id) ?? scene)
-          : scene,
+          : locallyEditedSceneIds.has(scene.id)
+            ? (state.scenes.find((existing) => existing.id === scene.id) ?? scene)
+            : scene,
       );
 
       for (const existing of state.scenes) {
@@ -159,7 +165,7 @@ export default function ClassroomDetailPage() {
 
       await hydrateGeneratedAgents();
     },
-    [hydrateGeneratedAgents],
+    [classroomId, hydrateGeneratedAgents],
   );
 
   const fetchServerClassroom = useCallback(async () => {
@@ -447,6 +453,7 @@ export default function ClassroomDetailPage() {
       if (job.done && job.status === 'succeeded') {
         clearLiveClassroomJobId(classroomId);
         clearLiveRegeneratingSceneId(classroomId);
+        clearLiveLocallyEditedScenes(classroomId);
         setResolvedLiveJobId(null);
         const nextParams = new URLSearchParams(searchParams.toString());
         if (nextParams.has('jobId')) {
@@ -459,10 +466,12 @@ export default function ClassroomDetailPage() {
       } else if (job.done && job.result?.classroomId) {
         clearLiveClassroomJobId(job.result.classroomId);
         clearLiveRegeneratingSceneId(job.result.classroomId);
+        clearLiveLocallyEditedScenes(job.result.classroomId);
         setResolvedLiveJobId(null);
       } else if (job.done) {
         clearLiveClassroomJobId(classroomId);
         clearLiveRegeneratingSceneId(classroomId);
+        clearLiveLocallyEditedScenes(classroomId);
         setResolvedLiveJobId(null);
       }
     };

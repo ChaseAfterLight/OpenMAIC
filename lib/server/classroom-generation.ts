@@ -51,6 +51,14 @@ import type {
 
 const log = createLogger('Classroom');
 
+function isUnavailableAccountsError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? `${error.name}: ${error.message}${error.cause ? ` | cause: ${String(error.cause)}` : ''}`
+      : String(error);
+  return /No available .* accounts|no available accounts/i.test(message);
+}
+
 export interface GenerateClassroomInput {
   moduleId?: 'core' | 'k12';
   k12?: K12StructuredInput;
@@ -401,53 +409,123 @@ export async function generateClassroom(
   });
   log.info(`Using server-configured model: ${modelString}`);
   const hasVision = !!modelInfo?.capabilities?.vision;
+  const fallbackModel = resolveModel({});
 
   const aiCall: AICallFn = async (systemPrompt, userPrompt, images) => {
     if (images?.length && hasVision) {
+      try {
+        const result = await callLLM(
+          {
+            model: languageModel,
+            system: systemPrompt,
+            messages: [
+              {
+                role: 'user',
+                content: buildVisionUserContent(userPrompt, images),
+              },
+            ],
+            maxOutputTokens: modelInfo?.outputWindow,
+          },
+          'generate-classroom',
+        );
+        return result.text;
+      } catch (error) {
+        if (!isUnavailableAccountsError(error) || fallbackModel.modelString === modelString) {
+          throw error;
+        }
+
+        log.warn(
+          `Primary model "${modelString}" is unavailable, retrying generate-classroom with fallback model "${fallbackModel.modelString}"`,
+        );
+        const fallbackResult = await callLLM(
+          {
+            model: fallbackModel.model,
+            system: systemPrompt,
+            messages: [
+              {
+                role: 'user',
+                content: buildVisionUserContent(userPrompt, images),
+              },
+            ],
+            maxOutputTokens: fallbackModel.modelInfo?.outputWindow,
+          },
+          'generate-classroom:fallback',
+        );
+        return fallbackResult.text;
+      }
+    }
+
+    try {
       const result = await callLLM(
         {
           model: languageModel,
-          system: systemPrompt,
           messages: [
-            {
-              role: 'user',
-              content: buildVisionUserContent(userPrompt, images),
-            },
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
           ],
           maxOutputTokens: modelInfo?.outputWindow,
         },
         'generate-classroom',
       );
       return result.text;
-    }
+    } catch (error) {
+      if (!isUnavailableAccountsError(error) || fallbackModel.modelString === modelString) {
+        throw error;
+      }
 
-    const result = await callLLM(
-      {
-        model: languageModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        maxOutputTokens: modelInfo?.outputWindow,
-      },
-      'generate-classroom',
-    );
-    return result.text;
+      log.warn(
+        `Primary model "${modelString}" is unavailable, retrying generate-classroom with fallback model "${fallbackModel.modelString}"`,
+      );
+      const fallbackResult = await callLLM(
+        {
+          model: fallbackModel.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          maxOutputTokens: fallbackModel.modelInfo?.outputWindow,
+        },
+        'generate-classroom:fallback',
+      );
+      return fallbackResult.text;
+    }
   };
 
   const searchQueryAiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
-    const result = await callLLM(
-      {
-        model: languageModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        maxOutputTokens: 256,
-      },
-      'web-search-query-rewrite',
-    );
-    return result.text;
+    try {
+      const result = await callLLM(
+        {
+          model: languageModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          maxOutputTokens: 256,
+        },
+        'web-search-query-rewrite',
+      );
+      return result.text;
+    } catch (error) {
+      if (!isUnavailableAccountsError(error) || fallbackModel.modelString === modelString) {
+        throw error;
+      }
+
+      log.warn(
+        `Primary model "${modelString}" is unavailable, retrying web-search-query-rewrite with fallback model "${fallbackModel.modelString}"`,
+      );
+      const result = await callLLM(
+        {
+          model: fallbackModel.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          maxOutputTokens: 256,
+        },
+        'web-search-query-rewrite:fallback',
+      );
+      return result.text;
+    }
   };
 
   const { pdfImages: restoredPdfImages, imageMapping } = await loadServerPdfAssets(input);

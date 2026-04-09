@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  FileEdit,
   Play,
   Pause,
   PencilLine,
@@ -40,6 +41,8 @@ export interface CanvasToolbarProps {
   readonly isPresenting?: boolean;
   readonly onTogglePresentation?: () => void;
   readonly className?: string;
+  readonly onEditScene?: () => void;
+  readonly editSceneDisabled?: boolean;
   // Audio/playback controls
   readonly ttsEnabled?: boolean;
   readonly ttsMuted?: boolean;
@@ -99,6 +102,8 @@ export function CanvasToolbar({
   isPresenting,
   onTogglePresentation,
   className,
+  onEditScene,
+  editSceneDisabled,
   ttsEnabled,
   ttsMuted,
   ttsVolume = 1,
@@ -153,7 +158,7 @@ export function CanvasToolbar({
                 ? 'text-gray-400 dark:text-gray-500'
                 : 'text-gray-600 dark:text-gray-300',
             )}
-            aria-label="Toggle sidebar"
+            aria-label={t('stage.toggleSidebar')}
           >
             <LayoutList className="w-3.5 h-3.5" />
           </button>
@@ -163,6 +168,23 @@ export function CanvasToolbar({
           <span className="opacity-35 mx-px">/</span>
           {scenesCount}
         </span>
+        {onEditScene && (
+          <button
+            onClick={onEditScene}
+            disabled={editSceneDisabled}
+            className={cn(
+              ctrlBtn,
+              'w-6 h-6',
+              editSceneDisabled
+                ? 'cursor-not-allowed text-gray-300 dark:text-gray-600'
+                : 'text-gray-500 dark:text-gray-400 hover:text-violet-600 dark:hover:text-violet-400',
+            )}
+            aria-label={t('stage.editScene')}
+            title={t('stage.editScene')}
+          >
+            <FileEdit className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       <CtrlDivider />
@@ -197,7 +219,7 @@ export function CanvasToolbar({
                       ? 'text-red-500 dark:text-red-400'
                       : 'text-gray-500 dark:text-gray-400',
                 )}
-                aria-label={ttsMuted ? 'Unmute' : 'Mute'}
+                aria-label={ttsMuted ? t('stage.unmute') : t('stage.mute')}
               >
                 <VolumeIcon muted={!!ttsMuted} volume={ttsVolume} disabled={!ttsEnabled} />
               </button>
@@ -260,7 +282,7 @@ export function CanvasToolbar({
                         ? 'text-violet-600 dark:text-violet-400 bg-violet-500/10 dark:bg-violet-400/10'
                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
                     )}
-                    aria-label="Playback speed"
+                    aria-label={t('stage.playbackSpeedLabel')}
                   >
                     {playbackSpeed === 1.5 ? '1.5x' : `${playbackSpeed}x`}
                   </button>
@@ -283,7 +305,7 @@ export function CanvasToolbar({
                 ctrlBtn,
                 'w-6 h-6 text-gray-500 dark:text-gray-400 disabled:opacity-20 disabled:pointer-events-none',
               )}
-              aria-label="Previous scene"
+              aria-label={t('stage.previousScene')}
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
@@ -320,7 +342,7 @@ export function CanvasToolbar({
                   ? 'text-violet-600 dark:text-violet-400'
                   : 'text-gray-500 dark:text-gray-400',
               )}
-              aria-label={engineState === 'playing' ? 'Pause' : 'Play'}
+              aria-label={engineState === 'playing' ? t('stage.pausePlayback') : t('stage.play')}
             >
               {engineState === 'playing' ? (
                 <Pause className="w-3.5 h-3.5" />
@@ -339,7 +361,7 @@ export function CanvasToolbar({
                 ctrlBtn,
                 'w-6 h-6 text-gray-500 dark:text-gray-400 disabled:opacity-20 disabled:pointer-events-none',
               )}
-              aria-label="Next scene"
+              aria-label={t('stage.nextScene')}
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
@@ -361,7 +383,7 @@ export function CanvasToolbar({
                         ? 'text-violet-600 dark:text-violet-400'
                         : 'text-gray-500 dark:text-gray-400',
                     )}
-                    aria-label="Auto-play"
+                    aria-label={t('stage.autoPlayLabel')}
                   >
                     <Repeat className="w-3.5 h-3.5" />
                   </button>
@@ -429,7 +451,7 @@ export function CanvasToolbar({
                 ? 'text-gray-400 dark:text-gray-500'
                 : 'text-gray-600 dark:text-gray-300',
             )}
-            aria-label="Toggle chat"
+            aria-label={t('stage.toggleChat')}
           >
             <MessageSquare className="w-3.5 h-3.5" />
           </button>

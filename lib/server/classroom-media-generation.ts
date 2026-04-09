@@ -86,6 +86,19 @@ export async function generateMediaForClassroom(
   const imageProviderIds = Object.keys(getServerImageProviders());
   const videoProviderIds = Object.keys(getServerVideoProviders());
 
+  if (requests.some((r) => r.type === 'image') && imageProviderIds.length === 0) {
+    log.warn(
+      'Image media requests exist, but no server image providers are configured. ' +
+        'Generated image placeholders will remain unresolved.',
+    );
+  }
+  if (requests.some((r) => r.type === 'video') && videoProviderIds.length === 0) {
+    log.warn(
+      'Video media requests exist, but no server video providers are configured. ' +
+        'Generated video placeholders will remain unresolved.',
+    );
+  }
+
   const mediaMap: Record<string, string> = {};
 
   function toBlobPart(buffer: Buffer): ArrayBuffer {
@@ -238,7 +251,7 @@ export function replaceMediaPlaceholders(scenes: Scene[], mediaMap: Record<strin
 export async function generateTTSForClassroom(
   scenes: Scene[],
   classroomId: string,
-  baseUrl: string,
+  _baseUrl: string,
 ): Promise<void> {
   // Resolve TTS provider (exclude browser-native-tts)
   const ttsProviderIds = Object.keys(getServerTTSProviders()).filter(

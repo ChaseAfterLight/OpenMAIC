@@ -10,6 +10,7 @@ import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { SceneSidebar } from './stage/scene-sidebar';
 import { Header } from './header';
 import { CanvasArea } from '@/components/canvas/canvas-area';
+import { SceneEditorModal } from '@/components/editor';
 import { Roundtable } from '@/components/roundtable';
 import { PlaybackEngine, computePlaybackView } from '@/lib/playback';
 import type { EngineMode, TriggerEvent, Effect } from '@/lib/playback';
@@ -33,6 +34,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { VisuallyHidden } from 'radix-ui';
+import { markLiveLocallyEditedScene } from '@/lib/client/classroom-live-job';
 
 /**
  * Stage Component
@@ -103,6 +105,7 @@ export function Stage({
 
   // Scene switch confirmation dialog state
   const [pendingSceneId, setPendingSceneId] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [isPresenting, setIsPresenting] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isPresentationInteractionActive, setIsPresentationInteractionActive] = useState(false);
@@ -738,6 +741,9 @@ export function Stage({
   // get scene information
   const isPendingScene = currentSceneId === PENDING_SCENE_ID;
   const hasNextPending = generatingOutlines.length > 0;
+  const isCurrentSceneRegenerating = Boolean(
+    currentScene && generatingOutlines.some((outline) => outline.order === currentScene.order),
+  );
 
   // previous scene (gated)
   const handlePreviousScene = useCallback(() => {
@@ -779,6 +785,20 @@ export function Stage({
     setWhiteboardOpen(!whiteboardOpen);
   };
 
+  const handleEditScene = useCallback(() => {
+    if (!currentScene || isPendingScene || isCurrentSceneRegenerating) return;
+    setEditorOpen(true);
+  }, [currentScene, isCurrentSceneRegenerating, isPendingScene]);
+
+  const handleSceneUpdate = useCallback((updatedScene: import('@/lib/types/stage').Scene) => {
+    const store = useStageStore.getState();
+    store.updateScene(updatedScene.id, updatedScene);
+    if (store.stage?.id) {
+      markLiveLocallyEditedScene(store.stage.id, updatedScene.id);
+    }
+    void store.saveToStorage();
+  }, []);
+
   const isPresentationShortcutTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof HTMLElement)) return false;
 
@@ -796,6 +816,17 @@ export function Stage({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'e') {
+        if (
+          isPresentationShortcutTarget(event.target) ||
+          isPresentationShortcutTarget(document.activeElement)
+        ) {
+          return;
+        }
+        event.preventDefault();
+        handleEditScene();
+        return;
+      }
       // Let modifier-key combos (Ctrl+C, Ctrl+S, etc.) pass through to the browser
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (
@@ -881,6 +912,7 @@ export function Stage({
     setTTSVolume,
     sidebarCollapsed,
     togglePresentation,
+    handleEditScene,
     ttsMuted,
     ttsVolume,
   ]);
@@ -946,6 +978,8 @@ export function Stage({
         onRetryOutline={onRetryOutline}
         onRegenerateScene={onRegenerateScene ?? regenerateScene}
         regeneratingSceneId={regeneratingSceneId}
+        onEditCurrentScene={handleEditScene}
+        editCurrentSceneDisabled={isPendingScene || isCurrentSceneRegenerating || !currentScene}
       />
 
       {/* Main Content Area */}
@@ -996,6 +1030,8 @@ export function Stage({
                 ? () => onRetryOutline(generatingOutlines[0].id)
                 : undefined
             }
+            onEditScene={handleEditScene}
+            editSceneDisabled={isPendingScene || isCurrentSceneRegenerating || !currentScene}
           />
         </div>
 
@@ -1241,6 +1277,13 @@ export function Stage({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SceneEditorModal
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        scene={currentScene}
+        onSave={handleSceneUpdate}
+      />
     </div>
   );
 }

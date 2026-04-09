@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   PanelLeftClose,
+  FileEdit,
   Globe,
   AlertCircle,
   RefreshCw,
@@ -23,6 +24,8 @@ interface SceneSidebarProps {
   readonly onRetryOutline?: (outlineId: string) => Promise<void>;
   readonly onRegenerateScene?: (sceneId: string) => Promise<void>;
   readonly regeneratingSceneId?: string | null;
+  readonly onEditCurrentScene?: () => void;
+  readonly editCurrentSceneDisabled?: boolean;
 }
 
 const DEFAULT_WIDTH = 220;
@@ -36,6 +39,8 @@ export function SceneSidebar({
   onRetryOutline,
   onRegenerateScene,
   regeneratingSceneId,
+  onEditCurrentScene,
+  editCurrentSceneDisabled,
 }: SceneSidebarProps) {
   const { t } = useI18n();
   const router = useRouter();
@@ -164,12 +169,30 @@ export function SceneSidebar({
           >
             <img src="/logo-horizontal.png" alt="OpenMAIC" className="h-6" />
           </button>
-          <button
-            onClick={() => onCollapseChange(true)}
-            className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-gray-100/80 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 ring-1 ring-black/[0.04] dark:ring-white/[0.06] hover:bg-gray-200/90 dark:hover:bg-gray-700/90 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 transition-all duration-200"
-          >
-            <PanelLeftClose className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            {onEditCurrentScene ? (
+              <button
+                type="button"
+                onClick={onEditCurrentScene}
+                disabled={editCurrentSceneDisabled}
+                className={cn(
+                  'w-7 h-7 shrink-0 rounded-lg flex items-center justify-center ring-1 ring-black/[0.04] dark:ring-white/[0.06] transition-all duration-200',
+                  editCurrentSceneDisabled
+                    ? 'cursor-not-allowed bg-gray-100/50 dark:bg-gray-800/50 text-gray-300 dark:text-gray-600'
+                    : 'bg-gray-100/80 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 hover:bg-gray-200/90 dark:hover:bg-gray-700/90 hover:text-violet-600 dark:hover:text-violet-400 active:scale-90',
+                )}
+                title={t('stage.editScene')}
+              >
+                <FileEdit className="w-4 h-4" />
+              </button>
+            ) : null}
+            <button
+              onClick={() => onCollapseChange(true)}
+              className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-gray-100/80 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 ring-1 ring-black/[0.04] dark:ring-white/[0.06] hover:bg-gray-200/90 dark:hover:bg-gray-700/90 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 transition-all duration-200"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Scenes List */}
