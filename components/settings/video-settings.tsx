@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,12 +21,21 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { VideoProviderId } from '@/lib/media/types';
+import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
 interface VideoSettingsProps {
   selectedProviderId: VideoProviderId;
+  isAdmin?: boolean;
+  adminConfig?: AdminProviderConfig;
+  onAdminConfigSave?: (patch: AdminProviderConfigPatch) => void | Promise<void>;
 }
 
-export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
+export function VideoSettings({
+  selectedProviderId,
+  isAdmin = false,
+  adminConfig,
+  onAdminConfigSave,
+}: VideoSettingsProps) {
   const { t } = useI18n();
 
   const videoModelId = useSettingsStore((state) => state.videoModelId);
@@ -34,6 +43,8 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
   const setVideoProviderConfig = useSettingsStore((state) => state.setVideoProviderConfig);
 
   const [showApiKey, setShowApiKey] = useState(false);
+  const [adminApiKey, setAdminApiKey] = useState('');
+  const [adminBaseUrl, setAdminBaseUrl] = useState('');
   const [testLoading, setTestLoading] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -53,20 +64,50 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
 
   const currentConfig = videoProvidersConfig[selectedProviderId];
   const currentProvider = VIDEO_PROVIDERS[selectedProviderId];
-  const builtInModels = currentProvider?.models || [];
+  const builtInModels = useMemo(() => currentProvider?.models || [], [currentProvider?.models]);
   const customModels = useMemo(
     () => currentConfig?.customModels || [],
     [currentConfig?.customModels],
   );
   const isServerConfigured = !!currentConfig?.isServerConfigured;
 
+  useEffect(() => {
+    setAdminApiKey('');
+    setAdminBaseUrl(adminConfig?.baseUrl || '');
+  }, [adminConfig?.baseUrl, selectedProviderId]);
+
   const handleApiKeyChange = (apiKey: string) => {
+    if (isAdmin) {
+      setAdminApiKey(apiKey);
+      return;
+    }
     setVideoProviderConfig(selectedProviderId, { apiKey });
   };
 
   const handleBaseUrlChange = (baseUrl: string) => {
+    if (isAdmin) {
+      setAdminBaseUrl(baseUrl);
+      return;
+    }
     setVideoProviderConfig(selectedProviderId, { baseUrl });
   };
+
+  const saveAdminConfig = useCallback(
+    (models = [...builtInModels, ...customModels].map((model) => model.id)) => {
+      if (!isAdmin || !onAdminConfigSave) return;
+
+      const patch: AdminProviderConfigPatch = {
+        baseUrl: adminBaseUrl.trim() || null,
+        models,
+      };
+      if (adminApiKey.trim()) {
+        patch.apiKey = adminApiKey.trim();
+      }
+      void onAdminConfigSave(patch);
+      setAdminApiKey('');
+    },
+    [adminApiKey, adminBaseUrl, builtInModels, customModels, isAdmin, onAdminConfigSave],
+  );
 
   const handleTest = async () => {
     setTestLoading(true);
@@ -78,8 +119,8 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
         headers: {
           'x-video-provider': selectedProviderId,
           'x-video-model': videoModelId || '',
-          'x-api-key': currentConfig?.apiKey || '',
-          'x-base-url': currentConfig?.baseUrl || '',
+          'x-api-key': isAdmin ? adminApiKey : currentConfig?.apiKey || '',
+          'x-base-url': isAdmin ? adminBaseUrl : currentConfig?.baseUrl || '',
         },
       });
       const data = await response.json();
@@ -128,26 +169,41 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
     setVideoProviderConfig(selectedProviderId, {
       customModels: newCustomModels,
     });
+    saveAdminConfig([...builtInModels, ...newCustomModels].map((model) => model.id));
     setShowModelDialog(false);
-  }, [modelForm, editingModelIndex, customModels, selectedProviderId, setVideoProviderConfig]);
+  }, [
+    modelForm,
+    editingModelIndex,
+    customModels,
+    selectedProviderId,
+    setVideoProviderConfig,
+    saveAdminConfig,
+    builtInModels,
+  ]);
 
   const handleDeleteModel = (index: number) => {
     const newCustomModels = customModels.filter((_, i) => i !== index);
     setVideoProviderConfig(selectedProviderId, {
       customModels: newCustomModels,
     });
+    saveAdminConfig([...builtInModels, ...newCustomModels].map((model) => model.id));
   };
 
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Server-configured notice */}
-      {isServerConfigured && (
+      {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
-          {t('settings.serverConfiguredNotice')}
+          {isAdmin
+            ? `Admin mode: video provider settings are saved to the server database. ${
+                adminConfig?.hasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
+              }`
+            : t('settings.serverConfiguredNotice')}
         </div>
       )}
 
       {/* API Key + Test inline */}
+      {isAdmin && (
       <div className="space-y-2">
         <Label>API Key</Label>
         <div className="flex gap-2">
@@ -160,14 +216,15 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
               autoCorrect="off"
               spellCheck={false}
               placeholder={
-                isServerConfigured
-                  ? t('settings.optionalOverride')
+                adminConfig?.hasApiKey
+                  ? 'Leave blank to keep existing key'
                   : selectedProviderId === 'kling'
                     ? 'accessKey:secretKey'
                     : t('settings.enterApiKey')
               }
-              value={currentConfig?.apiKey || ''}
+              value={adminApiKey}
               onChange={(e) => handleApiKeyChange(e.target.value)}
+              onBlur={() => saveAdminConfig()}
               className="h-8 pr-8"
             />
             <button
@@ -182,7 +239,7 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
             variant="outline"
             size="sm"
             onClick={handleTest}
-            disabled={testLoading || (!currentConfig?.apiKey && !isServerConfigured)}
+            disabled={testLoading || (!adminConfig?.hasApiKey && !adminApiKey && !isServerConfigured)}
             className="gap-1.5"
           >
             {testLoading ? (
@@ -213,8 +270,10 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
           </div>
         )}
       </div>
+      )}
 
       {/* Base URL */}
+      {isAdmin && (
       <div className="space-y-2">
         <Label>Base URL</Label>
         <Input
@@ -224,8 +283,9 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
-          value={currentConfig?.baseUrl || ''}
+          value={adminBaseUrl}
           onChange={(e) => handleBaseUrlChange(e.target.value)}
+          onBlur={() => saveAdminConfig()}
           placeholder={
             currentConfig?.serverBaseUrl ||
             currentProvider?.defaultBaseUrl ||
@@ -235,7 +295,7 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
         />
         {(() => {
           const effectiveBaseUrl =
-            currentConfig?.baseUrl ||
+            adminBaseUrl ||
             currentConfig?.serverBaseUrl ||
             currentProvider?.defaultBaseUrl ||
             '';
@@ -247,15 +307,18 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
           );
         })()}
       </div>
+      )}
 
       {/* Model list */}
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <Label className="text-base">{t('settings.models')}</Label>
+          {isAdmin && (
           <Button variant="outline" size="sm" onClick={handleOpenAddModel} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" />
             {t('settings.addNewModel')}
           </Button>
+          )}
         </div>
 
         <div className="space-y-1.5">
@@ -282,6 +345,7 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
                 <div className="font-mono text-sm font-medium">{model.name}</div>
                 <div className="text-xs text-muted-foreground font-mono mt-0.5">{model.id}</div>
               </div>
+              {isAdmin && (
               <div className="flex items-center gap-1">
                 <Button
                   variant="outline"
@@ -302,6 +366,7 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
+              )}
             </div>
           ))}
         </div>

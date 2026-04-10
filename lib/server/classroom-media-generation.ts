@@ -83,8 +83,12 @@ export async function generateMediaForClassroom(
   if (requests.length === 0) return {};
 
   // Resolve providers
-  const imageProviderIds = Object.keys(getServerImageProviders());
-  const videoProviderIds = Object.keys(getServerVideoProviders());
+  const [serverImageProviders, serverVideoProviders] = await Promise.all([
+    getServerImageProviders(),
+    getServerVideoProviders(),
+  ]);
+  const imageProviderIds = Object.keys(serverImageProviders);
+  const videoProviderIds = Object.keys(serverVideoProviders);
 
   if (requests.some((r) => r.type === 'image') && imageProviderIds.length === 0) {
     log.warn(
@@ -114,16 +118,17 @@ export async function generateMediaForClassroom(
     for (const req of imageRequests) {
       try {
         const providerId = imageProviderIds[0] as ImageProviderId;
-        const apiKey = resolveImageApiKey(providerId);
+        const apiKey = await resolveImageApiKey(providerId);
         if (!apiKey) {
           log.warn(`No API key for image provider "${providerId}", skipping ${req.elementId}`);
           continue;
         }
         const providerConfig = IMAGE_PROVIDERS[providerId];
         const model = providerConfig?.models?.[0]?.id;
+        const providerBaseUrl = await resolveImageBaseUrl(providerId);
 
         const result = await generateImage(
-          { providerId, apiKey, baseUrl: resolveImageBaseUrl(providerId), model },
+          { providerId, apiKey, baseUrl: providerBaseUrl, model },
           { prompt: req.prompt, aspectRatio: req.aspectRatio || '16:9' },
         );
 
@@ -167,13 +172,14 @@ export async function generateMediaForClassroom(
     for (const req of videoRequests) {
       try {
         const providerId = videoProviderIds[0] as VideoProviderId;
-        const apiKey = resolveVideoApiKey(providerId);
+        const apiKey = await resolveVideoApiKey(providerId);
         if (!apiKey) {
           log.warn(`No API key for video provider "${providerId}", skipping ${req.elementId}`);
           continue;
         }
         const providerConfig = VIDEO_PROVIDERS[providerId];
         const model = providerConfig?.models?.[0]?.id;
+        const providerBaseUrl = await resolveVideoBaseUrl(providerId);
 
         const normalized = normalizeVideoOptions(providerId, {
           prompt: req.prompt,
@@ -181,7 +187,7 @@ export async function generateMediaForClassroom(
         });
 
         const result = await generateVideo(
-          { providerId, apiKey, baseUrl: resolveVideoBaseUrl(providerId), model },
+          { providerId, apiKey, baseUrl: providerBaseUrl, model },
           normalized,
         );
 
@@ -254,7 +260,8 @@ export async function generateTTSForClassroom(
   _baseUrl: string,
 ): Promise<void> {
   // Resolve TTS provider (exclude browser-native-tts)
-  const ttsProviderIds = Object.keys(getServerTTSProviders()).filter(
+  const serverTtsProviders = await getServerTTSProviders();
+  const ttsProviderIds = Object.keys(serverTtsProviders).filter(
     (id) => id !== 'browser-native-tts',
   );
   if (ttsProviderIds.length === 0) {
@@ -263,12 +270,13 @@ export async function generateTTSForClassroom(
   }
 
   const providerId = ttsProviderIds[0] as TTSProviderId;
-  const apiKey = resolveTTSApiKey(providerId);
+  const apiKey = await resolveTTSApiKey(providerId);
   if (!apiKey) {
     log.warn(`No API key for TTS provider "${providerId}", skipping TTS generation`);
     return;
   }
-  const ttsBaseUrl = resolveTTSBaseUrl(providerId) || TTS_PROVIDERS[providerId]?.defaultBaseUrl;
+  const ttsBaseUrl =
+    (await resolveTTSBaseUrl(providerId)) || TTS_PROVIDERS[providerId]?.defaultBaseUrl;
   const voice = DEFAULT_TTS_VOICES[providerId] || 'default';
 
   for (const scene of scenes) {

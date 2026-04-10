@@ -8,7 +8,6 @@
 import type { NextRequest } from 'next/server';
 import { getModel, parseModelString, type ModelWithInfo } from '@/lib/ai/providers';
 import { resolveApiKey, resolveBaseUrl, resolveProxy } from '@/lib/server/provider-config';
-import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
 export interface ResolvedModel extends ModelWithInfo {
   /** Original model string (e.g. "openai/gpt-4o-mini") */
@@ -29,26 +28,25 @@ export function resolveModel(params: {
   apiKey?: string;
   baseUrl?: string;
   providerType?: string;
-}): ResolvedModel {
+  requiresApiKey?: boolean;
+}): Promise<ResolvedModel> {
+  return resolveModelInternal(params);
+}
+
+async function resolveModelInternal(params: {
+  modelString?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  providerType?: string;
+}): Promise<ResolvedModel> {
   const modelString = params.modelString || process.env.DEFAULT_MODEL || 'gpt-4o-mini';
   const { providerId, modelId } = parseModelString(modelString);
 
-  // SSRF validation applies only to client-supplied base URLs.
-  // Server-configured URLs (e.g. OLLAMA_BASE_URL from env/YAML) flow through
-  // resolveBaseUrl() and bypass this check — they're trusted by the operator.
-  const clientBaseUrl = params.baseUrl || undefined;
-  if (clientBaseUrl && process.env.NODE_ENV === 'production') {
-    const ssrfError = validateUrlForSSRF(clientBaseUrl);
-    if (ssrfError) {
-      throw new Error(ssrfError);
-    }
-  }
-
-  const apiKey = clientBaseUrl
-    ? params.apiKey || ''
-    : resolveApiKey(providerId, params.apiKey || '');
-  const baseUrl = clientBaseUrl ? clientBaseUrl : resolveBaseUrl(providerId, params.baseUrl);
-  const proxy = resolveProxy(providerId);
+  // Client-supplied API key / base URL are ignored by design:
+  // provider credentials are authoritative on the server.
+  const apiKey = await resolveApiKey(providerId, params.apiKey || '');
+  const baseUrl = await resolveBaseUrl(providerId, params.baseUrl);
+  const proxy = await resolveProxy(providerId);
   const { model, modelInfo } = getModel({
     providerId,
     modelId,
@@ -64,11 +62,12 @@ export function resolveModel(params: {
 /**
  * Resolve a language model from standard request headers.
  *
- * Reads: x-model, x-api-key, x-base-url, x-provider-type
+ * Reads: x-model, x-provider-type.
+ * Compatibility note: x-api-key / x-base-url are accepted but ignored.
  * Note: requiresApiKey is derived server-side from the provider registry,
  * never from client headers, to prevent auth bypass.
  */
-export function resolveModelFromHeaders(req: NextRequest): ResolvedModel {
+export async function resolveModelFromHeaders(req: NextRequest): Promise<ResolvedModel> {
   return resolveModel({
     modelString: req.headers.get('x-model') || undefined,
     apiKey: req.headers.get('x-api-key') || undefined,

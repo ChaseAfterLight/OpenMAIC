@@ -11,7 +11,7 @@ import { searchWithTavily } from '@/lib/web-search/tavily';
 import { searchWithBrave } from '@/lib/web-search/brave';
 import { searchWithBaidu } from '@/lib/web-search/baidu';
 import { formatSearchResultsAsContext } from '@/lib/web-search/tavily';
-import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
+import { resolveWebSearchApiKey, resolveWebSearchProviderOptions } from '@/lib/server/provider-config';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import {
@@ -25,6 +25,41 @@ import type { WebSearchResult } from '@/lib/types/web-search';
 
 const log = createLogger('WebSearch');
 
+function normalizeBaiduSubSources(
+  providerOptions?: Record<string, unknown>,
+): { webSearch?: boolean; baike?: boolean; scholar?: boolean } | undefined {
+  if (!providerOptions || typeof providerOptions !== 'object') {
+    return undefined;
+  }
+  const direct = providerOptions as {
+    webSearch?: boolean;
+    baike?: boolean;
+    scholar?: boolean;
+    baiduSubSources?: unknown;
+  };
+  const nested =
+    typeof direct.baiduSubSources === 'object' &&
+    direct.baiduSubSources &&
+    !Array.isArray(direct.baiduSubSources)
+      ? (direct.baiduSubSources as {
+          webSearch?: boolean;
+          baike?: boolean;
+          scholar?: boolean;
+        })
+      : undefined;
+  return {
+    ...(typeof (nested?.webSearch ?? direct.webSearch) === 'boolean'
+      ? { webSearch: nested?.webSearch ?? direct.webSearch }
+      : {}),
+    ...(typeof (nested?.baike ?? direct.baike) === 'boolean'
+      ? { baike: nested?.baike ?? direct.baike }
+      : {}),
+    ...(typeof (nested?.scholar ?? direct.scholar) === 'boolean'
+      ? { scholar: nested?.scholar ?? direct.scholar }
+      : {}),
+  };
+}
+
 export async function POST(req: NextRequest) {
   let query: string | undefined;
   try {
@@ -32,15 +67,11 @@ export async function POST(req: NextRequest) {
     const {
       query: requestQuery,
       pdfText,
-      apiKey: clientApiKey,
       provider = 'tavily',
-      baiduSubSources,
     } = body as {
       query?: string;
       pdfText?: string;
-      apiKey?: string;
       provider?: WebSearchProviderId;
-      baiduSubSources?: { webSearch?: boolean; baike?: boolean; scholar?: boolean };
     };
     query = requestQuery;
 
@@ -50,7 +81,10 @@ export async function POST(req: NextRequest) {
 
     // Brave Search doesn't require an API key
     const needsApiKey = provider !== 'brave';
-    const apiKey = needsApiKey ? resolveWebSearchApiKey(provider, clientApiKey) : '';
+    const apiKey = needsApiKey ? await resolveWebSearchApiKey(provider) : '';
+    const providerOptions = await resolveWebSearchProviderOptions(provider);
+    const baiduSubSources =
+      provider === 'baidu' ? normalizeBaiduSubSources(providerOptions) : undefined;
 
     if (needsApiKey && !apiKey) {
       const providerNames: Record<string, string> = {
@@ -61,7 +95,7 @@ export async function POST(req: NextRequest) {
       return apiError(
         'MISSING_API_KEY',
         400,
-        `${name} API key is not configured. Set it in Settings → Web Search or set the corresponding env var.`,
+        `${name} API key is not configured on server. Ask an administrator to configure this provider.`,
       );
     }
 
@@ -70,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     let aiCall: AICallFn | undefined;
     try {
-      const { model: languageModel } = resolveModelFromHeaders(req);
+      const { model: languageModel } = await resolveModelFromHeaders(req);
       aiCall = async (systemPrompt, userPrompt) => {
         const result = await callLLM(
           {

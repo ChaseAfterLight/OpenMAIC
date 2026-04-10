@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -18,14 +18,23 @@ import type { ASRProviderId } from '@/lib/audio/types';
 import { Mic, MicOff, CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createLogger } from '@/lib/logger';
+import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
 const log = createLogger('ASRSettings');
 
 interface ASRSettingsProps {
   selectedProviderId: ASRProviderId;
+  isAdmin?: boolean;
+  adminConfig?: AdminProviderConfig;
+  onAdminConfigSave?: (patch: AdminProviderConfigPatch) => void | Promise<void>;
 }
 
-export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
+export function ASRSettings({
+  selectedProviderId,
+  isAdmin = false,
+  adminConfig,
+  onAdminConfigSave,
+}: ASRSettingsProps) {
   const { t } = useI18n();
 
   const asrLanguage = useSettingsStore((state) => state.asrLanguage);
@@ -36,6 +45,8 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
   const isServerConfigured = !!asrProvidersConfig[selectedProviderId]?.isServerConfigured;
 
   const [showApiKey, setShowApiKey] = useState(false);
+  const [adminApiKey, setAdminApiKey] = useState('');
+  const [adminBaseUrl, setAdminBaseUrl] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [asrResult, setASRResult] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -51,6 +62,25 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
     setTestMessage('');
     setASRResult('');
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset credential draft when switching admin records.
+    setAdminApiKey('');
+    setAdminBaseUrl(adminConfig?.baseUrl || '');
+  }, [adminConfig?.baseUrl, selectedProviderId]);
+
+  const handleSaveAdminConnection = () => {
+    if (!isAdmin || !onAdminConfigSave) return;
+
+    const patch: AdminProviderConfigPatch = {
+      baseUrl: adminBaseUrl.trim() || null,
+    };
+    if (adminApiKey.trim()) {
+      patch.apiKey = adminApiKey.trim();
+    }
+    void onAdminConfigSave(patch);
+    setAdminApiKey('');
+  };
 
   const handleToggleASRRecording = async () => {
     if (isRecording) {
@@ -116,9 +146,9 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
               asrProvidersConfig[selectedProviderId]?.modelId || asrProvider.defaultModelId,
             );
             formData.append('language', asrLanguage);
-            const apiKeyValue = asrProvidersConfig[selectedProviderId]?.apiKey;
+            const apiKeyValue = isAdmin ? adminApiKey : asrProvidersConfig[selectedProviderId]?.apiKey;
             if (apiKeyValue?.trim()) formData.append('apiKey', apiKeyValue);
-            const baseUrlValue = asrProvidersConfig[selectedProviderId]?.baseUrl;
+            const baseUrlValue = isAdmin ? adminBaseUrl : asrProvidersConfig[selectedProviderId]?.baseUrl;
             if (baseUrlValue?.trim()) formData.append('baseUrl', baseUrlValue);
 
             try {
@@ -158,14 +188,18 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Server-configured notice */}
-      {isServerConfigured && (
+      {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
-          {t('settings.serverConfiguredNotice')}
+          {isAdmin
+            ? `Admin mode: ASR provider settings are saved to the server database. ${
+                adminConfig?.hasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
+              }`
+            : t('settings.serverConfiguredNotice')}
         </div>
       )}
 
       {/* API Key & Base URL */}
-      {(asrProvider.requiresApiKey || isServerConfigured) && (
+      {isAdmin && (asrProvider.requiresApiKey || isServerConfigured) && (
         <>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -179,14 +213,13 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
                   autoCorrect="off"
                   spellCheck={false}
                   placeholder={
-                    isServerConfigured ? t('settings.optionalOverride') : t('settings.enterApiKey')
+                    adminConfig?.hasApiKey
+                      ? 'Leave blank to keep existing key'
+                      : t('settings.enterApiKey')
                   }
-                  value={asrProvidersConfig[selectedProviderId]?.apiKey || ''}
-                  onChange={(e) =>
-                    setASRProviderConfig(selectedProviderId, {
-                      apiKey: e.target.value,
-                    })
-                  }
+                  value={adminApiKey}
+                  onChange={(e) => setAdminApiKey(e.target.value)}
+                  onBlur={handleSaveAdminConnection}
                   className="font-mono text-sm pr-10"
                 />
                 <button
@@ -207,12 +240,9 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
                 autoCorrect="off"
                 spellCheck={false}
                 placeholder={asrProvider.defaultBaseUrl || t('settings.enterCustomBaseUrl')}
-                value={asrProvidersConfig[selectedProviderId]?.baseUrl || ''}
-                onChange={(e) =>
-                  setASRProviderConfig(selectedProviderId, {
-                    baseUrl: e.target.value,
-                  })
-                }
+                value={adminBaseUrl}
+                onChange={(e) => setAdminBaseUrl(e.target.value)}
+                onBlur={handleSaveAdminConnection}
                 className="text-sm"
               />
             </div>
@@ -220,7 +250,7 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
           {/* Request URL Preview */}
           {(() => {
             const effectiveBaseUrl =
-              asrProvidersConfig[selectedProviderId]?.baseUrl || asrProvider.defaultBaseUrl || '';
+              adminBaseUrl || asrProvider.defaultBaseUrl || '';
             if (!effectiveBaseUrl) return null;
             let endpointPath = '';
             switch (selectedProviderId) {
@@ -255,7 +285,7 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
             onClick={handleToggleASRRecording}
             disabled={
               asrProvider.requiresApiKey &&
-              !asrProvidersConfig[selectedProviderId]?.apiKey?.trim() &&
+              !(isAdmin ? adminConfig?.hasApiKey : asrProvidersConfig[selectedProviderId]?.apiKey?.trim()) &&
               !isServerConfigured
             }
             className="gap-2 w-[140px]"

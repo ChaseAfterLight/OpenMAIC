@@ -12,20 +12,28 @@ import { Volume2, Loader2, CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-rea
 import { cn } from '@/lib/utils';
 import { createLogger } from '@/lib/logger';
 import { useTTSPreview } from '@/lib/audio/use-tts-preview';
+import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
 const log = createLogger('TTSSettings');
 
 interface TTSSettingsProps {
   selectedProviderId: TTSProviderId;
+  isAdmin?: boolean;
+  adminConfig?: AdminProviderConfig;
+  onAdminConfigSave?: (patch: AdminProviderConfigPatch) => void | Promise<void>;
 }
 
-export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
+export function TTSSettings({
+  selectedProviderId,
+  isAdmin = false,
+  adminConfig,
+  onAdminConfigSave,
+}: TTSSettingsProps) {
   const { t } = useI18n();
 
   const ttsVoice = useSettingsStore((state) => state.ttsVoice);
   const ttsSpeed = useSettingsStore((state) => state.ttsSpeed);
   const ttsProvidersConfig = useSettingsStore((state) => state.ttsProvidersConfig);
-  const setTTSProviderConfig = useSettingsStore((state) => state.setTTSProviderConfig);
   const activeProviderId = useSettingsStore((state) => state.ttsProviderId);
 
   // When testing a non-active provider, use that provider's default voice
@@ -39,6 +47,8 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
   const isServerConfigured = !!ttsProvidersConfig[selectedProviderId]?.isServerConfigured;
 
   const [showApiKey, setShowApiKey] = useState(false);
+  const [adminApiKey, setAdminApiKey] = useState('');
+  const [adminBaseUrl, setAdminBaseUrl] = useState('');
   const [testText, setTestText] = useState(t('settings.ttsTestTextDefault'));
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -46,7 +56,7 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
 
   // Doubao TTS uses compound "appId:accessKey" — split for separate UI fields
   const isDoubao = selectedProviderId === 'doubao-tts';
-  const rawApiKey = ttsProvidersConfig[selectedProviderId]?.apiKey || '';
+  const rawApiKey = isAdmin ? adminApiKey : ttsProvidersConfig[selectedProviderId]?.apiKey || '';
   const doubaoColonIdx = rawApiKey.indexOf(':');
   const doubaoAppId = isDoubao && doubaoColonIdx > 0 ? rawApiKey.slice(0, doubaoColonIdx) : '';
   const doubaoAccessKey =
@@ -58,7 +68,22 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
 
   const setDoubaoCompoundKey = (appId: string, accessKey: string) => {
     const combined = appId && accessKey ? `${appId}:${accessKey}` : appId || accessKey;
-    setTTSProviderConfig(selectedProviderId, { apiKey: combined });
+    if (isAdmin) {
+      setAdminApiKey(combined);
+    }
+  };
+
+  const handleSaveAdminConnection = () => {
+    if (!isAdmin || !onAdminConfigSave) return;
+
+    const patch: AdminProviderConfigPatch = {
+      baseUrl: adminBaseUrl.trim() || null,
+    };
+    if (adminApiKey.trim()) {
+      patch.apiKey = adminApiKey.trim();
+    }
+    void onAdminConfigSave(patch);
+    setAdminApiKey('');
   };
 
   // Keep the sample text in sync with locale changes.
@@ -70,9 +95,11 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
   useEffect(() => {
     stopPreview();
     setShowApiKey(false);
+    setAdminApiKey('');
+    setAdminBaseUrl(adminConfig?.baseUrl || '');
     setTestStatus('idle');
     setTestMessage('');
-  }, [selectedProviderId, stopPreview]);
+  }, [adminConfig?.baseUrl, selectedProviderId, stopPreview]);
 
   const handleTestTTS = async () => {
     if (!testText.trim()) return;
@@ -113,7 +140,7 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
       )}
 
       {/* API Key & Base URL */}
-      {(ttsProvider.requiresApiKey || isServerConfigured) && (
+      {isAdmin && (ttsProvider.requiresApiKey || isServerConfigured) && (
         <>
           <div className={cn('grid gap-4', isDoubao ? 'grid-cols-3' : 'grid-cols-2')}>
             {isDoubao ? (
@@ -129,12 +156,13 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
                       autoCorrect="off"
                       spellCheck={false}
                       placeholder={
-                        isServerConfigured
-                          ? t('settings.optionalOverride')
+                        adminConfig?.hasApiKey
+                          ? 'Leave blank to keep existing key'
                           : t('settings.enterApiKey')
                       }
                       value={doubaoAppId}
                       onChange={(e) => setDoubaoCompoundKey(e.target.value, doubaoAccessKey)}
+                      onBlur={handleSaveAdminConnection}
                       className="font-mono text-sm pr-10"
                     />
                     <button
@@ -157,12 +185,13 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
                       autoCorrect="off"
                       spellCheck={false}
                       placeholder={
-                        isServerConfigured
-                          ? t('settings.optionalOverride')
+                        adminConfig?.hasApiKey
+                          ? 'Leave blank to keep existing key'
                           : t('settings.enterApiKey')
                       }
                       value={doubaoAccessKey}
                       onChange={(e) => setDoubaoCompoundKey(doubaoAppId, e.target.value)}
+                      onBlur={handleSaveAdminConnection}
                       className="font-mono text-sm pr-10"
                     />
                     <button
@@ -187,16 +216,13 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
                     autoCorrect="off"
                     spellCheck={false}
                     placeholder={
-                      isServerConfigured
-                        ? t('settings.optionalOverride')
+                      adminConfig?.hasApiKey
+                        ? 'Leave blank to keep existing key'
                         : t('settings.enterApiKey')
                     }
-                    value={ttsProvidersConfig[selectedProviderId]?.apiKey || ''}
-                    onChange={(e) =>
-                      setTTSProviderConfig(selectedProviderId, {
-                        apiKey: e.target.value,
-                      })
-                    }
+                    value={adminApiKey}
+                    onChange={(e) => setAdminApiKey(e.target.value)}
+                    onBlur={handleSaveAdminConnection}
                     className="font-mono text-sm pr-10"
                   />
                   <button
@@ -218,12 +244,9 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
                 autoCorrect="off"
                 spellCheck={false}
                 placeholder={ttsProvider.defaultBaseUrl || t('settings.enterCustomBaseUrl')}
-                value={ttsProvidersConfig[selectedProviderId]?.baseUrl || ''}
-                onChange={(e) =>
-                  setTTSProviderConfig(selectedProviderId, {
-                    baseUrl: e.target.value,
-                  })
-                }
+                value={adminBaseUrl}
+                onChange={(e) => setAdminBaseUrl(e.target.value)}
+                onBlur={handleSaveAdminConnection}
                 className="text-sm"
               />
             </div>
@@ -231,7 +254,7 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
           {/* Request URL Preview */}
           {(() => {
             const effectiveBaseUrl =
-              ttsProvidersConfig[selectedProviderId]?.baseUrl || ttsProvider.defaultBaseUrl || '';
+              adminBaseUrl || ttsProvider.defaultBaseUrl || '';
             if (!effectiveBaseUrl) return null;
             let endpointPath = '';
             switch (selectedProviderId) {
@@ -278,7 +301,7 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
               testingTTS ||
               !testText.trim() ||
               (ttsProvider.requiresApiKey &&
-                !ttsProvidersConfig[selectedProviderId]?.apiKey?.trim() &&
+                !(isAdmin ? adminConfig?.hasApiKey : ttsProvidersConfig[selectedProviderId]?.apiKey?.trim()) &&
                 !isServerConfigured)
             }
             size="default"

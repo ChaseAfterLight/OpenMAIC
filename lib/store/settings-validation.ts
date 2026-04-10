@@ -10,15 +10,15 @@ export type ProviderCfgLike = {
   apiKey?: string;
 };
 
-/** Check whether a provider has a usable path (server config or client key). */
+/** Check whether a provider has a usable path from the server-managed config. */
 export function isProviderUsable(cfg: ProviderCfgLike | undefined): boolean {
   if (!cfg) return false;
-  return !!cfg.isServerConfigured || !!cfg.apiKey;
+  return !!cfg.isServerConfigured;
 }
 
 /**
  * Validate current provider selection against updated config.
- * Returns the current ID if still usable, otherwise the first usable
+ * Returns the current ID if still server-configured, otherwise the first usable
  * provider from fallbackOrder, or defaultId if provided, or ''.
  */
 export function validateProvider<T extends string>(

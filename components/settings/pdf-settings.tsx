@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,7 @@ import { PDF_PROVIDERS } from '@/lib/pdf/constants';
 import type { PDFProviderId } from '@/lib/pdf/types';
 import { CheckCircle2, Eye, EyeOff, Loader2, Zap, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
 /**
  * Get display label for feature
@@ -29,22 +30,38 @@ function getFeatureLabel(feature: string, t: (key: string) => string): string {
 
 interface PDFSettingsProps {
   selectedProviderId: PDFProviderId;
+  isAdmin?: boolean;
+  adminConfig?: AdminProviderConfig;
+  onAdminConfigSave?: (patch: AdminProviderConfigPatch) => void | Promise<void>;
 }
 
-export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
+export function PDFSettings({
+  selectedProviderId,
+  isAdmin = false,
+  adminConfig,
+  onAdminConfigSave,
+}: PDFSettingsProps) {
   const { t } = useI18n();
   const [showApiKey, setShowApiKey] = useState(false);
+  const [adminApiKey, setAdminApiKey] = useState('');
+  const [adminBaseUrl, setAdminBaseUrl] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
 
   const pdfProvidersConfig = useSettingsStore((state) => state.pdfProvidersConfig);
-  const setPDFProviderConfig = useSettingsStore((state) => state.setPDFProviderConfig);
 
   const pdfProvider = PDF_PROVIDERS[selectedProviderId];
   const isServerConfigured = !!pdfProvidersConfig[selectedProviderId]?.isServerConfigured;
   const providerConfig = pdfProvidersConfig[selectedProviderId];
-  const hasBaseUrl = !!providerConfig?.baseUrl;
   const needsRemoteConfig = selectedProviderId === 'mineru';
+  const effectiveBaseUrl = isAdmin ? adminBaseUrl : providerConfig?.baseUrl || '';
+  const hasBaseUrl = !!effectiveBaseUrl || isServerConfigured;
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset credential draft when switching admin records.
+    setAdminApiKey('');
+    setAdminBaseUrl(adminConfig?.baseUrl || '');
+  }, [adminConfig?.baseUrl, selectedProviderId]);
 
   // Reset state when provider changes
   const [prevSelectedProviderId, setPrevSelectedProviderId] = useState(selectedProviderId);
@@ -55,8 +72,21 @@ export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
     setTestMessage('');
   }
 
+  const handleSaveAdminConnection = () => {
+    if (!isAdmin || !onAdminConfigSave) return;
+
+    const patch: AdminProviderConfigPatch = {
+      baseUrl: adminBaseUrl.trim() || null,
+    };
+    if (adminApiKey.trim()) {
+      patch.apiKey = adminApiKey.trim();
+    }
+    void onAdminConfigSave(patch);
+    setAdminApiKey('');
+  };
+
   const handleTestConnection = async () => {
-    const baseUrl = providerConfig?.baseUrl;
+    const baseUrl = effectiveBaseUrl;
     if (!baseUrl) return;
 
     setTestStatus('testing');
@@ -68,7 +98,7 @@ export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           providerId: selectedProviderId,
-          apiKey: providerConfig?.apiKey || '',
+          apiKey: isAdmin ? adminApiKey : providerConfig?.apiKey || '',
           baseUrl,
         }),
       });
@@ -92,14 +122,18 @@ export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Server-configured notice */}
-      {isServerConfigured && (
+      {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
-          {t('settings.serverConfiguredNotice')}
+          {isAdmin
+            ? `Admin mode: PDF provider settings are saved to the server database. ${
+                adminConfig?.hasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
+              }`
+            : t('settings.serverConfiguredNotice')}
         </div>
       )}
 
       {/* Base URL + API Key Configuration (for remote providers like MinerU) */}
-      {(needsRemoteConfig || isServerConfigured) && (
+      {isAdmin && (needsRemoteConfig || isServerConfigured) && (
         <>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -112,10 +146,9 @@ export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
                   autoCorrect="off"
                   spellCheck={false}
                   placeholder="http://localhost:8080"
-                  value={providerConfig?.baseUrl || ''}
-                  onChange={(e) =>
-                    setPDFProviderConfig(selectedProviderId, { baseUrl: e.target.value })
-                  }
+                  value={adminBaseUrl}
+                  onChange={(e) => setAdminBaseUrl(e.target.value)}
+                  onBlur={handleSaveAdminConnection}
                   className="text-sm"
                 />
                 <Button
@@ -153,14 +186,13 @@ export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
                   autoCorrect="off"
                   spellCheck={false}
                   placeholder={
-                    isServerConfigured ? t('settings.optionalOverride') : t('settings.enterApiKey')
+                    adminConfig?.hasApiKey
+                      ? 'Leave blank to keep existing key'
+                      : t('settings.enterApiKey')
                   }
-                  value={providerConfig?.apiKey || ''}
-                  onChange={(e) =>
-                    setPDFProviderConfig(selectedProviderId, {
-                      apiKey: e.target.value,
-                    })
-                  }
+                  value={adminApiKey}
+                  onChange={(e) => setAdminApiKey(e.target.value)}
+                  onBlur={handleSaveAdminConnection}
                   className="font-mono text-sm pr-10"
                 />
                 <button
@@ -195,7 +227,6 @@ export function PDFSettings({ selectedProviderId }: PDFSettingsProps) {
 
           {/* Request URL Preview */}
           {(() => {
-            const effectiveBaseUrl = providerConfig?.baseUrl || '';
             if (!effectiveBaseUrl) return null;
             const fullUrl = effectiveBaseUrl + '/file_parse';
             return (

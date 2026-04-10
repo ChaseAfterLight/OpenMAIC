@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,23 +9,39 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
 import { WEB_SEARCH_PROVIDERS, BAIDU_SUB_SOURCES } from '@/lib/web-search/constants';
 import type { WebSearchProviderId, BaiduSubSources } from '@/lib/web-search/types';
+import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
 interface WebSearchSettingsProps {
   selectedProviderId: WebSearchProviderId;
+  isAdmin?: boolean;
+  adminConfig?: AdminProviderConfig;
+  onAdminConfigSave?: (patch: AdminProviderConfigPatch) => void | Promise<void>;
 }
 
-export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps) {
+export function WebSearchSettings({
+  selectedProviderId,
+  isAdmin = false,
+  adminConfig,
+  onAdminConfigSave,
+}: WebSearchSettingsProps) {
   const { t, locale } = useI18n();
   const [showApiKey, setShowApiKey] = useState(false);
+  const [adminApiKey, setAdminApiKey] = useState('');
+  const [adminBaseUrl, setAdminBaseUrl] = useState('');
+  const [adminBaiduSubSources, setAdminBaiduSubSources] = useState<BaiduSubSources>({
+    webSearch: true,
+    baike: true,
+    scholar: true,
+  });
 
   const webSearchProvidersConfig = useSettingsStore((state) => state.webSearchProvidersConfig);
-  const setWebSearchProviderConfig = useSettingsStore((state) => state.setWebSearchProviderConfig);
   const baiduSubSources = useSettingsStore((state) => state.baiduSubSources);
   const setBaiduSubSources = useSettingsStore((state) => state.setBaiduSubSources);
 
   const provider = WEB_SEARCH_PROVIDERS[selectedProviderId];
   const isServerConfigured = !!webSearchProvidersConfig[selectedProviderId]?.isServerConfigured;
-  const showApiKeyInput = provider.requiresApiKey || isServerConfigured;
+  const showApiKeyInput = isAdmin && (provider.requiresApiKey || isServerConfigured);
+  const labelLocale = locale === 'zh-CN' ? 'zh-CN' : 'en-US';
 
   const [prevSelectedProviderId, setPrevSelectedProviderId] = useState(selectedProviderId);
   if (selectedProviderId !== prevSelectedProviderId) {
@@ -33,14 +49,64 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
     setShowApiKey(false);
   }
 
+  useEffect(() => {
+    const options = adminConfig?.providerOptions ?? {};
+    const configuredSources = options.baiduSubSources;
+    const nextSources =
+      configuredSources && typeof configuredSources === 'object' && !Array.isArray(configuredSources)
+        ? ({ ...baiduSubSources, ...(configuredSources as Partial<BaiduSubSources>) } as BaiduSubSources)
+        : baiduSubSources;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset admin drafts when switching provider records.
+    setAdminApiKey('');
+    setAdminBaseUrl(adminConfig?.baseUrl || '');
+    setAdminBaiduSubSources(nextSources);
+  }, [adminConfig?.baseUrl, adminConfig?.providerOptions, baiduSubSources, selectedProviderId]);
+
+  const saveAdminConfig = (sources = adminBaiduSubSources) => {
+    if (!isAdmin || !onAdminConfigSave) return;
+
+    const providerOptions =
+      selectedProviderId === 'baidu'
+        ? {
+            ...(adminConfig?.providerOptions ?? {}),
+            baiduSubSources: sources,
+          }
+        : adminConfig?.providerOptions ?? {};
+    const patch: AdminProviderConfigPatch = {
+      baseUrl: adminBaseUrl.trim() || null,
+      providerOptions,
+    };
+    if (adminApiKey.trim()) {
+      patch.apiKey = adminApiKey.trim();
+    }
+    void onAdminConfigSave(patch);
+    setAdminApiKey('');
+  };
+
+  const publicProviderOptions = webSearchProvidersConfig[selectedProviderId]?.providerOptions ?? {};
+  const publicBaiduSources = publicProviderOptions.baiduSubSources;
+  const effectiveBaiduSubSources =
+    isAdmin
+      ? adminBaiduSubSources
+      : publicBaiduSources && typeof publicBaiduSources === 'object' && !Array.isArray(publicBaiduSources)
+        ? ({ ...baiduSubSources, ...(publicBaiduSources as Partial<BaiduSubSources>) } as BaiduSubSources)
+        : baiduSubSources;
+
   const effectiveBaseUrl =
-    webSearchProvidersConfig[selectedProviderId]?.baseUrl || provider.defaultBaseUrl || '';
+    (isAdmin ? adminBaseUrl : webSearchProvidersConfig[selectedProviderId]?.baseUrl) ||
+    webSearchProvidersConfig[selectedProviderId]?.serverBaseUrl ||
+    provider.defaultBaseUrl ||
+    '';
 
   return (
     <div className="space-y-6 max-w-3xl">
-      {isServerConfigured && (
+      {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
-          {t('settings.serverConfiguredNotice')}
+          {isAdmin
+            ? `Admin mode: web search settings are saved to the server database. ${
+                adminConfig?.hasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
+              }`
+            : t('settings.serverConfiguredNotice')}
         </div>
       )}
 
@@ -50,6 +116,7 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
         </div>
       )}
 
+      {isAdmin && (
       <div className={`grid gap-4 ${showApiKeyInput ? 'grid-cols-2' : 'grid-cols-1'}`}>
         {showApiKeyInput && (
           <div className="space-y-2">
@@ -63,14 +130,13 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
                 autoCorrect="off"
                 spellCheck={false}
                 placeholder={
-                  isServerConfigured ? t('settings.optionalOverride') : t('settings.enterApiKey')
+                  adminConfig?.hasApiKey
+                    ? 'Leave blank to keep existing key'
+                    : t('settings.enterApiKey')
                 }
-                value={webSearchProvidersConfig[selectedProviderId]?.apiKey || ''}
-                onChange={(e) =>
-                  setWebSearchProviderConfig(selectedProviderId, {
-                    apiKey: e.target.value,
-                  })
-                }
+                value={adminApiKey}
+                onChange={(e) => setAdminApiKey(e.target.value)}
+                onBlur={() => saveAdminConfig()}
                 className="font-mono text-sm pr-10"
               />
               <button
@@ -94,16 +160,14 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
             autoCorrect="off"
             spellCheck={false}
             placeholder={provider.defaultBaseUrl || 'https://api.tavily.com'}
-            value={webSearchProvidersConfig[selectedProviderId]?.baseUrl || ''}
-            onChange={(e) =>
-              setWebSearchProviderConfig(selectedProviderId, {
-                baseUrl: e.target.value,
-              })
-            }
+            value={adminBaseUrl}
+            onChange={(e) => setAdminBaseUrl(e.target.value)}
+            onBlur={() => saveAdminConfig()}
             className="text-sm"
           />
         </div>
       </div>
+      )}
 
       {effectiveBaseUrl && (
         <p className="text-xs text-muted-foreground break-all">
@@ -123,7 +187,7 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
                 (typeof BAIDU_SUB_SOURCES)[keyof typeof BAIDU_SUB_SOURCES],
               ][]
             ).map(([key, meta]) => {
-              const enabled = baiduSubSources?.[key] ?? true;
+              const enabled = effectiveBaiduSubSources?.[key] ?? true;
               return (
                 <div key={key} className="flex items-center gap-2.5">
                   <span
@@ -131,11 +195,20 @@ export function WebSearchSettings({ selectedProviderId }: WebSearchSettingsProps
                       !enabled ? 'text-muted-foreground' : ''
                     }`}
                   >
-                    {meta.label[locale]}
+                    {meta.label[labelLocale]}
                   </span>
                   <Switch
                     checked={enabled}
-                    onCheckedChange={(checked) => setBaiduSubSources({ [key]: checked })}
+                    disabled={!isAdmin}
+                    onCheckedChange={(checked) => {
+                      const nextSources = { ...effectiveBaiduSubSources, [key]: checked };
+                      if (isAdmin) {
+                        setAdminBaiduSubSources(nextSources);
+                        saveAdminConfig(nextSources);
+                      } else {
+                        setBaiduSubSources({ [key]: checked });
+                      }
+                    }}
                     className="scale-[0.85] origin-right"
                   />
                 </div>

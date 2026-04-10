@@ -40,8 +40,10 @@ export async function POST(request: NextRequest) {
 
     const apiKey = clientBaseUrl
       ? clientApiKey || ''
-      : resolveImageApiKey(providerId, clientApiKey);
-    const baseUrl = clientBaseUrl ? clientBaseUrl : resolveImageBaseUrl(providerId, clientBaseUrl);
+      : await resolveImageApiKey(providerId, clientApiKey);
+    const baseUrl = clientBaseUrl
+      ? clientBaseUrl
+      : await resolveImageBaseUrl(providerId, clientBaseUrl);
 
     if (!apiKey) {
       return apiError('MISSING_API_KEY', 400, 'No API key configured');

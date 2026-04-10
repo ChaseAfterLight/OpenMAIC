@@ -83,6 +83,7 @@ export interface SettingsState {
       enabled: boolean;
       isServerConfigured?: boolean;
       serverBaseUrl?: string;
+      providerOptions?: Record<string, unknown>;
     }
   >;
 
@@ -131,6 +132,7 @@ export interface SettingsState {
       enabled: boolean;
       isServerConfigured?: boolean;
       serverBaseUrl?: string;
+      providerOptions?: Record<string, unknown>;
     }
   >;
   baiduSubSources: BaiduSubSources;
@@ -251,7 +253,12 @@ export interface SettingsState {
   setWebSearchProvider: (providerId: WebSearchProviderId) => void;
   setWebSearchProviderConfig: (
     providerId: WebSearchProviderId,
-    config: Partial<{ apiKey: string; baseUrl: string; enabled: boolean }>,
+    config: Partial<{
+      apiKey: string;
+      baseUrl: string;
+      enabled: boolean;
+      providerOptions: Record<string, unknown>;
+    }>,
   ) => void;
   setBaiduSubSources: (sources: Partial<BaiduSubSources>) => void;
 
@@ -343,13 +350,16 @@ const getDefaultVideoConfig = () => ({
 });
 
 // Initialize default Web Search config
-const getDefaultWebSearchConfig = () => ({
+const getDefaultWebSearchConfig = (): Pick<
+  SettingsState,
+  'webSearchProviderId' | 'webSearchProvidersConfig' | 'baiduSubSources'
+> => ({
   webSearchProviderId: 'tavily' as WebSearchProviderId,
   webSearchProvidersConfig: {
     tavily: { apiKey: '', baseUrl: '', enabled: true },
     brave: { apiKey: '', baseUrl: '', enabled: true },
     baidu: { apiKey: '', baseUrl: '', enabled: false },
-  } as Record<WebSearchProviderId, { apiKey: string; baseUrl: string; enabled: boolean }>,
+  } as SettingsState['webSearchProvidersConfig'],
   baiduSubSources: {
     webSearch: true,
     baike: true,
@@ -781,7 +791,7 @@ export const useSettingsStore = create<SettingsState>()(
               pdf: Record<string, { baseUrl?: string }>;
               image: Record<string, { baseUrl?: string }>;
               video: Record<string, { baseUrl?: string }>;
-              webSearch: Record<string, { baseUrl?: string }>;
+              webSearch: Record<string, { baseUrl?: string; providerOptions?: Record<string, unknown> }>;
             };
 
             set((state) => {
@@ -942,6 +952,7 @@ export const useSettingsStore = create<SettingsState>()(
                   ...newWebSearchConfig[key],
                   isServerConfigured: false,
                   serverBaseUrl: undefined,
+                  providerOptions: undefined,
                 };
               }
               if (data.webSearch) {
@@ -952,21 +963,31 @@ export const useSettingsStore = create<SettingsState>()(
                       ...newWebSearchConfig[key],
                       isServerConfigured: true,
                       serverBaseUrl: info.baseUrl,
+                      providerOptions: info.providerOptions,
                     };
                   }
                 }
               }
 
+              const serverBaiduSources = data.webSearch?.baidu?.providerOptions?.baiduSubSources;
+              const nextBaiduSubSources =
+                serverBaiduSources &&
+                typeof serverBaiduSources === 'object' &&
+                !Array.isArray(serverBaiduSources)
+                  ? ({
+                      ...state.baiduSubSources,
+                      ...(serverBaiduSources as Partial<BaiduSubSources>),
+                    } as BaiduSubSources)
+                  : state.baiduSubSources;
+
               // === Validate current selections against updated configs ===
-              // Build fallback: server-configured first, then client-key-only
+              // Build fallback from server-managed configs only. Local credentials remain
+              // persisted for migration compatibility, but are no longer a usable source.
               const buildFallback = <T extends string>(
-                config: Record<string, { isServerConfigured?: boolean; apiKey?: string }>,
+                config: Record<string, { isServerConfigured?: boolean }>,
               ): T[] => [
                 ...Object.entries(config)
                   .filter(([, c]) => c.isServerConfigured)
-                  .map(([id]) => id as T),
-                ...Object.entries(config)
-                  .filter(([, c]) => !c.isServerConfigured && !!c.apiKey)
                   .map(([id]) => id as T),
               ];
 
@@ -1152,6 +1173,7 @@ export const useSettingsStore = create<SettingsState>()(
                 imageProvidersConfig: newImageConfig,
                 videoProvidersConfig: newVideoConfig,
                 webSearchProvidersConfig: newWebSearchConfig,
+                baiduSubSources: nextBaiduSubSources,
                 autoConfigApplied: true,
                 // Validated selections
                 ...(validLLMProvider !== state.providerId && {

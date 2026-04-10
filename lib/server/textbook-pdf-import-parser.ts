@@ -3,7 +3,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 import { z } from 'zod';
 import { jsonrepair } from 'jsonrepair';
 import { callLLM } from '@/lib/ai/llm';
-import { parseModelString } from '@/lib/ai/providers';
+import { isProviderKeyRequired, parseModelString } from '@/lib/ai/providers';
 import { buildVisionUserContent } from '@/lib/generation/prompt-formatters';
 import { createLogger } from '@/lib/logger';
 import { resolveApiKey } from '@/lib/server/provider-config';
@@ -68,6 +68,17 @@ interface CanvasLike {
 }
 
 type CreateCanvasFn = (width: number, height: number) => CanvasLike;
+
+interface PdfPageLike {
+  getViewport: (params: { scale: number }) => { width: number; height: number };
+  render: (params: { canvasContext: object; viewport: { width: number; height: number } }) => {
+    promise: Promise<unknown>;
+  };
+}
+
+interface PdfDocumentLike {
+  getPage: (pageNumber: number) => Promise<PdfPageLike>;
+}
 
 let cachedCreateCanvas: CreateCanvasFn | null | undefined;
 
@@ -1274,15 +1285,7 @@ async function getCreateCanvas(): Promise<CreateCanvasFn | null> {
 }
 
 async function renderPdfPagesForVision(
-  pdf: {
-    getPage: (pageNumber: number) => Promise<{
-      getViewport: (params: { scale: number }) => { width: number; height: number };
-      render: (params: {
-        canvasContext: object;
-        viewport: { width: number; height: number };
-      }) => { promise: Promise<unknown> };
-    }>;
-  },
+  pdf: PdfDocumentLike,
   pageNumbers: number[],
 ): Promise<AiVisionPageImage[]> {
   const createCanvas = await getCreateCanvas();
@@ -1321,15 +1324,7 @@ async function renderPdfPagesForVision(
 
 async function runAiTocExtraction(
   pageTexts: string[],
-  pdf?: {
-    getPage: (pageNumber: number) => Promise<{
-      getViewport: (params: { scale: number }) => { width: number; height: number };
-      render: (params: {
-        canvasContext: object;
-        viewport: { width: number; height: number };
-      }) => { promise: Promise<unknown> };
-    }>;
-  },
+  pdf?: PdfDocumentLike,
 ): Promise<AiExtractionAttemptResult> {
   if (!isAiImportEnabled()) {
     log.info('教材 PDF AI 辅助已关闭，使用规则解析');
@@ -1344,8 +1339,8 @@ async function runAiTocExtraction(
   const preferredModelString =
     process.env.TEXTBOOK_PDF_IMPORT_AI_MODEL?.trim() || process.env.DEFAULT_MODEL || 'gpt-4o-mini';
   const { providerId } = parseModelString(preferredModelString);
-  const apiKey = resolveApiKey(providerId);
-  if (!apiKey) {
+  const apiKey = await resolveApiKey(providerId);
+  if (isProviderKeyRequired(providerId) && !apiKey) {
     log.warn(
       `教材 PDF AI 模型缺少 API key，已回退到规则解析: model=${preferredModelString}, provider=${providerId}`,
     );
@@ -1358,9 +1353,8 @@ async function runAiTocExtraction(
     };
   }
 
-  const { model: languageModel, modelInfo, modelString: resolvedModelString } = resolveModel({
+  const { model: languageModel, modelInfo, modelString: resolvedModelString } = await resolveModel({
     modelString: preferredModelString,
-    requiresApiKey: false,
   });
   log.info(
     `教材 PDF AI 开始调用: model=${resolvedModelString}, provider=${providerId}, vision=${Boolean(modelInfo?.capabilities?.vision)}, timeoutMs=${getAiTimeoutMs()}`,
@@ -1700,15 +1694,7 @@ function buildAiProposal(
 
 async function buildImportProposal(
   pageTexts: string[],
-  pdf?: {
-    getPage: (pageNumber: number) => Promise<{
-      getViewport: (params: { scale: number }) => { width: number; height: number };
-      render: (params: {
-        canvasContext: object;
-        viewport: { width: number; height: number };
-      }) => { promise: Promise<unknown> };
-    }>;
-  },
+  pdf?: PdfDocumentLike,
 ): Promise<ProposalResult> {
   log.info(
     `开始生成教材 PDF 导入提议: pages=${pageTexts.length}, aiEnabled=${isAiImportEnabled()}, aiModel=${process.env.TEXTBOOK_PDF_IMPORT_AI_MODEL?.trim() || process.env.DEFAULT_MODEL || 'gpt-4o-mini'}`,
@@ -1788,7 +1774,7 @@ export async function runTextbookPdfImportProcessing(draftId: string): Promise<v
         preview: text.slice(0, 160),
       })),
     });
-    const proposal = await buildImportProposal(pageTexts, pdf);
+    const proposal = await buildImportProposal(pageTexts, pdf as unknown as PdfDocumentLike);
 
     await updateTextbookPdfImportProcessing({
       draftId,

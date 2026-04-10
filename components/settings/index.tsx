@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
+import { useAuthSessionStore } from '@/lib/store/auth-session';
 import { toast } from 'sonner';
 import { type ProviderId } from '@/lib/ai/providers';
 import { PROVIDERS } from '@/lib/ai/providers';
@@ -58,6 +59,14 @@ import { GeneralSettings } from './general-settings';
 import { ModelEditDialog } from './model-edit-dialog';
 import { AddProviderDialog, type NewProviderData } from './add-provider-dialog';
 import type { SettingsSection, EditingModel } from '@/lib/types/settings';
+import {
+  adminProviderConfigKey,
+  fetchAdminProviderConfigs,
+  saveAdminProviderConfig,
+  type AdminProviderConfigMap,
+  type AdminProviderConfigPatch,
+  type AdminProviderKind,
+} from './admin-provider-config';
 
 // ─── Provider List Column (reusable) ───
 function ProviderListColumn<T extends string>({
@@ -198,6 +207,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const ttsProvidersConfig = useSettingsStore((state) => state.ttsProvidersConfig);
   const asrProviderId = useSettingsStore((state) => state.asrProviderId);
   const asrProvidersConfig = useSettingsStore((state) => state.asrProvidersConfig);
+  const isAdmin = useAuthSessionStore((state) => state.user?.role === 'admin');
 
   // Store actions
   const setModel = useSettingsStore((state) => state.setModel);
@@ -205,6 +215,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const setProvidersConfig = useSettingsStore((state) => state.setProvidersConfig);
   const setTTSProvider = useSettingsStore((state) => state.setTTSProvider);
   const setASRProvider = useSettingsStore((state) => state.setASRProvider);
+  const fetchServerProviders = useSettingsStore((state) => state.fetchServerProviders);
 
   // Navigation
   const [activeSection, setActiveSection] = useState<SettingsSection>('providers');
@@ -236,6 +247,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   // Save status indicator
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [adminConfigs, setAdminConfigs] = useState<AdminProviderConfigMap>({});
 
   // Resizable column widths
   const [sidebarWidth, setSidebarWidth] = useState(192);
@@ -289,6 +301,64 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       document.body.style.cursor = '';
     };
   }, [isResizing]);
+
+  const loadAdminConfigs = useCallback(async () => {
+    if (!isAdmin) {
+      setAdminConfigs({});
+      return;
+    }
+
+    try {
+      const configs = await fetchAdminProviderConfigs();
+      setAdminConfigs(
+        Object.fromEntries(
+          configs.map((config) => [
+            adminProviderConfigKey(config.providerKind, config.providerId),
+            config,
+          ]),
+        ),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('settings.saveFailed'));
+    }
+  }, [isAdmin, t]);
+
+  useEffect(() => {
+    if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Load admin-only server config when the dialog opens.
+      void loadAdminConfigs();
+    }
+  }, [open, loadAdminConfigs]);
+
+  const getAdminConfig = useCallback(
+    (kind: AdminProviderKind, id: string) => adminConfigs[adminProviderConfigKey(kind, id)],
+    [adminConfigs],
+  );
+
+  const handleAdminConfigSave = useCallback(
+    async (kind: AdminProviderKind, id: string, patch: AdminProviderConfigPatch) => {
+      if (!isAdmin) return;
+
+      try {
+        const config = await saveAdminProviderConfig(kind, id, {
+          enabled: getAdminConfig(kind, id)?.enabled ?? true,
+          ...patch,
+        });
+        setAdminConfigs((current) => ({
+          ...current,
+          [adminProviderConfigKey(config.providerKind, config.providerId)]: config,
+        }));
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+        await fetchServerProviders();
+      } catch (error) {
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+        toast.error(error instanceof Error ? error.message : t('settings.saveFailed'));
+      }
+    },
+    [fetchServerProviders, getAdminConfig, isAdmin, t],
+  );
 
   const handleSave = () => {
     onOpenChange(false);
@@ -360,6 +430,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     const currentModels = providersConfig[pid]?.models || [];
     const newModels = currentModels.filter((_, i) => i !== modelIndex);
     setProviderConfig(pid, { models: newModels });
+    if (isAdmin) {
+      void handleAdminConfigSave('llm', pid, { models: newModels.map((model) => model.id) });
+    }
   };
 
   const handleAutoSaveModel = () => {
@@ -405,6 +478,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       newModels[modelIndex] = model;
     }
     setProviderConfig(pid, { models: newModels });
+    if (isAdmin) {
+      void handleAdminConfigSave('llm', pid, { models: newModels.map((item) => item.id) });
+    }
     setShowModelDialog(false);
     setEditingModel(null);
   };
@@ -472,6 +548,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     const provider = PROVIDERS[pid];
     if (!provider) return;
     setProviderConfig(pid, { models: [...provider.models] });
+    if (isAdmin) {
+      void handleAdminConfigSave('llm', pid, { models: provider.models.map((model) => model.id) });
+    }
     toast.success(t('settings.resetSuccess'));
   };
 
@@ -797,6 +876,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 onSelect={handleProviderSelect}
                 onAddProvider={() => setShowAddProviderDialog(true)}
                 width={providerListWidth}
+                showAddProvider={isAdmin}
               />
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'providerList')}
@@ -943,7 +1023,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             <div className="flex items-center justify-between p-5 border-b">
               <div className="flex items-center gap-3">{getHeaderContent()}</div>
               <div className="flex items-center gap-2">
-                {activeSection === 'providers' &&
+                {isAdmin &&
+                  activeSection === 'providers' &&
                   !providersConfig[selectedProviderId]?.isBuiltIn && (
                     <Button
                       variant="ghost"
@@ -982,23 +1063,70 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   onAddModel={handleAddModel}
                   onResetToDefault={() => handleResetProvider(selectedProviderId)}
                   isBuiltIn={providersConfig[selectedProviderId]?.isBuiltIn ?? true}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('llm', selectedProviderId)}
+                  onAdminConfigSave={(patch) =>
+                    handleAdminConfigSave('llm', selectedProviderId, patch)
+                  }
                 />
               )}
 
               {activeSection === 'pdf' && (
-                <PDFSettings selectedProviderId={selectedPdfProviderId} />
+                <PDFSettings
+                  selectedProviderId={selectedPdfProviderId}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('pdf', selectedPdfProviderId)}
+                  onAdminConfigSave={(patch) =>
+                    handleAdminConfigSave('pdf', selectedPdfProviderId, patch)
+                  }
+                />
               )}
               {activeSection === 'web-search' && (
-                <WebSearchSettings selectedProviderId={selectedWebSearchProviderId} />
+                <WebSearchSettings
+                  selectedProviderId={selectedWebSearchProviderId}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('web-search', selectedWebSearchProviderId)}
+                  onAdminConfigSave={(patch) =>
+                    handleAdminConfigSave('web-search', selectedWebSearchProviderId, patch)
+                  }
+                />
               )}
               {activeSection === 'image' && (
-                <ImageSettings selectedProviderId={selectedImageProviderId} />
+                <ImageSettings
+                  selectedProviderId={selectedImageProviderId}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('image', selectedImageProviderId)}
+                  onAdminConfigSave={(patch) =>
+                    handleAdminConfigSave('image', selectedImageProviderId, patch)
+                  }
+                />
               )}
               {activeSection === 'video' && (
-                <VideoSettings selectedProviderId={selectedVideoProviderId} />
+                <VideoSettings
+                  selectedProviderId={selectedVideoProviderId}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('video', selectedVideoProviderId)}
+                  onAdminConfigSave={(patch) =>
+                    handleAdminConfigSave('video', selectedVideoProviderId, patch)
+                  }
+                />
               )}
-              {activeSection === 'tts' && <TTSSettings selectedProviderId={ttsProviderId} />}
-              {activeSection === 'asr' && <ASRSettings selectedProviderId={asrProviderId} />}
+              {activeSection === 'tts' && (
+                <TTSSettings
+                  selectedProviderId={ttsProviderId}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('tts', ttsProviderId)}
+                  onAdminConfigSave={(patch) => handleAdminConfigSave('tts', ttsProviderId, patch)}
+                />
+              )}
+              {activeSection === 'asr' && (
+                <ASRSettings
+                  selectedProviderId={asrProviderId}
+                  isAdmin={isAdmin}
+                  adminConfig={getAdminConfig('asr', asrProviderId)}
+                  onAdminConfigSave={(patch) => handleAdminConfigSave('asr', asrProviderId, patch)}
+                />
+              )}
             </div>
 
             {/* Footer */}

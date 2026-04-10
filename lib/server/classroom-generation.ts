@@ -17,7 +17,7 @@ import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatter
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
 import { isProviderKeyRequired } from '@/lib/ai/providers';
-import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
+import { resolveWebSearchApiKey, resolveWebSearchProviderOptions } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import { buildSearchQuery } from '@/lib/server/search-query-builder';
@@ -70,15 +70,11 @@ export interface GenerateClassroomInput {
   sceneOutlines?: SceneOutline[];
   language?: string;
   modelString?: string;
-  apiKey?: string;
-  baseUrl?: string;
   providerType?: string;
-  requiresApiKey?: boolean;
   stageSeed?: Pick<Stage, 'id' | 'name' | 'description' | 'language' | 'style' | 'lessonPack'>;
   agentProfiles?: AgentInfo[];
   enableWebSearch?: boolean;
   webSearchProviderId?: WebSearchProviderId;
-  webSearchApiKey?: string;
   baiduSubSources?: Partial<BaiduSubSources>;
   enableImageGeneration?: boolean;
   enableVideoGeneration?: boolean;
@@ -283,6 +279,28 @@ function normalizeBaiduSubSources(subSources?: Partial<BaiduSubSources>): BaiduS
   };
 }
 
+function normalizeBaiduSubSourcesFromOptions(
+  providerOptions?: Record<string, unknown>,
+): BaiduSubSources {
+  if (!providerOptions || typeof providerOptions !== 'object') {
+    return normalizeBaiduSubSources();
+  }
+
+  const direct = providerOptions as Partial<BaiduSubSources>;
+  const nested =
+    typeof providerOptions.baiduSubSources === 'object' &&
+    providerOptions.baiduSubSources &&
+    !Array.isArray(providerOptions.baiduSubSources)
+      ? (providerOptions.baiduSubSources as Partial<BaiduSubSources>)
+      : undefined;
+
+  return normalizeBaiduSubSources({
+    webSearch: nested?.webSearch ?? direct.webSearch,
+    baike: nested?.baike ?? direct.baike,
+    scholar: nested?.scholar ?? direct.scholar,
+  });
+}
+
 function stripCodeFences(text: string): string {
   let cleaned = text.trim();
   if (cleaned.startsWith('```')) {
@@ -403,16 +421,13 @@ export async function generateClassroom(
     modelString,
     providerId,
     apiKey,
-  } = resolveModel({
+  } = await resolveModel({
     modelString: input.modelString,
-    apiKey: input.apiKey,
-    baseUrl: input.baseUrl,
     providerType: input.providerType,
-    requiresApiKey: input.requiresApiKey,
   });
   log.info(`Using server-configured model: ${modelString}`);
   const hasVision = !!modelInfo?.capabilities?.vision;
-  const fallbackModel = resolveModel({});
+  const fallbackModel = await resolveModel({});
 
   if (isProviderKeyRequired(providerId) && !apiKey) {
     throw new Error(
@@ -602,10 +617,12 @@ export async function generateClassroom(
   if (!resumedClassroom && !input.sceneOutlines?.length && input.enableWebSearch) {
     const providerId = resolveWebSearchProviderId(input.webSearchProviderId);
     const provider = WEB_SEARCH_PROVIDERS[providerId];
-    const baiduSubSources = normalizeBaiduSubSources(input.baiduSubSources);
-    const apiKey = provider.requiresApiKey
-      ? resolveWebSearchApiKey(providerId, input.webSearchApiKey)
-      : '';
+    const providerOptions = await resolveWebSearchProviderOptions(providerId);
+    const baiduSubSources =
+      providerId === 'baidu'
+        ? normalizeBaiduSubSourcesFromOptions(providerOptions)
+        : normalizeBaiduSubSources();
+    const apiKey = provider.requiresApiKey ? await resolveWebSearchApiKey(providerId) : '';
 
     if (!provider.requiresApiKey || apiKey) {
       try {

@@ -36,6 +36,7 @@ import type { ProviderConfig } from '@/lib/ai/providers';
 import type { ProvidersConfig } from '@/lib/types/settings';
 import { formatContextWindow } from './utils';
 import { cn } from '@/lib/utils';
+import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
 interface ProviderConfigPanelProps {
   provider: ProviderConfig;
@@ -50,6 +51,9 @@ interface ProviderConfigPanelProps {
   onAddModel: () => void;
   onResetToDefault?: () => void; // Reset provider to default configuration
   isBuiltIn: boolean; // To determine if reset button should be shown
+  isAdmin?: boolean;
+  adminConfig?: AdminProviderConfig;
+  onAdminConfigSave?: (patch: AdminProviderConfigPatch) => void | Promise<void>;
 }
 
 export function ProviderConfigPanel({
@@ -65,6 +69,9 @@ export function ProviderConfigPanel({
   onAddModel,
   onResetToDefault,
   isBuiltIn,
+  isAdmin = false,
+  adminConfig,
+  onAdminConfigSave,
 }: ProviderConfigPanelProps) {
   const { t } = useI18n();
 
@@ -80,31 +87,47 @@ export function ProviderConfigPanel({
   // Update local state when provider changes or initial values change
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync local state from props on provider change
-    setApiKey(initialApiKey);
+    setApiKey(isAdmin ? '' : initialApiKey);
 
-    setBaseUrl(initialBaseUrl);
+    setBaseUrl(isAdmin ? adminConfig?.baseUrl || '' : initialBaseUrl);
 
     setRequiresApiKey(initialRequiresApiKey);
 
     setTestStatus('idle');
 
     setTestMessage('');
-  }, [provider.id, initialApiKey, initialBaseUrl, initialRequiresApiKey]);
+  }, [provider.id, initialApiKey, initialBaseUrl, initialRequiresApiKey, isAdmin, adminConfig?.baseUrl]);
 
   // Notify parent of changes
   const handleApiKeyChange = (key: string) => {
     setApiKey(key);
+    if (isAdmin) return;
     onConfigChange(key, baseUrl, requiresApiKey);
   };
 
   const handleBaseUrlChange = (url: string) => {
     setBaseUrl(url);
+    if (isAdmin) return;
     onConfigChange(apiKey, url, requiresApiKey);
   };
 
   const handleRequiresApiKeyChange = (requires: boolean) => {
     setRequiresApiKey(requires);
     onConfigChange(apiKey, baseUrl, requires);
+  };
+
+  const handleSaveAdminConnection = () => {
+    if (!isAdmin || !onAdminConfigSave) return;
+
+    const patch: AdminProviderConfigPatch = {
+      baseUrl: baseUrl.trim() || null,
+      models: models.map((model) => model.id),
+    };
+    if (apiKey.trim()) {
+      patch.apiKey = apiKey.trim();
+    }
+    void onAdminConfigSave(patch);
+    setApiKey('');
   };
 
   const handleTestApi = useCallback(async () => {
@@ -151,17 +174,23 @@ export function ProviderConfigPanel({
 
   const models = providersConfig[provider.id]?.models || [];
   const isServerConfigured = providersConfig[provider.id]?.isServerConfigured;
+  const adminHasApiKey = adminConfig?.hasApiKey ?? isServerConfigured;
 
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Server-configured notice */}
-      {isServerConfigured && (
+      {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
-          {t('settings.serverConfiguredNotice')}
+          {isAdmin
+            ? `Admin mode: this provider is saved to the server database. ${
+                adminHasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
+              }`
+            : t('settings.serverConfiguredNotice')}
         </div>
       )}
 
       {/* API Key */}
+      {isAdmin && (
       <div className="space-y-2">
         <Label>{t('settings.apiSecret')}</Label>
         <div className="flex gap-2">
@@ -173,10 +202,10 @@ export function ProviderConfigPanel({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder={isServerConfigured ? t('settings.optionalOverride') : 'sk-...'}
+              placeholder={adminHasApiKey ? 'Leave blank to keep existing key' : 'sk-...'}
               value={apiKey}
               onChange={(e) => handleApiKeyChange(e.target.value)}
-              onBlur={onSave}
+              onBlur={handleSaveAdminConnection}
               disabled={!requiresApiKey && !isServerConfigured}
               className="h-8 pr-8"
             />
@@ -240,8 +269,10 @@ export function ProviderConfigPanel({
           </label>
         </div>
       </div>
+      )}
 
       {/* API Host */}
+      {isAdmin && (
       <div className="space-y-2">
         <Label>{t('settings.apiHost')}</Label>
         <Input
@@ -254,7 +285,7 @@ export function ProviderConfigPanel({
           placeholder={provider.defaultBaseUrl || 'https://api.example.com/v1'}
           value={baseUrl}
           onChange={(e) => handleBaseUrlChange(e.target.value)}
-          onBlur={onSave}
+          onBlur={handleSaveAdminConnection}
           className="h-8"
         />
         {(() => {
@@ -286,13 +317,14 @@ export function ProviderConfigPanel({
           );
         })()}
       </div>
+      )}
 
       {/* Models - No selection state, just list for management */}
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <Label className="text-base">{t('settings.models')}</Label>
           <div className="flex items-center gap-2 flex-wrap">
-            {isBuiltIn && onResetToDefault && (
+            {isAdmin && isBuiltIn && onResetToDefault && (
               <Button
                 variant="outline"
                 size="sm"
@@ -303,10 +335,12 @@ export function ProviderConfigPanel({
                 {t('settings.reset')}
               </Button>
             )}
+            {isAdmin && (
             <Button variant="outline" size="sm" onClick={onAddModel} className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               {t('settings.addNewModel')}
             </Button>
+            )}
           </div>
         </div>
         <p className="text-xs text-muted-foreground">{t('settings.modelsManagementDescription')}</p>
@@ -360,7 +394,7 @@ export function ProviderConfigPanel({
                   </div>
                 </div>
 
-                {/* Edit/Delete Buttons */}
+                {isAdmin && (
                 <div className="flex items-center gap-1">
                   <Button
                     variant="outline"
@@ -381,6 +415,7 @@ export function ProviderConfigPanel({
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
+                )}
               </div>
             );
           })}

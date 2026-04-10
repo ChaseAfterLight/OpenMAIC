@@ -58,10 +58,7 @@ export async function POST(
       outlineId: string;
       userProfile: string;
       modelString: string;
-      apiKey: string;
-      baseUrl: string;
       providerType: string;
-      requiresApiKey: boolean;
       enableImageGeneration: boolean;
       enableVideoGeneration: boolean;
       enableTTS: boolean;
@@ -139,10 +136,7 @@ export async function POST(
         ? { language: classroom.stage.language || sourceInput?.language }
         : {}),
       ...(body.modelString ? { modelString: body.modelString } : {}),
-      ...(body.apiKey ? { apiKey: body.apiKey } : {}),
-      ...(body.baseUrl ? { baseUrl: body.baseUrl } : {}),
       ...(body.providerType ? { providerType: body.providerType } : {}),
-      ...(body.requiresApiKey != null ? { requiresApiKey: body.requiresApiKey } : {}),
       ...(sourceInput?.agentProfiles || stageAgents
         ? { agentProfiles: sourceInput?.agentProfiles || stageAgents }
         : {}),

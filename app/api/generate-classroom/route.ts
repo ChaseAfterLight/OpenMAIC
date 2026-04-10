@@ -34,15 +34,11 @@ export async function POST(req: NextRequest) {
       ...(rawBody.sceneOutlines ? { sceneOutlines: rawBody.sceneOutlines } : {}),
       ...(rawBody.language ? { language: rawBody.language } : {}),
       ...(rawBody.modelString ? { modelString: rawBody.modelString } : {}),
-      ...(rawBody.apiKey ? { apiKey: rawBody.apiKey } : {}),
-      ...(rawBody.baseUrl ? { baseUrl: rawBody.baseUrl } : {}),
       ...(rawBody.providerType ? { providerType: rawBody.providerType } : {}),
-      ...(rawBody.requiresApiKey != null ? { requiresApiKey: rawBody.requiresApiKey } : {}),
       ...(rawBody.stageSeed ? { stageSeed: rawBody.stageSeed } : {}),
       ...(rawBody.agentProfiles ? { agentProfiles: rawBody.agentProfiles } : {}),
       ...(rawBody.enableWebSearch != null ? { enableWebSearch: rawBody.enableWebSearch } : {}),
       ...(rawBody.webSearchProviderId ? { webSearchProviderId: rawBody.webSearchProviderId } : {}),
-      ...(rawBody.webSearchApiKey ? { webSearchApiKey: rawBody.webSearchApiKey } : {}),
       ...(rawBody.baiduSubSources ? { baiduSubSources: rawBody.baiduSubSources } : {}),
       ...(rawBody.enableImageGeneration != null
         ? { enableImageGeneration: rawBody.enableImageGeneration }
