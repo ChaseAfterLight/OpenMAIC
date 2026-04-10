@@ -16,6 +16,7 @@ import type { AICallFn, AgentInfo, SceneGenerationContext } from '@/lib/generati
 import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatters';
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
+import { isProviderKeyRequired } from '@/lib/ai/providers';
 import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
@@ -400,6 +401,8 @@ export async function generateClassroom(
     model: languageModel,
     modelInfo,
     modelString,
+    providerId,
+    apiKey,
   } = resolveModel({
     modelString: input.modelString,
     apiKey: input.apiKey,
@@ -410,6 +413,13 @@ export async function generateClassroom(
   log.info(`Using server-configured model: ${modelString}`);
   const hasVision = !!modelInfo?.capabilities?.vision;
   const fallbackModel = resolveModel({});
+
+  if (isProviderKeyRequired(providerId) && !apiKey) {
+    throw new Error(
+      `No API key configured for provider "${providerId}". ` +
+        `Set the appropriate key in .env.local or server-providers.yml (e.g. ${providerId.toUpperCase()}_API_KEY).`,
+    );
+  }
 
   const aiCall: AICallFn = async (systemPrompt, userPrompt, images) => {
     if (images?.length && hasVision) {
