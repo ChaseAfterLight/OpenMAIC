@@ -9,6 +9,7 @@ import { Loader2, Sparkles, AlertCircle, Mail, Lock, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { refreshAuthSession } from '@/lib/store/auth-session';
 
 // 🚀 定义动画预设 (基于 framer-motion)
 const containerVariants: Variants = {
@@ -82,6 +83,7 @@ export default function LoginPage() {
         setError(data.error || t('auth.loginFailed'));
         return;
       }
+      await refreshAuthSession();
       router.replace('/');
     } catch (e) {
       setError(e instanceof Error ? e.message : t('auth.loginFailed'));

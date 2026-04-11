@@ -52,7 +52,7 @@ import { getActiveModule } from '@/lib/module-host/runtime';
 import { resolveLocalizedText, type SupportedLocale } from '@/lib/module-host/types';
 import { subscribeHybridSyncState } from '@/lib/storage/hybrid-sync';
 import type { Slide } from '@/lib/types/slides';
-import { useAuthSessionStore } from '@/lib/store/auth-session';
+import { refreshAuthSession, setAuthSession, useAuthSessionStore } from '@/lib/store/auth-session';
 import {
   buildTextbookChapterTree,
   matchesTextbookChapterPath,
@@ -355,6 +355,13 @@ export function LessonPackWorkbenchClient() {
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
+    setAuthSession({
+      initialized: true,
+      authenticated: false,
+      adminExists: true,
+      user: null,
+    });
+    await refreshAuthSession();
     router.replace('/auth/login');
   };
 

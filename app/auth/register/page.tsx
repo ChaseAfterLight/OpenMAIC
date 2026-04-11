@@ -9,6 +9,7 @@ import { Loader2, Sparkles, AlertCircle, Mail, Lock, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { refreshAuthSession } from '@/lib/store/auth-session';
 
 // 动画预设（与登录页保持一致，确保路由切换时的视觉连贯性）
 const containerVariants: Variants = {
@@ -81,6 +82,7 @@ export default function RegisterPage() {
         return;
       }
       // 注册成功后直接重定向到工作台
+      await refreshAuthSession();
       router.replace('/');
     } catch (e) {
       setError(e instanceof Error ? e.message : t('auth.registerFailed'));

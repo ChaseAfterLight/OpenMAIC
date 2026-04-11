@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { AuthPublicUser, SystemRole } from '@/lib/server/auth-types';
+import { refreshAuthSession, useAuthSessionStore } from '@/lib/store/auth-session';
 
 const ROLES: SystemRole[] = ['admin', 'teacher', 'student'];
 
@@ -46,6 +47,7 @@ const RoleBadge = ({ role, label }: { role: SystemRole; label: string }) => {
 export function AdminUsersClient() {
   const { t } = useI18n();
   const router = useRouter();
+  const currentUserId = useAuthSessionStore((state) => state.user?.id);
 
   const [users, setUsers] = useState<AuthPublicUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +94,15 @@ export function AdminUsersClient() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || t('auth.roleUpdateFailed'));
+      }
+
+      if (currentUserId === userId) {
+        const session = await refreshAuthSession();
+        if (!session.authenticated || session.user?.role !== 'admin') {
+          router.replace('/');
+          router.refresh();
+          return;
+        }
       }
       
       toast.success(t('auth.roleUpdated'));
