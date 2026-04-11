@@ -103,9 +103,11 @@ export function WebSearchSettings({
       {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
           {isAdmin
-            ? `Admin mode: web search settings are saved to the server database. ${
-                adminConfig?.hasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
-              }`
+            ? t('settings.serverConfiguredAdminNoticeWebSearch', {
+                status: adminConfig?.hasApiKey
+                  ? t('settings.adminApiKeyStored')
+                  : t('settings.adminApiKeyMissing'),
+              })
             : t('settings.serverConfiguredNotice')}
         </div>
       )}
@@ -131,7 +133,7 @@ export function WebSearchSettings({
                 spellCheck={false}
                 placeholder={
                   adminConfig?.hasApiKey
-                    ? 'Leave blank to keep existing key'
+                    ? t('settings.keepExistingApiKey')
                     : t('settings.enterApiKey')
                 }
                 value={adminApiKey}

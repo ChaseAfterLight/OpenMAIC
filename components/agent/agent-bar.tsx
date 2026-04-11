@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type WheelEvent } from 'react';
 import * as RadixPopover from '@radix-ui/react-popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -25,6 +25,22 @@ import {
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
 import type { TTSProviderId } from '@/lib/audio/types';
 import type { ProviderWithVoices } from '@/lib/audio/voice-resolver';
+
+function handleListWheel(event: WheelEvent<HTMLDivElement>) {
+  const container = event.currentTarget;
+  const maxScrollTop = container.scrollHeight - container.clientHeight;
+  if (maxScrollTop <= 0 || event.deltaY === 0) {
+    return;
+  }
+
+  const nextScrollTop = Math.min(Math.max(container.scrollTop + event.deltaY, 0), maxScrollTop);
+
+  if (nextScrollTop !== container.scrollTop) {
+    event.preventDefault();
+    event.stopPropagation();
+    container.scrollTop = nextScrollTop;
+  }
+}
 
 function AgentVoicePill({
   agent,
@@ -172,77 +188,79 @@ function AgentVoicePill({
         side="bottom"
         align="end"
         sideOffset={4}
-        className="w-56 px-1 pb-1 pt-0 max-h-64 overflow-y-auto"
+        className="w-56 p-0"
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        {availableProviders.map((provider) =>
-          provider.modelGroups.map((group) => (
-            <div key={`${provider.providerId}::${group.modelId}`}>
-              <div className="text-[11px] text-muted-foreground/60 font-medium px-2 py-1 sticky top-0 bg-popover">
-                {group.modelId
-                  ? `${provider.providerName} · ${group.modelName}`
-                  : provider.providerName}
+        <div className="max-h-64 overflow-y-auto overscroll-contain px-1 pb-1 pt-0" onWheel={handleListWheel}>
+          {availableProviders.map((provider) =>
+            provider.modelGroups.map((group) => (
+              <div key={`${provider.providerId}::${group.modelId}`}>
+                <div className="sticky top-0 bg-popover px-2 py-1 text-[11px] font-medium text-muted-foreground/60">
+                  {group.modelId
+                    ? `${provider.providerName} · ${group.modelName}`
+                    : provider.providerName}
+                </div>
+                {group.voices.map((voice) => {
+                  const isActive =
+                    resolved.providerId === provider.providerId &&
+                    resolved.voiceId === voice.id &&
+                    (resolved.modelId || '') === (group.modelId || '');
+                  const previewKey = `${provider.providerId}::${voice.id}`;
+                  const isPreviewing = previewingId === previewKey;
+                  return (
+                    <div
+                      key={previewKey}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-sm transition-colors',
+                        isActive ? 'bg-primary/10' : 'hover:bg-muted',
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateAgent(agent.id, {
+                            voiceConfig: {
+                              providerId: provider.providerId,
+                              modelId: group.modelId || undefined,
+                              voiceId: voice.id,
+                            },
+                          });
+                          setPopoverOpen(false);
+                        }}
+                        className={cn(
+                          'flex-1 min-w-0 truncate px-2 py-1.5 text-left text-[13px]',
+                          isActive ? 'font-medium text-primary' : 'text-foreground',
+                        )}
+                      >
+                        {voice.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePreview(provider.providerId, voice.id, group.modelId);
+                        }}
+                        className={cn(
+                          'flex size-6 shrink-0 items-center justify-center rounded-sm transition-colors',
+                          isPreviewing
+                            ? 'text-primary'
+                            : 'text-muted-foreground/40 hover:text-muted-foreground',
+                        )}
+                      >
+                        {isPreviewing ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Volume2 className="size-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-              {group.voices.map((voice) => {
-                const isActive =
-                  resolved.providerId === provider.providerId &&
-                  resolved.voiceId === voice.id &&
-                  (resolved.modelId || '') === (group.modelId || '');
-                const previewKey = `${provider.providerId}::${voice.id}`;
-                const isPreviewing = previewingId === previewKey;
-                return (
-                  <div
-                    key={previewKey}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-sm transition-colors',
-                      isActive ? 'bg-primary/10' : 'hover:bg-muted',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateAgent(agent.id, {
-                          voiceConfig: {
-                            providerId: provider.providerId,
-                            modelId: group.modelId || undefined,
-                            voiceId: voice.id,
-                          },
-                        });
-                        setPopoverOpen(false);
-                      }}
-                      className={cn(
-                        'flex-1 text-left text-[13px] px-2 py-1.5 min-w-0 truncate',
-                        isActive ? 'text-primary font-medium' : 'text-foreground',
-                      )}
-                    >
-                      {voice.name}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePreview(provider.providerId, voice.id, group.modelId);
-                      }}
-                      className={cn(
-                        'shrink-0 size-6 flex items-center justify-center rounded-sm transition-colors',
-                        isPreviewing
-                          ? 'text-primary'
-                          : 'text-muted-foreground/40 hover:text-muted-foreground',
-                      )}
-                    >
-                      {isPreviewing ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Volume2 className="size-3.5" />
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )),
-        )}
+            )),
+          )}
+        </div>
       </PopoverContent>
     </Popover>
   );
@@ -394,76 +412,78 @@ function TeacherVoicePill({
         side="bottom"
         align="end"
         sideOffset={4}
-        className="w-56 px-1 pb-1 pt-0 max-h-64 overflow-y-auto"
+        className="w-56 p-0"
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        {availableProviders.map((provider) =>
-          provider.modelGroups.map((group) => (
-            <div key={`${provider.providerId}::${group.modelId}`}>
-              <div className="text-[11px] text-muted-foreground/60 font-medium px-2 py-1 sticky top-0 bg-popover">
-                {group.modelId
-                  ? `${provider.providerName} · ${group.modelName}`
-                  : provider.providerName}
+        <div className="max-h-64 overflow-y-auto overscroll-contain px-1 pb-1 pt-0" onWheel={handleListWheel}>
+          {availableProviders.map((provider) =>
+            provider.modelGroups.map((group) => (
+              <div key={`${provider.providerId}::${group.modelId}`}>
+                <div className="sticky top-0 bg-popover px-2 py-1 text-[11px] font-medium text-muted-foreground/60">
+                  {group.modelId
+                    ? `${provider.providerName} · ${group.modelName}`
+                    : provider.providerName}
+                </div>
+                {group.voices.map((voice) => {
+                  const currentModelId = ttsProvidersConfig[ttsProviderId]?.modelId || '';
+                  const isActive =
+                    ttsProviderId === provider.providerId &&
+                    ttsVoice === voice.id &&
+                    currentModelId === (group.modelId || '');
+                  const previewKey = `${provider.providerId}::${voice.id}`;
+                  const isPreviewing = previewingId === previewKey;
+                  return (
+                    <div
+                      key={previewKey}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-sm transition-colors',
+                        isActive ? 'bg-primary/10' : 'hover:bg-muted',
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTTSProvider(provider.providerId);
+                          setTTSVoice(voice.id);
+                          if (group.modelId) {
+                            setTTSProviderConfig(provider.providerId, { modelId: group.modelId });
+                          }
+                          setPopoverOpen(false);
+                        }}
+                        className={cn(
+                          'flex-1 min-w-0 truncate px-2 py-1.5 text-left text-[13px]',
+                          isActive ? 'font-medium text-primary' : 'text-foreground',
+                        )}
+                      >
+                        {voice.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePreview(provider.providerId, voice.id, group.modelId);
+                        }}
+                        className={cn(
+                          'flex size-6 shrink-0 items-center justify-center rounded-sm transition-colors',
+                          isPreviewing
+                            ? 'text-primary'
+                            : 'text-muted-foreground/40 hover:text-muted-foreground',
+                        )}
+                      >
+                        {isPreviewing ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Volume2 className="size-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-              {group.voices.map((voice) => {
-                const currentModelId = ttsProvidersConfig[ttsProviderId]?.modelId || '';
-                const isActive =
-                  ttsProviderId === provider.providerId &&
-                  ttsVoice === voice.id &&
-                  currentModelId === (group.modelId || '');
-                const previewKey = `${provider.providerId}::${voice.id}`;
-                const isPreviewing = previewingId === previewKey;
-                return (
-                  <div
-                    key={previewKey}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-sm transition-colors',
-                      isActive ? 'bg-primary/10' : 'hover:bg-muted',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTTSProvider(provider.providerId);
-                        setTTSVoice(voice.id);
-                        if (group.modelId) {
-                          setTTSProviderConfig(provider.providerId, { modelId: group.modelId });
-                        }
-                        setPopoverOpen(false);
-                      }}
-                      className={cn(
-                        'flex-1 text-left text-[13px] px-2 py-1.5 min-w-0 truncate',
-                        isActive ? 'text-primary font-medium' : 'text-foreground',
-                      )}
-                    >
-                      {voice.name}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePreview(provider.providerId, voice.id, group.modelId);
-                      }}
-                      className={cn(
-                        'shrink-0 size-6 flex items-center justify-center rounded-sm transition-colors',
-                        isPreviewing
-                          ? 'text-primary'
-                          : 'text-muted-foreground/40 hover:text-muted-foreground',
-                      )}
-                    >
-                      {isPreviewing ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Volume2 className="size-3.5" />
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )),
-        )}
+            )),
+          )}
+        </div>
       </PopoverContent>
     </Popover>
   );

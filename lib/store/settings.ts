@@ -26,6 +26,8 @@ const log = createLogger('Settings');
 export const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
 export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
 
+type ServerLLMProvidersSnapshot = Record<string, { models?: string[]; baseUrl?: string }>;
+
 export interface SettingsState {
   // Model selection
   providerId: ProviderId;
@@ -33,6 +35,10 @@ export interface SettingsState {
 
   // Provider configurations (unified JSON storage)
   providersConfig: ProvidersConfig;
+
+  // Server-side LLM provider snapshot (not persisted; preferred source when available)
+  serverProvidersSnapshot: ServerLLMProvidersSnapshot | null;
+  serverProvidersStatus: 'idle' | 'loading' | 'success' | 'error';
 
   // TTS settings (legacy, kept for backward compatibility)
   ttsModel: string;
@@ -562,6 +568,8 @@ export const useSettingsStore = create<SettingsState>()(
         providerId: migratedData?.providerId || 'openai',
         modelId: migratedData?.modelId || '',
         providersConfig: migratedData?.providersConfig || getDefaultProvidersConfig(),
+        serverProvidersSnapshot: null,
+        serverProvidersStatus: 'idle',
         ttsModel: migratedData?.ttsModel || 'openai-tts',
         selectedAgentIds: migratedData?.selectedAgentIds || ['default-1', 'default-2', 'default-3'],
         maxTurns: migratedData?.maxTurns?.toString() || '10',
@@ -781,9 +789,13 @@ export const useSettingsStore = create<SettingsState>()(
 
         // Fetch server-configured providers and merge into local state
         fetchServerProviders: async () => {
+          set({ serverProvidersStatus: 'loading' });
           try {
             const res = await fetch('/api/server-providers');
-            if (!res.ok) return;
+            if (!res.ok) {
+              set({ serverProvidersStatus: 'error' });
+              return;
+            }
             const data = (await res.json()) as {
               providers: Record<string, { models?: string[]; baseUrl?: string }>;
               tts: Record<string, { baseUrl?: string }>;
@@ -1166,6 +1178,8 @@ export const useSettingsStore = create<SettingsState>()(
               }
 
               return {
+                serverProvidersSnapshot: data.providers,
+                serverProvidersStatus: 'success',
                 providersConfig: newProvidersConfig,
                 ttsProvidersConfig: newTTSConfig,
                 asrProvidersConfig: newASRConfig,
@@ -1234,6 +1248,7 @@ export const useSettingsStore = create<SettingsState>()(
           } catch (e) {
             // Silently fail — server providers are optional
             log.warn('Failed to fetch server providers:', e);
+            set({ serverProvidersStatus: 'error' });
           }
         },
       };
@@ -1241,6 +1256,11 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'settings-storage',
       version: 2,
+      partialize: (state) => {
+        const { serverProvidersSnapshot: _serverProvidersSnapshot, serverProvidersStatus: _serverProvidersStatus, ...persisted } =
+          state;
+        return persisted;
+      },
       // Migrate persisted state
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Partial<SettingsState>;

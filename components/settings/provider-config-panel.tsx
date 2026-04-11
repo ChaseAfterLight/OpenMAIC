@@ -182,9 +182,11 @@ export function ProviderConfigPanel({
       {(isServerConfigured || isAdmin) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
           {isAdmin
-            ? `Admin mode: this provider is saved to the server database. ${
-                adminHasApiKey ? 'An API key is already stored.' : 'No API key is stored yet.'
-              }`
+            ? t('settings.serverConfiguredAdminNoticeProvider', {
+                status: adminHasApiKey
+                  ? t('settings.adminApiKeyStored')
+                  : t('settings.adminApiKeyMissing'),
+              })
             : t('settings.serverConfiguredNotice')}
         </div>
       )}
@@ -202,7 +204,7 @@ export function ProviderConfigPanel({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder={adminHasApiKey ? 'Leave blank to keep existing key' : 'sk-...'}
+              placeholder={adminHasApiKey ? t('settings.keepExistingApiKey') : 'sk-...'}
               value={apiKey}
               onChange={(e) => handleApiKeyChange(e.target.value)}
               onBlur={handleSaveAdminConnection}

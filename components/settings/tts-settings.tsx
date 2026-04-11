@@ -157,7 +157,7 @@ export function TTSSettings({
                       spellCheck={false}
                       placeholder={
                         adminConfig?.hasApiKey
-                          ? 'Leave blank to keep existing key'
+                          ? t('settings.keepExistingApiKey')
                           : t('settings.enterApiKey')
                       }
                       value={doubaoAppId}
@@ -186,7 +186,7 @@ export function TTSSettings({
                       spellCheck={false}
                       placeholder={
                         adminConfig?.hasApiKey
-                          ? 'Leave blank to keep existing key'
+                          ? t('settings.keepExistingApiKey')
                           : t('settings.enterApiKey')
                       }
                       value={doubaoAccessKey}
@@ -217,7 +217,7 @@ export function TTSSettings({
                     spellCheck={false}
                     placeholder={
                       adminConfig?.hasApiKey
-                        ? 'Leave blank to keep existing key'
+                        ? t('settings.keepExistingApiKey')
                         : t('settings.enterApiKey')
                     }
                     value={adminApiKey}

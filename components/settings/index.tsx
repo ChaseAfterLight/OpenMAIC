@@ -61,6 +61,7 @@ import { AddProviderDialog, type NewProviderData } from './add-provider-dialog';
 import type { SettingsSection, EditingModel } from '@/lib/types/settings';
 import {
   adminProviderConfigKey,
+  deleteAdminProviderConfig,
   fetchAdminProviderConfigs,
   saveAdminProviderConfig,
   type AdminProviderConfigMap,
@@ -230,7 +231,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   // Navigate to initialSection when dialog opens
   useEffect(() => {
     if (open && initialSection) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Sync section from prop when dialog opens
       setActiveSection(initialSection);
     }
   }, [open, initialSection]);
@@ -240,7 +240,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [showModelDialog, setShowModelDialog] = useState(false);
 
   // Provider deletion confirmation
-  const [providerToDelete, setProviderToDelete] = useState<ProviderId | null>(null);
+  const [providerToDelete, setProviderToDelete] = useState<{
+    providerId: ProviderId;
+    mode: 'local' | 'server';
+  } | null>(null);
 
   // Add provider dialog
   const [showAddProviderDialog, setShowAddProviderDialog] = useState(false);
@@ -325,7 +328,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   useEffect(() => {
     if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Load admin-only server config when the dialog opens.
       void loadAdminConfigs();
     }
   }, [open, loadAdminConfigs]);
@@ -512,36 +514,58 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   };
 
   const handleDeleteProvider = (pid: ProviderId) => {
-    if (providersConfig[pid]?.isBuiltIn) {
+    const provider = providersConfig[pid];
+    if (!provider) return;
+    if (provider.isServerConfigured) {
+      setProviderToDelete({ providerId: pid, mode: 'server' });
+      return;
+    }
+    if (provider.isBuiltIn) {
       toast.error(t('settings.cannotDeleteBuiltIn'));
       return;
     }
-    setProviderToDelete(pid);
+    setProviderToDelete({ providerId: pid, mode: 'local' });
   };
 
-  const confirmDeleteProvider = () => {
+  const confirmDeleteProvider = async () => {
     if (!providerToDelete) return;
-    const pid = providerToDelete;
-    const updatedConfig = { ...providersConfig };
-    delete updatedConfig[pid];
-    setProvidersConfig(updatedConfig);
-    if (selectedProviderId === pid) {
-      const firstRemainingPid = Object.keys(updatedConfig)[0] as ProviderId | undefined;
-      setSelectedProviderId(firstRemainingPid || 'openai');
-    }
-    if (providerId === pid) {
-      const firstRemainingPid = Object.keys(updatedConfig)[0] as ProviderId | undefined;
-      const firstModel = firstRemainingPid
-        ? updatedConfig[firstRemainingPid]?.serverModels?.[0] ||
-          updatedConfig[firstRemainingPid]?.models?.[0]?.id
-        : undefined;
-      if (firstRemainingPid && firstModel) {
-        setModel(firstRemainingPid, firstModel);
+    const { providerId: pid, mode } = providerToDelete;
+
+    try {
+      if (mode === 'server') {
+        await deleteAdminProviderConfig('llm', pid);
+        setAdminConfigs((current) => {
+          const next = { ...current };
+          delete next[adminProviderConfigKey('llm', pid)];
+          return next;
+        });
+        await fetchServerProviders();
       } else {
-        setModel('openai' as ProviderId, 'gpt-4o-mini');
+        const updatedConfig = { ...providersConfig };
+        delete updatedConfig[pid];
+        setProvidersConfig(updatedConfig);
+        if (selectedProviderId === pid) {
+          const firstRemainingPid = Object.keys(updatedConfig)[0] as ProviderId | undefined;
+          setSelectedProviderId(firstRemainingPid || 'openai');
+        }
+        if (providerId === pid) {
+          const firstRemainingPid = Object.keys(updatedConfig)[0] as ProviderId | undefined;
+          const firstModel = firstRemainingPid
+            ? updatedConfig[firstRemainingPid]?.serverModels?.[0] ||
+              updatedConfig[firstRemainingPid]?.models?.[0]?.id
+            : undefined;
+          if (firstRemainingPid && firstModel) {
+            setModel(firstRemainingPid, firstModel);
+          } else {
+            setModel('openai' as ProviderId, 'gpt-4o-mini');
+          }
+        }
       }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('settings.deleteFailed'));
+    } finally {
+      setProviderToDelete(null);
     }
-    setProviderToDelete(null);
   };
 
   const handleResetProvider = (pid: ProviderId) => {
@@ -1025,7 +1049,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               <div className="flex items-center gap-2">
                 {isAdmin &&
                   activeSection === 'providers' &&
-                  !providersConfig[selectedProviderId]?.isBuiltIn && (
+                  providersConfig[selectedProviderId] &&
+                  (!providersConfig[selectedProviderId]?.isBuiltIn ||
+                    providersConfig[selectedProviderId]?.isServerConfigured) && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1184,13 +1210,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('settings.deleteProvider')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('settings.deleteProviderConfirm')}</AlertDialogDescription>
+            <AlertDialogTitle>
+              {providerToDelete?.mode === 'server'
+                ? t('settings.deleteServerProviderConfig')
+                : t('settings.deleteProvider')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {providerToDelete?.mode === 'server'
+                ? t('settings.deleteServerProviderConfigConfirm', {
+                    providerName:
+                      providersConfig[providerToDelete.providerId]?.name ||
+                      providerToDelete.providerId,
+                  })
+                : t('settings.deleteProviderConfirm')}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('settings.cancelEdit')}</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDeleteProvider}>
-              {t('settings.deleteProvider')}
+            <AlertDialogAction onClick={() => void confirmDeleteProvider()}>
+              {providerToDelete?.mode === 'server'
+                ? t('settings.deleteServerProviderConfig')
+                : t('settings.deleteProvider')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

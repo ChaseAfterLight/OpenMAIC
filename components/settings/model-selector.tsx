@@ -45,6 +45,22 @@ export function ModelSelector({
   const selectedModelRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const handleListWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const maxScrollTop = container.scrollHeight - container.clientHeight;
+    if (maxScrollTop <= 0 || event.deltaY === 0) {
+      return;
+    }
+
+    const nextScrollTop = Math.min(Math.max(container.scrollTop + event.deltaY, 0), maxScrollTop);
+
+    if (nextScrollTop !== container.scrollTop) {
+      event.preventDefault();
+      event.stopPropagation();
+      container.scrollTop = nextScrollTop;
+    }
+  };
+
   // Helper function to get translated provider name
   const getProviderDisplayName = (pid: ProviderId, name: string) => {
     const translationKey = `settings.providerNames.${pid}`;
@@ -195,7 +211,10 @@ export function ModelSelector({
     <div className="border rounded-lg overflow-hidden flex flex-col h-[420px] relative">
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Left: Provider List */}
-        <div className="w-48 border-r bg-muted/30 overflow-y-auto shrink-0">
+        <div
+          className="w-48 border-r bg-muted/30 overflow-y-auto shrink-0"
+          onWheel={handleListWheel}
+        >
           {configuredProviders.map((provider) => {
             const filteredCount = getFilteredModelsForProvider(provider.id).length;
             const totalCount = providersConfig[provider.id]?.models?.length || 0;
@@ -282,7 +301,7 @@ export function ModelSelector({
           </div>
 
           {/* Model Items */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto" onWheel={handleListWheel}>
             {filteredModels.length === 0 ? (
               <div className="p-6 text-center text-sm text-muted-foreground">
                 {searchQuery ? t('settings.noModelsFound') : t('settings.noModelsAvailable')}

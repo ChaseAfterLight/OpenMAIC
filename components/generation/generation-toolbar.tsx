@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
+import { PROVIDERS } from '@/lib/ai/providers';
 import { PDF_PROVIDERS } from '@/lib/pdf/constants';
 import type { PDFProviderId } from '@/lib/pdf/types';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
@@ -56,6 +57,8 @@ export function GenerationToolbar({
   const currentProviderId = useSettingsStore((s) => s.providerId);
   const currentModelId = useSettingsStore((s) => s.modelId);
   const providersConfig = useSettingsStore((s) => s.providersConfig);
+  const serverProvidersSnapshot = useSettingsStore((s) => s.serverProvidersSnapshot);
+  const serverProvidersStatus = useSettingsStore((s) => s.serverProvidersStatus);
   const setModel = useSettingsStore((s) => s.setModel);
   const pdfProviderId = useSettingsStore((s) => s.pdfProviderId);
   const pdfProvidersConfig = useSettingsStore((s) => s.pdfProvidersConfig);
@@ -80,26 +83,55 @@ export function GenerationToolbar({
     return !provider.requiresApiKey || !!cfg?.apiKey || !!cfg?.isServerConfigured;
   })();
 
-  // Configured LLM providers (only those with valid credentials + models + endpoint)
-  const configuredProviders = providersConfig
-    ? Object.entries(providersConfig)
-        .filter(
-          ([, config]) =>
-            (!config.requiresApiKey || config.apiKey || config.isServerConfigured) &&
-            config.models.length >= 1 &&
-            (config.baseUrl || config.defaultBaseUrl || config.serverBaseUrl),
-        )
-        .map(([id, config]) => ({
-          id: id as ProviderId,
-          name: config.name,
-          icon: config.icon,
-          isServerConfigured: config.isServerConfigured,
-          models:
-            config.isServerConfigured && !config.apiKey && config.serverModels?.length
-              ? config.models.filter((m) => new Set(config.serverModels).has(m.id))
-              : config.models,
-        }))
-    : [];
+  // Prefer the server snapshot when available; fall back to local settings only if server fetch fails.
+  const configuredProviders = useMemo(() => {
+    if (serverProvidersStatus === 'success') {
+      return Object.entries(serverProvidersSnapshot ?? {})
+        .map(([id, info]) => {
+          const providerId = id as ProviderId;
+          const localConfig = providersConfig?.[providerId];
+          const builtinConfig = PROVIDERS[providerId as keyof typeof PROVIDERS];
+          const modelsSource = localConfig?.models || builtinConfig?.models || [];
+          const models =
+            info.models?.length > 0
+              ? modelsSource.filter((model) => info.models!.includes(model.id))
+              : modelsSource;
+
+          if (models.length === 0) {
+            return null;
+          }
+
+          return {
+            id: providerId,
+            name: localConfig?.name || builtinConfig?.name || providerId,
+            icon: localConfig?.icon || builtinConfig?.icon,
+            isServerConfigured: true,
+            models,
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+    }
+
+    return providersConfig
+      ? Object.entries(providersConfig)
+          .filter(
+            ([, config]) =>
+              (!config.requiresApiKey || config.apiKey || config.isServerConfigured) &&
+              config.models.length >= 1 &&
+              (config.baseUrl || config.defaultBaseUrl || config.serverBaseUrl),
+          )
+          .map(([id, config]) => ({
+            id: id as ProviderId,
+            name: config.name,
+            icon: config.icon,
+            isServerConfigured: config.isServerConfigured,
+            models:
+              config.isServerConfigured && !config.apiKey && config.serverModels?.length
+                ? config.models.filter((m) => new Set(config.serverModels).has(m.id))
+                : config.models,
+          }))
+      : [];
+  }, [providersConfig, serverProvidersSnapshot, serverProvidersStatus]);
 
   const currentProviderConfig = providersConfig?.[currentProviderId];
 
@@ -438,6 +470,22 @@ function ModelSelectorPopover({
   // null = provider list, ProviderId = model list for that provider
   const [drillProvider, setDrillProvider] = useState<ProviderId | null>(null);
 
+  const handleListWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const maxScrollTop = container.scrollHeight - container.clientHeight;
+    if (maxScrollTop <= 0 || event.deltaY === 0) {
+      return;
+    }
+
+    const nextScrollTop = Math.min(Math.max(container.scrollTop + event.deltaY, 0), maxScrollTop);
+
+    if (nextScrollTop !== container.scrollTop) {
+      event.preventDefault();
+      event.stopPropagation();
+      container.scrollTop = nextScrollTop;
+    }
+  };
+
   const activeProvider = useMemo(
     () => configuredProviders.find((p) => p.id === drillProvider),
     [configuredProviders, drillProvider],
@@ -484,7 +532,7 @@ function ModelSelectorPopover({
       <PopoverContent align="start" className="w-64 p-0">
         {/* Level 1: Provider list */}
         {!drillProvider && (
-          <div className="max-h-72 overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto" onWheel={handleListWheel}>
             <div className="px-3 py-2 border-b">
               <span className="text-xs font-semibold text-muted-foreground">
                 {t('toolbar.selectProvider')}
@@ -531,7 +579,7 @@ function ModelSelectorPopover({
 
         {/* Level 2: Model list for selected provider */}
         {drillProvider && activeProvider && (
-          <div className="max-h-72 overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto" onWheel={handleListWheel}>
             {/* Back header */}
             <button
               onClick={() => setDrillProvider(null)}

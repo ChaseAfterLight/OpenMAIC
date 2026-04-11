@@ -74,3 +74,25 @@ export async function saveAdminProviderConfig(
 
   return data.config;
 }
+
+export async function deleteAdminProviderConfig(
+  kind: AdminProviderKind,
+  providerId: string,
+): Promise<void> {
+  const response = await fetch('/api/admin/provider-configs', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      providerKind: kind,
+      providerId,
+    }),
+  });
+  const data = (await response.json()) as {
+    success?: boolean;
+    error?: string;
+  };
+
+  if (!response.ok || data.success === false) {
+    throw new Error(data.error || 'Failed to delete provider config');
+  }
+}
