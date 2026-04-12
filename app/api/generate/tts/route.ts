@@ -8,11 +8,12 @@
  */
 
 import { NextRequest } from 'next/server';
+import { generateTTS } from '@/lib/audio/tts-providers';
 import { resolveTTSApiKey, resolveTTSBaseUrl } from '@/lib/server/provider-config';
 import type { TTSProviderId } from '@/lib/audio/types';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
-import { generateSharedTTSAsset } from '@/lib/server/shared-audio-cache';
+import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
 const log = createLogger('TTS API');
 
@@ -27,7 +28,6 @@ export async function POST(req: NextRequest) {
     const { text, ttsModelId, ttsSpeed, ttsApiKey, ttsBaseUrl } = body as {
       text: string;
       audioId: string;
-      stageId?: string;
       ttsProviderId: TTSProviderId;
       ttsModelId?: string;
       ttsVoice: string;
@@ -38,7 +38,6 @@ export async function POST(req: NextRequest) {
     ttsProviderId = body.ttsProviderId;
     ttsVoice = body.ttsVoice;
     audioId = body.audioId;
-    const stageId = body.stageId;
 
     // Validate required fields
     if (!text || !audioId || !ttsProviderId || !ttsVoice) {
@@ -54,34 +53,42 @@ export async function POST(req: NextRequest) {
       return apiError('INVALID_REQUEST', 400, 'browser-native-tts must be handled client-side');
     }
 
-    const apiKey = await resolveTTSApiKey(ttsProviderId, ttsApiKey || undefined);
-    const baseUrl = await resolveTTSBaseUrl(ttsProviderId, ttsBaseUrl || undefined);
+    const clientBaseUrl = ttsBaseUrl || undefined;
+    if (clientBaseUrl && process.env.NODE_ENV === 'production') {
+      const ssrfError = await validateUrlForSSRF(clientBaseUrl);
+      if (ssrfError) {
+        return apiError('INVALID_URL', 403, ssrfError);
+      }
+    }
 
-    log.info(
-      `Generating TTS: provider=${ttsProviderId}, model=${ttsModelId || 'default'}, voice=${ttsVoice}, audioId=${audioId}, stageId=${stageId || 'none'}, textLen=${text.length}`,
-    );
+    const apiKey = clientBaseUrl
+      ? ttsApiKey || ''
+      : resolveTTSApiKey(ttsProviderId, ttsApiKey || undefined);
+    const baseUrl = clientBaseUrl
+      ? clientBaseUrl
+      : resolveTTSBaseUrl(ttsProviderId, ttsBaseUrl || undefined);
 
-    const result = await generateSharedTTSAsset({
-      stageId,
-      text,
+    // Build TTS config
+    const config = {
       providerId: ttsProviderId as TTSProviderId,
       modelId: ttsModelId,
       voice: ttsVoice,
-      speed: ttsSpeed,
+      speed: ttsSpeed ?? 1.0,
       apiKey,
       baseUrl,
-      requestedAudioId: audioId,
-    });
+    };
 
-    const base64 = Buffer.from(result.audio).toString('base64');
+    log.info(
+      `Generating TTS: provider=${ttsProviderId}, model=${ttsModelId || 'default'}, voice=${ttsVoice}, audioId=${audioId}, textLen=${text.length}`,
+    );
 
-    return apiSuccess({
-      audioId: result.audioId,
-      base64,
-      format: result.format,
-      audioUrl: result.audioUrl,
-      reused: result.reused,
-    });
+    // Generate audio
+    const { audio, format } = await generateTTS(config, text);
+
+    // Convert to base64
+    const base64 = Buffer.from(audio).toString('base64');
+
+    return apiSuccess({ audioId, base64, format });
   } catch (error) {
     log.error(
       `TTS generation failed [provider=${ttsProviderId ?? 'unknown'}, voice=${ttsVoice ?? 'unknown'}, audioId=${audioId ?? 'unknown'}]:`,

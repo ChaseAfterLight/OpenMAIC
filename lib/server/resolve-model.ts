@@ -8,6 +8,7 @@
 import type { NextRequest } from 'next/server';
 import { getModel, parseModelString, type ModelWithInfo } from '@/lib/ai/providers';
 import { resolveApiKey, resolveBaseUrl, resolveProxy } from '@/lib/server/provider-config';
+import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
 export interface ResolvedModel extends ModelWithInfo {
   /** Original model string (e.g. "openai/gpt-4o-mini") */
@@ -23,17 +24,7 @@ export interface ResolvedModel extends ModelWithInfo {
  *
  * Use this when model config comes from the request body.
  */
-export function resolveModel(params: {
-  modelString?: string;
-  apiKey?: string;
-  baseUrl?: string;
-  providerType?: string;
-  requiresApiKey?: boolean;
-}): Promise<ResolvedModel> {
-  return resolveModelInternal(params);
-}
-
-async function resolveModelInternal(params: {
+export async function resolveModel(params: {
   modelString?: string;
   apiKey?: string;
   baseUrl?: string;
@@ -42,11 +33,22 @@ async function resolveModelInternal(params: {
   const modelString = params.modelString || process.env.DEFAULT_MODEL || 'gpt-4o-mini';
   const { providerId, modelId } = parseModelString(modelString);
 
-  // Client-supplied API key / base URL are ignored by design:
-  // provider credentials are authoritative on the server.
-  const apiKey = await resolveApiKey(providerId, params.apiKey || '');
-  const baseUrl = await resolveBaseUrl(providerId, params.baseUrl);
-  const proxy = await resolveProxy(providerId);
+  // SSRF validation applies only to client-supplied base URLs.
+  // Server-configured URLs (e.g. OLLAMA_BASE_URL from env/YAML) flow through
+  // resolveBaseUrl() and bypass this check — they're trusted by the operator.
+  const clientBaseUrl = params.baseUrl || undefined;
+  if (clientBaseUrl && process.env.NODE_ENV === 'production') {
+    const ssrfError = await validateUrlForSSRF(clientBaseUrl);
+    if (ssrfError) {
+      throw new Error(ssrfError);
+    }
+  }
+
+  const apiKey = clientBaseUrl
+    ? params.apiKey || ''
+    : resolveApiKey(providerId, params.apiKey || '');
+  const baseUrl = clientBaseUrl ? clientBaseUrl : resolveBaseUrl(providerId, params.baseUrl);
+  const proxy = resolveProxy(providerId);
   const { model, modelInfo } = getModel({
     providerId,
     modelId,
@@ -62,8 +64,7 @@ async function resolveModelInternal(params: {
 /**
  * Resolve a language model from standard request headers.
  *
- * Reads: x-model, x-provider-type.
- * Compatibility note: x-api-key / x-base-url are accepted but ignored.
+ * Reads: x-model, x-api-key, x-base-url, x-provider-type
  * Note: requiresApiKey is derived server-side from the provider registry,
  * never from client headers, to prevent auth bypass.
  */

@@ -5,6 +5,7 @@ import type { PDFProviderId } from '@/lib/pdf/types';
 import type { ParsedPdfContent } from '@/lib/types/pdf';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 const log = createLogger('Parse PDF');
 
 export async function POST(req: NextRequest) {
@@ -36,10 +37,22 @@ export async function POST(req: NextRequest) {
     pdfFileName = pdfFile?.name;
     resolvedProviderId = effectiveProviderId;
 
+    const clientBaseUrl = baseUrl || undefined;
+    if (clientBaseUrl && process.env.NODE_ENV === 'production') {
+      const ssrfError = await validateUrlForSSRF(clientBaseUrl);
+      if (ssrfError) {
+        return apiError('INVALID_URL', 403, ssrfError);
+      }
+    }
+
     const config = {
       providerId: effectiveProviderId,
-      apiKey: await resolvePDFApiKey(effectiveProviderId, apiKey || undefined),
-      baseUrl: await resolvePDFBaseUrl(effectiveProviderId, baseUrl || undefined),
+      apiKey: clientBaseUrl
+        ? apiKey || ''
+        : resolvePDFApiKey(effectiveProviderId, apiKey || undefined),
+      baseUrl: clientBaseUrl
+        ? clientBaseUrl
+        : resolvePDFBaseUrl(effectiveProviderId, baseUrl || undefined),
     };
 
     // Convert PDF to buffer

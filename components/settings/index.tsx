@@ -32,7 +32,7 @@ import { useSettingsStore } from '@/lib/store/settings';
 import { useAuthSessionStore } from '@/lib/store/auth-session';
 import { toast } from 'sonner';
 import { type ProviderId } from '@/lib/ai/providers';
-import { PROVIDERS } from '@/lib/ai/providers';
+import { PROVIDERS, MONO_LOGO_PROVIDERS } from '@/lib/ai/providers';
 import { cn } from '@/lib/utils';
 import { getProviderTypeLabel } from './utils';
 import { ProviderList } from './provider-list';
@@ -103,7 +103,10 @@ function ProviderListColumn<T extends string>({
               <img
                 src={provider.icon}
                 alt={provider.name}
-                className="w-5 h-5 rounded"
+                className={cn(
+                  'w-5 h-5 rounded',
+                  MONO_LOGO_PROVIDERS.has(provider.id) && 'dark:invert',
+                )}
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
@@ -614,7 +617,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <img
                   src={selectedProvider.icon}
                   alt={selectedProvider.name}
-                  className="w-8 h-8 rounded"
+                  className={cn(
+                    'w-8 h-8 rounded',
+                    MONO_LOGO_PROVIDERS.has(selectedProvider.id) && 'dark:invert',
+                  )}
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
                   }}

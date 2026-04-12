@@ -2,7 +2,6 @@ import { nanoid } from 'nanoid';
 import { callLLM } from '@/lib/ai/llm';
 import { createStageAPI } from '@/lib/api/stage-api';
 import type { StageStore } from '@/lib/api/stage-api-types';
-import { buildVisionUserContent } from '@/lib/generation/generation-pipeline';
 import {
   applyOutlineFallbacks,
   generateSceneOutlinesFromRequirements,
@@ -12,77 +11,37 @@ import {
   generateSceneActions,
   generateSceneContent,
 } from '@/lib/generation/scene-generator';
-import type { AICallFn, AgentInfo, SceneGenerationContext } from '@/lib/generation/pipeline-types';
+import type { AICallFn } from '@/lib/generation/pipeline-types';
+import type { AgentInfo } from '@/lib/generation/pipeline-types';
 import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatters';
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
 import { isProviderKeyRequired } from '@/lib/ai/providers';
-import { resolveWebSearchApiKey, resolveWebSearchProviderOptions } from '@/lib/server/provider-config';
-import { resolveModel } from '@/lib/server/resolve-model';
-import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
+import { resolveWebSearchApiKey } from '@/lib/server/provider-config';
+import { resolveModel, type ResolvedModel } from '@/lib/server/resolve-model';
 import { buildSearchQuery } from '@/lib/server/search-query-builder';
 import { searchWithTavily, formatSearchResultsAsContext } from '@/lib/web-search/tavily';
-import { searchWithBrave } from '@/lib/web-search/brave';
-import { searchWithBaidu } from '@/lib/web-search/baidu';
-import { persistClassroom, readClassroom } from '@/lib/server/classroom-storage';
-import { buildK12LessonPackTitle, resolveK12LessonPackMetadata } from '@/lib/module-host/k12';
-import { getModuleById } from '@/lib/module-host/runtime';
+import { persistClassroom } from '@/lib/server/classroom-storage';
 import {
   generateMediaForClassroom,
   replaceMediaPlaceholders,
   generateTTSForClassroom,
 } from '@/lib/server/classroom-media-generation';
-import { getImageFileBlob } from '@/lib/server/storage-repository';
-import type { SpeechAction } from '@/lib/types/action';
-import type {
-  ImageMapping,
-  PdfImage,
-  SceneOutline,
-  UserRequirements,
-} from '@/lib/types/generation';
-import type { WebSearchResult } from '@/lib/types/web-search';
-import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
-import type { Scene, Stage, LessonPackStatus } from '@/lib/types/stage';
+import type { UserRequirements } from '@/lib/types/generation';
+import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
-import type {
-  K12ModulePresets,
-  K12StructuredInput,
-  SupportedLocale,
-} from '@/lib/module-host/types';
 
 const log = createLogger('Classroom');
 
-function isUnavailableAccountsError(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? `${error.name}: ${error.message}${error.cause ? ` | cause: ${String(error.cause)}` : ''}`
-      : String(error);
-  return /No available .* accounts|no available accounts/i.test(message);
-}
-
 export interface GenerateClassroomInput {
-  moduleId?: 'core' | 'k12';
-  k12?: K12StructuredInput;
   requirement: string;
-  pdfFileName?: string;
   pdfContent?: { text: string; images: string[] };
-  pdfImages?: PdfImage[];
-  sceneOutlines?: SceneOutline[];
   language?: string;
-  modelString?: string;
-  providerType?: string;
-  stageSeed?: Pick<Stage, 'id' | 'name' | 'description' | 'language' | 'style' | 'lessonPack'>;
-  agentProfiles?: AgentInfo[];
   enableWebSearch?: boolean;
-  webSearchProviderId?: WebSearchProviderId;
-  baiduSubSources?: Partial<BaiduSubSources>;
   enableImageGeneration?: boolean;
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
   agentMode?: 'default' | 'generate';
-  userProfile?: string;
-  sceneOrdersFilter?: number[];
-  regenerateSceneOrders?: number[];
 }
 
 export type ClassroomGenerationStep =
@@ -101,16 +60,6 @@ export interface ClassroomGenerationProgress {
   message: string;
   scenesGenerated: number;
   totalScenes?: number;
-  checkpoint?: ClassroomGenerationCheckpoint;
-  result?: {
-    classroomId: string;
-    url: string;
-    scenesCount: number;
-  };
-}
-
-export interface ClassroomGenerationCheckpoint {
-  classroomId?: string;
 }
 
 export interface GenerateClassroomResult {
@@ -122,17 +71,11 @@ export interface GenerateClassroomResult {
   createdAt: string;
 }
 
-function createInMemoryStore(
-  stage: Stage,
-  initial?: {
-    scenes?: Scene[];
-    currentSceneId?: string | null;
-  },
-): StageStore {
+function createInMemoryStore(stage: Stage): StageStore {
   let state = {
     stage: stage as Stage | null,
-    scenes: initial?.scenes ?? ([] as Scene[]),
-    currentSceneId: initial?.currentSceneId ?? null,
+    scenes: [] as Scene[],
+    currentSceneId: null as string | null,
     mode: 'playback' as const,
   };
 
@@ -159,190 +102,12 @@ function normalizeLanguage(language?: string): 'zh-CN' | 'en-US' {
   return language === 'en-US' ? 'en-US' : 'zh-CN';
 }
 
-function progressMessage(
-  locale: 'zh-CN' | 'en-US',
-  key:
-    | 'initializing'
-    | 'researching'
-    | 'resuming'
-    | 'generatingOutlines'
-    | 'generatedOutlines'
-    | 'generatingScene'
-    | 'generatedScenes'
-    | 'generatingMedia'
-    | 'generatingTts'
-    | 'persisting'
-    | 'completed',
-  params?: Record<string, string | number>,
-) {
-  const messages = {
-    'zh-CN': {
-      initializing: '正在初始化课程包生成',
-      researching: '正在检索主题资料',
-      resuming: `正在恢复课程包生成（${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} 页已就绪）`,
-      generatingOutlines: '正在生成场景大纲',
-      generatedOutlines: `已生成 ${params?.totalScenes ?? 0} 个场景大纲`,
-      generatingScene: `正在生成第 ${params?.currentScene ?? 0}/${params?.totalScenes ?? 0} 页：${params?.title ?? ''}`,
-      generatedScenes: `已生成 ${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} 页`,
-      generatingMedia: '正在生成媒体素材',
-      generatingTts: '正在生成语音讲解',
-      persisting: '正在保存课程包数据',
-      completed: '课程包生成完成',
-    },
-    'en-US': {
-      initializing: 'Initializing classroom generation',
-      researching: 'Researching topic',
-      resuming: `Resuming classroom generation (${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} scenes ready)`,
-      generatingOutlines: 'Generating scene outlines',
-      generatedOutlines: `Generated ${params?.totalScenes ?? 0} scene outlines`,
-      generatingScene: `Generating scene ${params?.currentScene ?? 0}/${params?.totalScenes ?? 0}: ${params?.title ?? ''}`,
-      generatedScenes: `Generated ${params?.readyScenes ?? 0}/${params?.totalScenes ?? 0} scenes`,
-      generatingMedia: 'Generating media files',
-      generatingTts: 'Generating TTS audio',
-      persisting: 'Persisting classroom data',
-      completed: 'Classroom generation completed',
-    },
-  } as const;
-
-  return messages[locale][key];
-}
-
-function restoreAgentsFromStage(stage: Stage): AgentInfo[] | null {
-  if (!stage.generatedAgentConfigs?.length) {
-    return null;
-  }
-
-  return stage.generatedAgentConfigs.map((agent) => ({
-    id: agent.id,
-    name: agent.name,
-    role: agent.role,
-    persona: agent.persona,
-  }));
-}
-
-function getPreviousSpeechesForOrder(scenes: Scene[], order: number): string[] {
-  const previousScene = [...scenes]
-    .filter((scene) => scene.order < order)
-    .sort((left, right) => left.order - right.order)
-    .at(-1);
-
-  return (
-    previousScene?.actions
-      ?.filter((action): action is SpeechAction => action.type === 'speech')
-      .map((action) => action.text) ?? []
-  );
-}
-
-function buildLessonPackMetadata(
-  input: GenerateClassroomInput,
-  locale: SupportedLocale,
-  status: LessonPackStatus,
-) {
-  if (input.moduleId !== 'k12' || !input.k12) {
-    return {
-      status,
-      exportStatus: 'not_exported' as const,
-    };
-  }
-
-  const presets = getModuleById('k12').presets as K12ModulePresets | undefined;
-  if (!presets) {
-    return {
-      durationMinutes: input.k12.durationMinutes,
-      status,
-      exportStatus: 'not_exported' as const,
-    };
-  }
-
-  return {
-    ...resolveK12LessonPackMetadata({
-      input: input.k12,
-      presets,
-      locale,
-    }),
-    status,
-    exportStatus: 'not_exported' as const,
-  };
-}
-
-function resolveWebSearchProviderId(providerId?: string): WebSearchProviderId {
-  return providerId && providerId in WEB_SEARCH_PROVIDERS
-    ? (providerId as WebSearchProviderId)
-    : 'tavily';
-}
-
-function normalizeBaiduSubSources(subSources?: Partial<BaiduSubSources>): BaiduSubSources {
-  return {
-    webSearch: subSources?.webSearch ?? true,
-    baike: subSources?.baike ?? true,
-    scholar: subSources?.scholar ?? true,
-  };
-}
-
-function normalizeBaiduSubSourcesFromOptions(
-  providerOptions?: Record<string, unknown>,
-): BaiduSubSources {
-  if (!providerOptions || typeof providerOptions !== 'object') {
-    return normalizeBaiduSubSources();
-  }
-
-  const direct = providerOptions as Partial<BaiduSubSources>;
-  const nested =
-    typeof providerOptions.baiduSubSources === 'object' &&
-    providerOptions.baiduSubSources &&
-    !Array.isArray(providerOptions.baiduSubSources)
-      ? (providerOptions.baiduSubSources as Partial<BaiduSubSources>)
-      : undefined;
-
-  return normalizeBaiduSubSources({
-    webSearch: nested?.webSearch ?? direct.webSearch,
-    baike: nested?.baike ?? direct.baike,
-    scholar: nested?.scholar ?? direct.scholar,
-  });
-}
-
 function stripCodeFences(text: string): string {
   let cleaned = text.trim();
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   }
   return cleaned.trim();
-}
-
-function toDataUrl(payload: { buffer: Buffer; mimeType: string }) {
-  return `data:${payload.mimeType};base64,${payload.buffer.toString('base64')}`;
-}
-
-async function loadServerPdfAssets(input: GenerateClassroomInput): Promise<{
-  pdfImages?: PdfImage[];
-  imageMapping?: ImageMapping;
-}> {
-  if (!input.pdfImages?.length) {
-    return {};
-  }
-
-  const imageMapping: ImageMapping = {};
-  const pdfImages = await Promise.all(
-    input.pdfImages.map(async (image) => {
-      if (!image.serverStorageId) {
-        return image;
-      }
-
-      const payload = await getImageFileBlob(image.serverStorageId);
-      if (!payload) {
-        log.warn(`PDF image asset not found for ${image.id}: ${image.serverStorageId}`);
-        return image;
-      }
-
-      imageMapping[image.id] = toDataUrl(payload);
-      return image;
-    }),
-  );
-
-  return {
-    pdfImages,
-    imageMapping: Object.keys(imageMapping).length > 0 ? imageMapping : undefined,
-  };
 }
 
 async function generateAgentProfiles(
@@ -400,18 +165,15 @@ export async function generateClassroom(
   input: GenerateClassroomInput,
   options: {
     baseUrl: string;
-    resumeCheckpoint?: ClassroomGenerationCheckpoint;
-    onCheckpoint?: (checkpoint: ClassroomGenerationCheckpoint) => Promise<void> | void;
     onProgress?: (progress: ClassroomGenerationProgress) => Promise<void> | void;
   },
 ): Promise<GenerateClassroomResult> {
   const { requirement, pdfContent } = input;
-  const lang = normalizeLanguage(input.language);
 
   await options.onProgress?.({
     step: 'initializing',
     progress: 5,
-    message: progressMessage(lang, 'initializing'),
+    message: 'Initializing classroom generation',
     scenesGenerated: 0,
   });
 
@@ -426,9 +188,24 @@ export async function generateClassroom(
     providerType: input.providerType,
   });
   log.info(`Using server-configured model: ${modelString}`);
-  const hasVision = !!modelInfo?.capabilities?.vision;
-  const fallbackModel = await resolveModel({});
+  let fallbackModelPromise: Promise<ResolvedModel | null> | null = null;
 
+  const getFallbackModel = async (): Promise<ResolvedModel | null> => {
+    if (!fallbackModelPromise) {
+      fallbackModelPromise = resolveModel({}).catch((error) => {
+        log.warn(
+          `Fallback model resolution failed for classroom generation; continuing without fallback: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return null;
+      });
+    }
+
+    return fallbackModelPromise;
+  };
+
+  // Fail fast if the resolved provider has no API key configured
   if (isProviderKeyRequired(providerId) && !apiKey) {
     throw new Error(
       `No API key configured for provider "${providerId}". ` +
@@ -436,50 +213,7 @@ export async function generateClassroom(
     );
   }
 
-  const aiCall: AICallFn = async (systemPrompt, userPrompt, images) => {
-    if (images?.length && hasVision) {
-      try {
-        const result = await callLLM(
-          {
-            model: languageModel,
-            system: systemPrompt,
-            messages: [
-              {
-                role: 'user',
-                content: buildVisionUserContent(userPrompt, images),
-              },
-            ],
-            maxOutputTokens: modelInfo?.outputWindow,
-          },
-          'generate-classroom',
-        );
-        return result.text;
-      } catch (error) {
-        if (!isUnavailableAccountsError(error) || fallbackModel.modelString === modelString) {
-          throw error;
-        }
-
-        log.warn(
-          `Primary model "${modelString}" is unavailable, retrying generate-classroom with fallback model "${fallbackModel.modelString}"`,
-        );
-        const fallbackResult = await callLLM(
-          {
-            model: fallbackModel.model,
-            system: systemPrompt,
-            messages: [
-              {
-                role: 'user',
-                content: buildVisionUserContent(userPrompt, images),
-              },
-            ],
-            maxOutputTokens: fallbackModel.modelInfo?.outputWindow,
-          },
-          'generate-classroom:fallback',
-        );
-        return fallbackResult.text;
-      }
-    }
-
+  const aiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
     try {
       const result = await callLLM(
         {
@@ -494,7 +228,12 @@ export async function generateClassroom(
       );
       return result.text;
     } catch (error) {
-      if (!isUnavailableAccountsError(error) || fallbackModel.modelString === modelString) {
+      const fallbackModel = await getFallbackModel();
+      if (
+        !isUnavailableAccountsError(error) ||
+        !fallbackModel ||
+        fallbackModel.modelString === modelString
+      ) {
         throw error;
       }
 
@@ -531,7 +270,12 @@ export async function generateClassroom(
       );
       return result.text;
     } catch (error) {
-      if (!isUnavailableAccountsError(error) || fallbackModel.modelString === modelString) {
+      const fallbackModel = await getFallbackModel();
+      if (
+        !isUnavailableAccountsError(error) ||
+        !fallbackModel ||
+        fallbackModel.modelString === modelString
+      ) {
         throw error;
       }
 
@@ -553,41 +297,17 @@ export async function generateClassroom(
     }
   };
 
-  const { pdfImages: restoredPdfImages, imageMapping } = await loadServerPdfAssets(input);
+  const lang = normalizeLanguage(input.language);
   const requirements: UserRequirements = {
     requirement,
     language: lang,
   };
   const pdfText = pdfContent?.text || undefined;
 
-  let resumedClassroom = options.resumeCheckpoint?.classroomId
-    ? await readClassroom(options.resumeCheckpoint.classroomId).catch((error) => {
-        log.warn(
-          `Failed to load checkpoint classroom ${options.resumeCheckpoint?.classroomId}, restarting from scratch:`,
-          error,
-        );
-        return null;
-      })
-    : null;
-
-  if (resumedClassroom && !resumedClassroom.outlines?.length) {
-    log.warn(
-      `Checkpoint classroom ${resumedClassroom.id} missing outlines, restarting generation from scratch`,
-    );
-    resumedClassroom = null;
-  }
-
   // Resolve agents based on agentMode
   let agents: AgentInfo[];
-  const agentMode = input.agentMode || 'default';
-  const restoredAgents = resumedClassroom ? restoreAgentsFromStage(resumedClassroom.stage) : null;
-  if (restoredAgents) {
-    agents = restoredAgents;
-    log.info(`Restored ${agents.length} agent profiles from checkpoint classroom`);
-  } else if (input.agentProfiles?.length) {
-    agents = input.agentProfiles;
-    log.info(`Using ${agents.length} agent profiles from confirmed outline payload`);
-  } else if (agentMode === 'generate') {
+  let agentMode = input.agentMode || 'default';
+  if (agentMode === 'generate') {
     log.info('Generating custom agent profiles via LLM...');
     try {
       agents = await generateAgentProfiles(requirement, lang, aiCall);
@@ -595,65 +315,39 @@ export async function generateClassroom(
     } catch (e) {
       log.warn('Agent profile generation failed, falling back to defaults:', e);
       agents = getDefaultAgents();
+      agentMode = 'default';
     }
   } else {
     agents = getDefaultAgents();
   }
   const teacherContext = formatTeacherPersonaForPrompt(agents);
 
+  await options.onProgress?.({
+    step: 'researching',
+    progress: 10,
+    message: 'Researching topic',
+    scenesGenerated: 0,
+  });
+
   // Web search (optional, graceful degradation)
   let researchContext: string | undefined;
-  if (!resumedClassroom) {
-    if (!input.sceneOutlines?.length) {
-      await options.onProgress?.({
-        step: 'researching',
-        progress: 10,
-        message: progressMessage(lang, 'researching'),
-        scenesGenerated: 0,
-      });
-    }
-  }
-
-  if (!resumedClassroom && !input.sceneOutlines?.length && input.enableWebSearch) {
-    const providerId = resolveWebSearchProviderId(input.webSearchProviderId);
-    const provider = WEB_SEARCH_PROVIDERS[providerId];
-    const providerOptions = await resolveWebSearchProviderOptions(providerId);
-    const baiduSubSources =
-      providerId === 'baidu'
-        ? normalizeBaiduSubSourcesFromOptions(providerOptions)
-        : normalizeBaiduSubSources();
-    const apiKey = provider.requiresApiKey ? await resolveWebSearchApiKey(providerId) : '';
-
-    if (!provider.requiresApiKey || apiKey) {
+  if (input.enableWebSearch) {
+    const tavilyKey = resolveWebSearchApiKey();
+    if (tavilyKey) {
       try {
         const searchQuery = await buildSearchQuery(requirement, pdfText, searchQueryAiCall);
 
         log.info('Running web search for classroom generation', {
-          provider: provider.name,
           hasPdfContext: searchQuery.hasPdfContext,
           rawRequirementLength: searchQuery.rawRequirementLength,
           rewriteAttempted: searchQuery.rewriteAttempted,
           finalQueryLength: searchQuery.finalQueryLength,
         });
 
-        let searchResult: WebSearchResult;
-        switch (providerId) {
-          case 'brave':
-            searchResult = await searchWithBrave({ query: searchQuery.query });
-            break;
-          case 'baidu':
-            searchResult = await searchWithBaidu({
-              query: searchQuery.query,
-              apiKey,
-              subSources: baiduSubSources,
-            });
-            break;
-          case 'tavily':
-          default:
-            searchResult = await searchWithTavily({ query: searchQuery.query, apiKey });
-            break;
-        }
-
+        const searchResult = await searchWithTavily({
+          query: searchQuery.query,
+          apiKey: tavilyKey,
+        });
         researchContext = formatSearchResultsAsContext(searchResult);
         if (researchContext) {
           log.info(`Web search returned ${searchResult.sources.length} sources`);
@@ -662,265 +356,102 @@ export async function generateClassroom(
         log.warn('Web search failed, continuing without search context:', e);
       }
     } else {
-      log.warn(
-        `enableWebSearch is true but no API key configured for provider "${providerId}", skipping web search`,
-      );
+      log.warn('enableWebSearch is true but no Tavily API key configured, skipping web search');
     }
   }
 
-  let outlines: SceneOutline[];
-  let stageId: string;
-  let stage: Stage;
-  let store: StageStore;
-  const sceneOrdersFilter = new Set(input.sceneOrdersFilter ?? []);
-  const regenerateSceneOrders = new Set(input.regenerateSceneOrders ?? []);
-  const hasSceneOrderFilter = sceneOrdersFilter.size > 0;
+  await options.onProgress?.({
+    step: 'generating_outlines',
+    progress: 15,
+    message: 'Generating scene outlines',
+    scenesGenerated: 0,
+  });
 
-  if (resumedClassroom) {
-    outlines = resumedClassroom.outlines ?? [];
-    stageId = resumedClassroom.id;
-    const seedScenes =
-      regenerateSceneOrders.size > 0
-        ? resumedClassroom.scenes.filter((scene) => !regenerateSceneOrders.has(scene.order))
-        : resumedClassroom.scenes;
-    stage = {
-      ...resumedClassroom.stage,
-      lessonPack: resumedClassroom.stage.lessonPack
-        ? {
-            ...resumedClassroom.stage.lessonPack,
-            status: 'in_progress',
-          }
-        : resumedClassroom.stage.lessonPack,
-      updatedAt: Date.now(),
-    };
-    store = createInMemoryStore(stage, {
-      scenes: seedScenes,
-      currentSceneId:
-        (resumedClassroom.stage as Stage & { currentSceneId?: string }).currentSceneId ??
-        seedScenes[0]?.id ??
-        null,
-    });
+  const outlinesResult = await generateSceneOutlinesFromRequirements(
+    requirements,
+    pdfText,
+    undefined,
+    aiCall,
+    undefined,
+    {
+      imageGenerationEnabled: input.enableImageGeneration,
+      videoGenerationEnabled: input.enableVideoGeneration,
+      researchContext,
+      teacherContext,
+    },
+  );
 
-    await options.onCheckpoint?.({ classroomId: stageId });
-    await options.onProgress?.({
-      step: 'generating_scenes',
-      progress: Math.min(
-        30 + Math.floor((seedScenes.length / Math.max(outlines.length, 1)) * 60),
-        90,
-      ),
-      message: progressMessage(lang, 'resuming', {
-        readyScenes: seedScenes.length,
-        totalScenes: outlines.length,
-      }),
-      scenesGenerated: seedScenes.length,
-      totalScenes: outlines.length,
-      checkpoint: { classroomId: stageId },
-      result: {
-        classroomId: resumedClassroom.id,
-        url: `${options.baseUrl}/classroom/${resumedClassroom.id}`,
-        scenesCount: seedScenes.length,
-      },
-    });
-  } else if (input.sceneOutlines?.length) {
-    outlines = input.sceneOutlines;
-    log.info(`Using ${outlines.length} confirmed scene outlines from client`);
-
-    stageId = input.stageSeed?.id || nanoid(10);
-    const lessonPack =
-      input.stageSeed?.lessonPack != null
-        ? {
-            ...input.stageSeed.lessonPack,
-            status: 'in_progress' as const,
-          }
-        : buildLessonPackMetadata(input, lang, 'in_progress');
-    stage = {
-      id: stageId,
-      name: input.stageSeed?.name || outlines[0]?.title || requirement.slice(0, 50),
-      description: input.stageSeed?.description,
-      language: input.stageSeed?.language || lang,
-      style: input.stageSeed?.style || 'interactive',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      lessonPack,
-      generatedAgentConfigs: agents.map((a, i) => ({
-        id: a.id,
-        name: a.name,
-        role: a.role,
-        persona: a.persona || '',
-        avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
-        color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
-        priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
-      })),
-    };
-
-    store = createInMemoryStore(stage);
-  } else {
-    await options.onProgress?.({
-      step: 'generating_outlines',
-      progress: 15,
-      message: progressMessage(lang, 'generatingOutlines'),
-      scenesGenerated: 0,
-    });
-
-    const outlinesResult = await generateSceneOutlinesFromRequirements(
-      requirements,
-      pdfText,
-      restoredPdfImages,
-      aiCall,
-      undefined,
-      {
-        visionEnabled: hasVision,
-        imageMapping,
-        imageGenerationEnabled: input.enableImageGeneration,
-        videoGenerationEnabled: input.enableVideoGeneration,
-        researchContext,
-        teacherContext,
-      },
-    );
-
-    if (!outlinesResult.success || !outlinesResult.data) {
-      log.error('Failed to generate outlines:', outlinesResult.error);
-      throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
-    }
-
-    outlines = outlinesResult.data;
-    log.info(`Generated ${outlines.length} scene outlines`);
-
-    stageId = nanoid(10);
-    const lessonPack = buildLessonPackMetadata(input, lang, 'in_progress');
-    const k12Presets =
-      input.moduleId === 'k12'
-        ? ((getModuleById('k12').presets as K12ModulePresets | undefined) ?? undefined)
-        : undefined;
-    stage = {
-      id: stageId,
-      name:
-        input.moduleId === 'k12'
-          ? buildK12LessonPackTitle({
-              input: input.k12,
-              presets: k12Presets,
-              locale: lang,
-              requirement,
-              supplementaryPdfName: input.pdfFileName,
-            })
-          : outlines[0]?.title || requirement.slice(0, 50),
-      description: undefined,
-      language: lang,
-      style: 'interactive',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      lessonPack,
-      // Embed agent configs so API-generated classrooms can hydrate
-      // the client-side agent registry without IndexedDB
-      generatedAgentConfigs: agents.map((a, i) => ({
-        id: a.id,
-        name: a.name,
-        role: a.role,
-        persona: a.persona || '',
-        avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
-        color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
-        priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
-      })),
-    };
-
-    store = createInMemoryStore(stage);
+  if (!outlinesResult.success || !outlinesResult.data) {
+    log.error('Failed to generate outlines:', outlinesResult.error);
+    throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
   }
 
-  const api = createStageAPI(store);
-  const persistSnapshot = async () => {
-    stage.updatedAt = Date.now();
-    const scenes = store.getState().scenes;
-    const persisted = await persistClassroom(
-      {
-        id: stageId,
-        stage: {
-          ...stage,
-          currentSceneId: scenes[0]?.id,
-        },
-        scenes,
-        outlines,
-      },
-      options.baseUrl,
-    );
+  const outlines = outlinesResult.data;
+  log.info(`Generated ${outlines.length} scene outlines`);
 
-    return {
-      classroomId: persisted.id,
-      url: persisted.url,
-      scenesCount: scenes.length,
-    };
+  await options.onProgress?.({
+    step: 'generating_outlines',
+    progress: 30,
+    message: `Generated ${outlines.length} scene outlines`,
+    scenesGenerated: 0,
+    totalScenes: outlines.length,
+  });
+
+  const stageId = nanoid(10);
+  const stage: Stage = {
+    id: stageId,
+    name: outlines[0]?.title || requirement.slice(0, 50),
+    description: undefined,
+    language: lang,
+    style: 'interactive',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    // For LLM-generated agents, embed full configs so the client can
+    // hydrate the agent registry without prior IndexedDB data.
+    // For default agents, just record IDs — the client already has them.
+    ...(agentMode === 'generate'
+      ? {
+          generatedAgentConfigs: agents.map((a, i) => ({
+            id: a.id,
+            name: a.name,
+            role: a.role,
+            persona: a.persona || '',
+            avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
+            color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
+            priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
+          })),
+        }
+      : {
+          agentIds: agents.map((a) => a.id),
+        }),
   };
-  if (!resumedClassroom) {
-    const initialSnapshot = await persistSnapshot();
-    await options.onCheckpoint?.({ classroomId: initialSnapshot.classroomId });
 
-    await options.onProgress?.({
-      step: 'generating_outlines',
-      progress: 30,
-      message: progressMessage(lang, 'generatedOutlines', {
-        totalScenes: outlines.length,
-      }),
-      scenesGenerated: 0,
-      totalScenes: outlines.length,
-      checkpoint: { classroomId: initialSnapshot.classroomId },
-      result: initialSnapshot,
-    });
-  }
+  const store = createInMemoryStore(stage);
+  const api = createStageAPI(store);
 
   log.info('Stage 2: Generating scene content and actions...');
-  const completedSceneOrders = new Set(store.getState().scenes.map((scene) => scene.order));
-  const targetOutlines = hasSceneOrderFilter
-    ? outlines.filter((outline) => sceneOrdersFilter.has(outline.order))
-    : outlines;
-  const totalTargetScenes = targetOutlines.length;
-  const allTitles = outlines.map((outline) => outline.title);
-  let generatedScenes = hasSceneOrderFilter
-    ? targetOutlines.filter((outline) => completedSceneOrders.has(outline.order)).length
-    : store.getState().scenes.length;
+  let generatedScenes = 0;
 
-  for (const [index, outline] of targetOutlines.entries()) {
+  for (const [index, outline] of outlines.entries()) {
     const safeOutline = applyOutlineFallbacks(outline, true);
-    if (completedSceneOrders.has(safeOutline.order)) {
-      continue;
-    }
-    const fullPageIndex = Math.max(
-      outlines.findIndex((candidate) => candidate.order === safeOutline.order),
-      0,
-    );
-
-    const progressStart =
-      30 + Math.floor((generatedScenes / Math.max(totalTargetScenes, 1)) * 60);
+    const progressStart = 30 + Math.floor((index / Math.max(outlines.length, 1)) * 60);
 
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.max(progressStart, 31),
-      message: progressMessage(lang, 'generatingScene', {
-        currentScene: index + 1,
-        totalScenes: totalTargetScenes,
-        title: safeOutline.title,
-      }),
+      message: `Generating scene ${index + 1}/${outlines.length}: ${safeOutline.title}`,
       scenesGenerated: generatedScenes,
-      totalScenes: totalTargetScenes,
+      totalScenes: outlines.length,
     });
-
-    let assignedImages: PdfImage[] | undefined;
-    if (
-      restoredPdfImages &&
-      restoredPdfImages.length > 0 &&
-      safeOutline.suggestedImageIds &&
-      safeOutline.suggestedImageIds.length > 0
-    ) {
-      const suggestedIds = new Set(safeOutline.suggestedImageIds);
-      assignedImages = restoredPdfImages.filter((image) => suggestedIds.has(image.id));
-    }
 
     const content = await generateSceneContent(
       safeOutline,
       aiCall,
-      assignedImages,
-      imageMapping,
-      safeOutline.type === 'pbl' ? languageModel : undefined,
-      hasVision,
-      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
       agents,
     );
     if (!content) {
@@ -928,21 +459,7 @@ export async function generateClassroom(
       continue;
     }
 
-    const ctx: SceneGenerationContext = {
-      pageIndex: fullPageIndex + 1,
-      totalPages: outlines.length,
-      allTitles,
-      previousSpeeches: getPreviousSpeechesForOrder(store.getState().scenes, safeOutline.order),
-    };
-
-    const actions = await generateSceneActions(
-      safeOutline,
-      content,
-      aiCall,
-      ctx,
-      agents,
-      input.userProfile,
-    );
+    const actions = await generateSceneActions(safeOutline, content, aiCall, undefined, agents);
     log.info(`Scene "${safeOutline.title}": ${actions.length} actions`);
 
     const sceneId = createSceneWithActions(safeOutline, content, actions, api);
@@ -951,43 +468,14 @@ export async function generateClassroom(
       continue;
     }
 
-    if (regenerateSceneOrders.has(safeOutline.order)) {
-      const currentScenes = store.getState().scenes;
-      const generatedScene = currentScenes.find((scene) => scene.id === sceneId);
-      const scenesWithoutOrder = currentScenes.filter(
-        (scene) => scene.id !== sceneId && scene.order !== safeOutline.order,
-      );
-      if (generatedScene) {
-        const insertIndex = Math.min(
-          scenesWithoutOrder.filter((scene) => scene.order < safeOutline.order).length,
-          scenesWithoutOrder.length,
-        );
-        store.setState({
-          scenes: [
-            ...scenesWithoutOrder.slice(0, insertIndex),
-            generatedScene,
-            ...scenesWithoutOrder.slice(insertIndex),
-          ],
-        });
-      }
-    }
-
     generatedScenes += 1;
-    completedSceneOrders.add(safeOutline.order);
-    const snapshot = await persistSnapshot();
-    const progressEnd =
-      30 + Math.floor((generatedScenes / Math.max(totalTargetScenes, 1)) * 60);
+    const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
       progress: Math.min(progressEnd, 90),
-      message: progressMessage(lang, 'generatedScenes', {
-        readyScenes: generatedScenes,
-        totalScenes: totalTargetScenes,
-      }),
+      message: `Generated ${generatedScenes}/${outlines.length} scenes`,
       scenesGenerated: generatedScenes,
-      totalScenes: totalTargetScenes,
-      checkpoint: { classroomId: snapshot.classroomId },
-      result: snapshot,
+      totalScenes: outlines.length,
     });
   }
 
@@ -1003,13 +491,13 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_media',
       progress: 90,
-      message: progressMessage(lang, 'generatingMedia'),
+      message: 'Generating media files',
       scenesGenerated: scenes.length,
       totalScenes: outlines.length,
     });
 
     try {
-      const mediaMap = await generateMediaForClassroom(targetOutlines, stageId, options.baseUrl);
+      const mediaMap = await generateMediaForClassroom(outlines, stageId, options.baseUrl);
       replaceMediaPlaceholders(scenes, mediaMap);
       log.info(`Media generation complete: ${Object.keys(mediaMap).length} files`);
     } catch (err) {
@@ -1022,18 +510,13 @@ export async function generateClassroom(
     await options.onProgress?.({
       step: 'generating_tts',
       progress: 94,
-      message: progressMessage(lang, 'generatingTts'),
+      message: 'Generating TTS audio',
       scenesGenerated: scenes.length,
-      totalScenes: totalTargetScenes,
+      totalScenes: outlines.length,
     });
 
     try {
-      const targetOrders = new Set(targetOutlines.map((outline) => outline.order));
-      await generateTTSForClassroom(
-        scenes.filter((scene) => targetOrders.has(scene.order)),
-        stageId,
-        options.baseUrl,
-      );
+      await generateTTSForClassroom(scenes, stageId, options.baseUrl);
       log.info('TTS generation complete');
     } catch (err) {
       log.warn('TTS generation phase failed, continuing:', err);
@@ -1043,21 +526,15 @@ export async function generateClassroom(
   await options.onProgress?.({
     step: 'persisting',
     progress: 98,
-    message: progressMessage(lang, 'persisting'),
+    message: 'Persisting classroom data',
     scenesGenerated: scenes.length,
-    totalScenes: totalTargetScenes,
+    totalScenes: outlines.length,
   });
 
   const persisted = await persistClassroom(
     {
       id: stageId,
-      stage: {
-        ...stage,
-        lessonPack: {
-          ...stage.lessonPack,
-          status: 'ready',
-        },
-      },
+      stage,
       scenes,
     },
     options.baseUrl,
@@ -1068,9 +545,9 @@ export async function generateClassroom(
   await options.onProgress?.({
     step: 'completed',
     progress: 100,
-    message: progressMessage(lang, 'completed'),
+    message: 'Classroom generation completed',
     scenesGenerated: scenes.length,
-    totalScenes: totalTargetScenes,
+    totalScenes: outlines.length,
   });
 
   return {
