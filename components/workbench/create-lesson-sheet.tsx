@@ -11,6 +11,13 @@ import { GenerationToolbar } from '@/components/generation/generation-toolbar';
 import { K12StructuredInputFields } from '@/components/k12/k12-structured-input';
 import { SettingsDialog } from '@/components/settings';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   TextbookLibraryModal,
@@ -34,6 +41,7 @@ import {
   resolveLocalizedText,
   type K12ModulePresets,
   type K12StructuredInput,
+  type PromptPolicyLevel,
   type SupportedLocale,
 } from '@/lib/module-host/types';
 import { useSettingsStore } from '@/lib/store/settings';
@@ -43,12 +51,14 @@ import type { UserRequirements } from '@/lib/types/generation';
 
 const WEB_SEARCH_STORAGE_KEY = 'webSearchEnabled';
 const LANGUAGE_STORAGE_KEY = 'generationLanguage';
+const PROMPT_POLICY_STORAGE_KEY = 'promptPolicyLevel';
 
 interface FormState {
   pdfFile: File | null;
   requirement: string;
   language: 'zh-CN' | 'en-US';
   webSearch: boolean;
+  promptPolicyLevel: PromptPolicyLevel;
 }
 
 const initialFormState: FormState = {
@@ -56,6 +66,7 @@ const initialFormState: FormState = {
   requirement: '',
   language: 'zh-CN',
   webSearch: false,
+  promptPolicyLevel: 'balanced',
 };
 
 interface CreateLessonSheetCopy {
@@ -86,6 +97,14 @@ const sheetCopy = {
     k12Hint: '这里只保留课型和时长，教材章节已经放在上方。',
     configTitle: '高级配置与参考',
     configHint: '语言、联网和 PDF 都放在这里。',
+    policyTitle: '专业度',
+    policyHint: '控制提示词的专业表达强度，默认保持平衡。',
+    policyLevels: {
+      light: '轻量',
+      balanced: '平衡',
+      professional: '专业',
+      expert: '专家',
+    },
   },
   'en-US': {
     libraryTitle: 'Link textbook chapter',
@@ -102,6 +121,14 @@ const sheetCopy = {
     k12Hint: 'Only lesson type and duration remain here. The textbook chapter is already linked above.',
     configTitle: 'Advanced settings and references',
     configHint: 'Language, web search, and PDF inputs live here.',
+    policyTitle: 'Professional level',
+    policyHint: 'Controls how strongly the prompt leans into professional structure and terminology.',
+    policyLevels: {
+      light: 'Light',
+      balanced: 'Balanced',
+      professional: 'Professional',
+      expert: 'Expert',
+    },
   },
 } as const;
 
@@ -145,10 +172,18 @@ export function CreateLessonSheet({
       try {
         const savedWebSearch = localStorage.getItem(WEB_SEARCH_STORAGE_KEY);
         const savedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+        const savedPromptPolicyLevel = localStorage.getItem(PROMPT_POLICY_STORAGE_KEY);
         setForm((prev) => ({
           ...prev,
           webSearch: savedWebSearch === 'true',
           language: savedLanguage === 'en-US' ? 'en-US' : 'zh-CN',
+          promptPolicyLevel:
+            savedPromptPolicyLevel === 'light' ||
+            savedPromptPolicyLevel === 'balanced' ||
+            savedPromptPolicyLevel === 'professional' ||
+            savedPromptPolicyLevel === 'expert'
+              ? savedPromptPolicyLevel
+              : prev.promptPolicyLevel,
         }));
       } catch {}
       /* eslint-enable react-hooks/set-state-in-effect */
@@ -160,6 +195,9 @@ export function CreateLessonSheet({
     try {
       if (field === 'webSearch') localStorage.setItem(WEB_SEARCH_STORAGE_KEY, String(value));
       if (field === 'language') localStorage.setItem(LANGUAGE_STORAGE_KEY, String(value));
+      if (field === 'promptPolicyLevel') {
+        localStorage.setItem(PROMPT_POLICY_STORAGE_KEY, String(value));
+      }
     } catch {}
   };
 
@@ -191,6 +229,7 @@ export function CreateLessonSheet({
       const requirements: UserRequirements = {
         moduleId: activeModule.id,
         k12: isK12Module ? k12Form : undefined,
+        promptPolicy: { level: form.promptPolicyLevel },
         requirement:
           isK12Module && k12Presets
             ? buildK12RequirementText({
@@ -445,6 +484,34 @@ export function CreateLessonSheet({
 
                 <div className="rounded-[28px] bg-slate-50/80 p-4 ring-1 ring-slate-200/70 dark:bg-slate-900/50 dark:ring-slate-800/70">
                   <div className="flex flex-col gap-4">
+                    <div className="rounded-[22px] bg-white/75 p-3.5 ring-1 ring-slate-200/70 dark:bg-slate-950/40 dark:ring-slate-800/70">
+                      <div className="mb-2 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                          {text.policyTitle}
+                        </p>
+                        <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                          {text.policyHint}
+                        </p>
+                      </div>
+                      <Select
+                        value={form.promptPolicyLevel}
+                        onValueChange={(value) =>
+                          updateForm('promptPolicyLevel', value as PromptPolicyLevel)
+                        }
+                      >
+                        <SelectTrigger className="h-11 rounded-2xl border-slate-200/80 bg-white/95 text-sm dark:border-slate-700 dark:bg-slate-900/80">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="light">{text.policyLevels.light}</SelectItem>
+                          <SelectItem value="balanced">{text.policyLevels.balanced}</SelectItem>
+                          <SelectItem value="professional">
+                            {text.policyLevels.professional}
+                          </SelectItem>
+                          <SelectItem value="expert">{text.policyLevels.expert}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <GenerationToolbar
                       language={form.language}
                       onLanguageChange={(value) => updateForm('language', value)}

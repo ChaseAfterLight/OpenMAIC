@@ -19,18 +19,44 @@ import { AgentMCP } from './mcp/agent-mcp';
 import { IssueboardMCP } from './mcp/issueboard-mcp';
 import { buildPBLSystemPrompt } from './pbl-system-prompt';
 import type { PBLMode } from './types';
+import { composePromptContext } from '@/lib/module-host/prompt-context';
+import type {
+  K12StructuredInput,
+  ModuleId,
+  PromptPolicy,
+  SupportedLocale,
+} from '@/lib/module-host/types';
 
 export interface GeneratePBLConfig {
   projectTopic: string;
   projectDescription: string;
   targetSkills: string[];
   issueCount?: number;
-  language: string;
+  language: SupportedLocale;
+  moduleId?: ModuleId;
+  promptPolicy?: PromptPolicy;
+  k12?: K12StructuredInput;
   moduleContext?: string;
 }
 
 export interface GeneratePBLCallbacks {
   onProgress?: (message: string) => void;
+}
+
+export function resolvePBLModuleContext(
+  config: Pick<GeneratePBLConfig, 'language' | 'moduleId' | 'promptPolicy' | 'k12' | 'moduleContext'>,
+): string {
+  if (config.moduleContext?.trim()) {
+    return config.moduleContext.trim();
+  }
+
+  return composePromptContext({
+    moduleId: config.moduleId,
+    language: config.language,
+    stage: 'pbl',
+    policy: config.promptPolicy,
+    k12: config.k12,
+  }).content;
 }
 
 /**
@@ -46,6 +72,7 @@ export async function generatePBLContent(
   callbacks?: GeneratePBLCallbacks,
 ): Promise<PBLProjectConfig> {
   const { language } = config;
+  const moduleContext = resolvePBLModuleContext(config);
 
   // Initialize shared state
   const projectConfig: PBLProjectConfig = {
@@ -282,7 +309,10 @@ export async function generatePBLContent(
   };
 
   // Run the agentic loop
-  const systemPrompt = buildPBLSystemPrompt(config);
+  const systemPrompt = buildPBLSystemPrompt({
+    ...config,
+    moduleContext,
+  });
 
   const _result = await callLLM(
     {
@@ -318,7 +348,7 @@ export async function generatePBLContent(
   callbacks?.onProgress?.('PBL structure generated. Running post-processing...');
 
   // Post-processing: activate first issue and generate initial questions
-  await postProcessPBL(projectConfig, model, language, callbacks);
+  await postProcessPBL(projectConfig, model, language, moduleContext, callbacks);
 
   callbacks?.onProgress?.('PBL project generation complete!');
 
@@ -334,7 +364,8 @@ export async function generatePBLContent(
 async function postProcessPBL(
   config: PBLProjectConfig,
   model: LanguageModel,
-  language: string,
+  language: SupportedLocale,
+  moduleContext: string,
   callbacks?: GeneratePBLCallbacks,
 ): Promise<void> {
   const { issueboard, agents } = config;
@@ -363,7 +394,7 @@ async function postProcessPBL(
 
     const context =
       language === 'zh-CN'
-        ? `## 任务信息
+        ? `${moduleContext ? `${moduleContext}\n\n` : ''}## 任务信息
 
 **标题**: ${firstIssue.title}
 **描述**: ${firstIssue.description}
@@ -380,7 +411,7 @@ ${firstIssue.notes ? `**备注**: ${firstIssue.notes}` : ''}
 - 鼓励批判性思考
 
 请以编号列表格式回答。`
-        : `## Issue Information
+        : `${moduleContext ? `${moduleContext}\n\n` : ''}## Issue Information
 
 **Title**: ${firstIssue.title}
 **Description**: ${firstIssue.description}

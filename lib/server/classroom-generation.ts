@@ -299,6 +299,8 @@ export async function generateClassroom(
 
   const lang = normalizeLanguage(input.language);
   const requirements: UserRequirements = {
+    moduleId: 'core',
+    promptPolicy: { level: 'balanced' },
     requirement,
     language: lang,
   };

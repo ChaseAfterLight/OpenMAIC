@@ -23,6 +23,13 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { createLogger } from '@/lib/logger';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea as UITextarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { SettingsDialog } from '@/components/settings';
@@ -32,6 +39,7 @@ import { useTheme } from '@/lib/hooks/use-theme';
 import { nanoid } from 'nanoid';
 import { storePdfBlob } from '@/lib/utils/image-storage';
 import type { UserRequirements } from '@/lib/types/generation';
+import type { PromptPolicyLevel } from '@/lib/module-host/types';
 import { useSettingsStore } from '@/lib/store/settings';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import { useUserProfileStore, AVATAR_OPTIONS } from '@/lib/store/user-profile';
@@ -55,6 +63,7 @@ const log = createLogger('Home');
 
 const WEB_SEARCH_STORAGE_KEY = 'webSearchEnabled';
 const LANGUAGE_STORAGE_KEY = 'generationLanguage';
+const PROMPT_POLICY_STORAGE_KEY = 'promptPolicyLevel';
 const RECENT_OPEN_STORAGE_KEY = 'recentClassroomsOpen';
 
 interface FormState {
@@ -62,6 +71,7 @@ interface FormState {
   requirement: string;
   language: 'zh-CN' | 'en-US';
   webSearch: boolean;
+  promptPolicyLevel: PromptPolicyLevel;
 }
 
 const initialFormState: FormState = {
@@ -69,10 +79,11 @@ const initialFormState: FormState = {
   requirement: '',
   language: 'zh-CN',
   webSearch: false,
+  promptPolicyLevel: 'balanced',
 };
 
 function HomePage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const [authReady, setAuthReady] = useState(false);
@@ -102,6 +113,7 @@ function HomePage() {
     try {
       const savedWebSearch = localStorage.getItem(WEB_SEARCH_STORAGE_KEY);
       const savedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      const savedPromptPolicyLevel = localStorage.getItem(PROMPT_POLICY_STORAGE_KEY);
       const updates: Partial<FormState> = {};
       if (savedWebSearch === 'true') updates.webSearch = true;
       if (savedLanguage === 'zh-CN' || savedLanguage === 'en-US') {
@@ -109,6 +121,14 @@ function HomePage() {
       } else {
         const detected = navigator.language?.startsWith('zh') ? 'zh-CN' : 'en-US';
         updates.language = detected;
+      }
+      if (
+        savedPromptPolicyLevel === 'light' ||
+        savedPromptPolicyLevel === 'balanced' ||
+        savedPromptPolicyLevel === 'professional' ||
+        savedPromptPolicyLevel === 'expert'
+      ) {
+        updates.promptPolicyLevel = savedPromptPolicyLevel;
       }
       if (Object.keys(updates).length > 0) {
         setForm((prev) => ({ ...prev, ...updates }));
@@ -247,6 +267,9 @@ function HomePage() {
     try {
       if (field === 'webSearch') localStorage.setItem(WEB_SEARCH_STORAGE_KEY, String(value));
       if (field === 'language') localStorage.setItem(LANGUAGE_STORAGE_KEY, String(value));
+      if (field === 'promptPolicyLevel') {
+        localStorage.setItem(PROMPT_POLICY_STORAGE_KEY, String(value));
+      }
       if (field === 'requirement') updateRequirementCache(value as string);
     } catch {
       /* ignore */
@@ -319,6 +342,8 @@ function HomePage() {
     try {
       const userProfile = useUserProfileStore.getState();
       const requirements: UserRequirements = {
+        moduleId: 'core',
+        promptPolicy: { level: form.promptPolicyLevel },
         requirement: form.requirement,
         language: form.language,
         userNickname: userProfile.nickname || undefined,
@@ -591,6 +616,31 @@ function HomePage() {
                   onPdfError={setError}
                 />
               </div>
+
+              <Select
+                value={form.promptPolicyLevel}
+                onValueChange={(value) =>
+                  updateForm('promptPolicyLevel', value as PromptPolicyLevel)
+                }
+              >
+                <SelectTrigger className="w-[132px] h-8 rounded-lg border-border/70 bg-background/70 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">
+                    {locale === 'zh-CN' ? '轻量' : 'Light'}
+                  </SelectItem>
+                  <SelectItem value="balanced">
+                    {locale === 'zh-CN' ? '平衡' : 'Balanced'}
+                  </SelectItem>
+                  <SelectItem value="professional">
+                    {locale === 'zh-CN' ? '专业' : 'Professional'}
+                  </SelectItem>
+                  <SelectItem value="expert">
+                    {locale === 'zh-CN' ? '专家' : 'Expert'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
 
               {/* Voice input */}
               <SpeechButton

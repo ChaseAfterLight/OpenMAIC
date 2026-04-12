@@ -2,6 +2,7 @@ import type { BusinessModule, K12ModulePresets } from '@/lib/module-host/types';
 import { elementaryUpperGradePreset } from './presets/grade/elementary-upper';
 import { newLessonTypePreset } from './presets/lesson-type/new-lesson';
 import { elementaryMathSubjectPreset } from './presets/subject/math';
+import { k12PromptContextProvider } from './prompt-policy';
 import { pepElementaryMathEdition } from './presets/textbook/pep-elementary-math';
 
 const k12Presets: K12ModulePresets = {
@@ -85,6 +86,7 @@ export const k12ModuleManifest: BusinessModule = {
         'An AI lesson planning and classroom generation workspace for elementary teachers.',
     },
   },
+  promptContext: k12PromptContextProvider,
   home: {
     badge: {
       'zh-CN': 'K12 业务模块',

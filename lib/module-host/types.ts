@@ -1,8 +1,14 @@
 export type SupportedLocale = 'zh-CN' | 'en-US';
 export type ModuleId = 'core' | 'k12';
+export type PromptPolicyLevel = 'light' | 'balanced' | 'professional' | 'expert';
+export type PromptPolicyStage = 'outline' | 'slide' | 'quiz' | 'interactive' | 'pbl';
 
 export type LocalizedText = Record<SupportedLocale, string>;
 export type LocalizedList = Record<SupportedLocale, string[]>;
+
+export interface PromptPolicy {
+  level: PromptPolicyLevel;
+}
 
 export interface ModuleOption {
   id: string;
@@ -80,6 +86,21 @@ export interface K12ModulePresets {
   defaults: K12StructuredInput;
 }
 
+export interface PromptContextArgs {
+  moduleId: ModuleId;
+  locale: SupportedLocale;
+  stage: PromptPolicyStage;
+  policy: PromptPolicy;
+  k12?: K12StructuredInput;
+  presets?: Record<string, unknown>;
+}
+
+export interface PromptContextProvider {
+  defaultPolicy?: PromptPolicy;
+  buildModuleContext?: (args: PromptContextArgs) => string;
+  buildStageContext?: (args: PromptContextArgs) => string;
+}
+
 export interface BusinessModuleMetadata {
   applicationName: string;
   title: LocalizedText;
@@ -111,6 +132,7 @@ export interface BusinessModule {
   home: BusinessModuleHomeCopy;
   settingsSchema?: unknown;
   presets?: Record<string, unknown>;
+  promptContext?: PromptContextProvider;
   hooks?: {
     beforeInput?: (ctx: unknown) => Promise<unknown> | unknown;
     validateInput?: (

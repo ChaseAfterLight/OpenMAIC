@@ -1,4 +1,5 @@
 import type { BusinessModule } from '@/lib/module-host/types';
+import { corePromptContextProvider } from './prompt-policy';
 
 export const coreModuleManifest: BusinessModule = {
   id: 'core',
@@ -24,6 +25,7 @@ export const coreModuleManifest: BusinessModule = {
         'The open-source AI interactive classroom. Generate immersive, multi-agent learning experiences from any topic or PDF.',
     },
   },
+  promptContext: corePromptContextProvider,
   home: {
     badge: {
       'zh-CN': '通用课堂引擎',

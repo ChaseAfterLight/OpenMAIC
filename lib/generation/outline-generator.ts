@@ -17,7 +17,7 @@ import { parseJsonResponse } from './json-repair';
 import { uniquifyMediaElementIds } from './scene-builder';
 import type { AICallFn, GenerationResult, GenerationCallbacks } from './pipeline-types';
 import { createLogger } from '@/lib/logger';
-import { buildOutlineModuleContext } from '@/lib/module-host/prompt-context';
+import { buildOutlineModuleContext, resolveRequirementModuleId } from '@/lib/module-host/prompt-context';
 const log = createLogger('Generation');
 
 /**
@@ -142,8 +142,9 @@ export async function generateSceneOutlinesFromRequirements(
     const enriched = outlines.map((outline, index) => ({
       ...outline,
       id: outline.id || nanoid(),
-      moduleId: requirements.moduleId,
+      moduleId: resolveRequirementModuleId(requirements),
       k12: requirements.k12,
+      promptPolicy: requirements.promptPolicy,
       order: index + 1,
       language: requirements.language,
     }));

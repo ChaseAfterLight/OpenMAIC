@@ -33,7 +33,10 @@ import type {
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModelFromHeaders } from '@/lib/server/resolve-model';
-import { buildOutlineModuleContext } from '@/lib/module-host/prompt-context';
+import {
+  buildOutlineModuleContext,
+  resolveRequirementModuleId,
+} from '@/lib/module-host/prompt-context';
 const log = createLogger('Outlines Stream');
 
 export const maxDuration = 300;
@@ -268,8 +271,9 @@ export async function POST(req: NextRequest) {
                   const enriched = {
                     ...outline,
                     id: outline.id || nanoid(),
-                    moduleId: requirements.moduleId,
+                    moduleId: resolveRequirementModuleId(requirements),
                     k12: requirements.k12,
+                    promptPolicy: requirements.promptPolicy,
                     language: outline.language || requirements.language,
                     order: parsedOutlines.length + 1,
                   };

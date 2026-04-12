@@ -856,7 +856,9 @@ async function generatePBLSceneContent(
         targetSkills: pblConfig.targetSkills,
         issueCount: pblConfig.issueCount,
         language: pblConfig.language,
-        moduleContext: buildSceneModuleContext(outline),
+        moduleId: outline.moduleId,
+        promptPolicy: outline.promptPolicy,
+        k12: outline.k12,
       },
       languageModel,
       {

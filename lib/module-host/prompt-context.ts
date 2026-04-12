@@ -1,11 +1,37 @@
 import type { SceneOutline, UserRequirements } from '@/lib/types/generation';
-import { buildK12StructuredContext } from './k12';
 import { getModuleById } from './runtime';
 import type {
-  K12ModulePresets,
   ModuleId,
+  PromptContextProvider,
+  PromptPolicy,
+  PromptPolicyLevel,
+  PromptPolicyStage,
   SupportedLocale,
 } from './types';
+
+export interface PromptContextComposeArgs {
+  moduleId?: ModuleId;
+  language: UserRequirements['language'];
+  stage: PromptPolicyStage;
+  policy?: PromptPolicy;
+  k12?: UserRequirements['k12'];
+  hardRules?: string | string[];
+  sourceContext?: string | string[];
+}
+
+export interface PromptContextComposeResult {
+  policy: PromptPolicy;
+  hardRules: string[];
+  strategyContext: string;
+  moduleContext: string;
+  sourceContext: string[];
+  stageContext: string;
+  content: string;
+}
+
+const DEFAULT_PROMPT_POLICY: PromptPolicy = {
+  level: 'balanced',
+};
 
 function resolveLocale(language: UserRequirements['language']): SupportedLocale {
   return language === 'zh-CN' ? 'zh-CN' : 'en-US';
@@ -15,82 +41,149 @@ export function resolveRequirementModuleId(requirements: Pick<UserRequirements, 
   return requirements.moduleId ?? 'core';
 }
 
-export function buildOutlineModuleContext(
-  requirements: Pick<UserRequirements, 'moduleId' | 'language' | 'k12'>,
+function normalizePromptPolicy(
+  policy: PromptPolicy | undefined,
+  provider: PromptContextProvider | undefined,
+): PromptPolicy {
+  return {
+    level: policy?.level ?? provider?.defaultPolicy?.level ?? DEFAULT_PROMPT_POLICY.level,
+  };
+}
+
+function normalizeContextLines(value?: string | string[]): string[] {
+  if (!value) return [];
+  return (Array.isArray(value) ? value : [value]).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function buildStrategyContext(
+  locale: SupportedLocale,
+  level: PromptPolicyLevel,
+  stage: PromptPolicyStage,
 ): string {
-  const moduleId = resolveRequirementModuleId(requirements);
-  const locale = resolveLocale(requirements.language);
+  const zhBase = {
+    light: [
+      '- 以清楚、自然、低负担的方式表达内容，不过度增加术语和限制。',
+      '- 优先尊重用户原始需求，只补足最必要的结构约束。',
+    ],
+    balanced: [
+      '- 在尊重用户原始需求的前提下，保持结构清楚、术语适中、结果可直接使用。',
+      '- 当信息不足时，补足最小必要的假设与组织结构，但不要擅自扩大范围。',
+    ],
+    professional: [
+      '- 使用更专业的术语、结构和表达方式，让结果更适合正式教学、培训或系统讲解。',
+      '- 对概念边界、步骤顺序和内容完整性保持更高要求，但不要牺牲可读性。',
+    ],
+    expert: [
+      '- 使用专家级表达和结构化约束，强调概念准确性、逻辑层次和结果完整性。',
+      '- 当用户需求较粗略时，也要补足必要的专业脚手架，并确保结论可复核、可执行。',
+    ],
+  } as const;
+  const enBase = {
+    light: [
+      '- Keep the content clear, natural, and lightweight without adding unnecessary jargon or constraints.',
+      '- Stay close to the original request and add only the minimum structure needed.',
+    ],
+    balanced: [
+      '- Keep the result structured, moderately professional, and ready to use while respecting the original request.',
+      '- When information is missing, add only the minimum assumptions and organization needed to keep the output coherent.',
+    ],
+    professional: [
+      '- Use more professional terminology, structure, and phrasing so the result works for formal teaching, training, or guided explanation.',
+      '- Hold a higher bar for conceptual boundaries, sequencing, and completeness without sacrificing readability.',
+    ],
+    expert: [
+      '- Use expert-level terminology and structure, with stronger emphasis on conceptual accuracy, logical layering, and completeness.',
+      '- When the request is rough, add the minimum necessary expert scaffolding so the result stays reviewable and executable.',
+    ],
+  } as const;
 
-  if (moduleId !== 'k12') return '';
+  const stageLine =
+    locale === 'zh-CN'
+      ? stage === 'outline'
+        ? '- 当前阶段目标是生成可继续扩展的大纲，而不是直接输出最终课件。'
+        : '- 当前阶段目标是把大纲落实为可直接使用的具体场景内容或动作。'
+      : stage === 'outline'
+        ? '- The current stage is outline generation, so focus on a reusable structure rather than final slide-level detail.'
+        : '- The current stage is scene realization, so turn the outline into concrete, ready-to-use content or actions.';
 
-  const k12Presets = getModuleById('k12').presets as K12ModulePresets | undefined;
-  const structuredContext = buildK12StructuredContext(requirements.k12, k12Presets, locale);
-
-  if (locale === 'zh-CN') {
-    return [
-      '## K12 模块上下文',
-      '',
-      '- 当前请求来自小学教师备课场景，而不是通用自学场景。',
-      '- 如果用户没有明确说明，默认按小学 3-6 年级理解。',
-      '- 输出目标应偏向“教师可直接拿去上课或改课”的教学包，而不是泛化科普内容。',
-      '- 优先生成 slide 和 quiz 场景；只有在交互确实能帮助理解时才使用 interactive；除非用户明确要求，否则不要使用 pbl。',
-      '- 语言要适龄、具体、可课堂口述，避免成人化、抽象化、研究型表达。',
-      '- 适当加入导入、例题、随堂提问、巩固练习和课堂总结，让结果更像真实的小学课堂。',
-      '- 如果已经选了教材章节，应优先围绕章节摘要、关键词和教材资料组织课堂内容，而不是忽略教材来源。',
-      '- 如果学科未说明，请优先依据老师补充要求与上传资料组织内容，不要自行假定为某一学科。',
-      structuredContext,
-      '',
-      '请在不违背用户原始需求的前提下，优先满足以上 K12 业务约束。',
-    ].join('\n');
-  }
-
+  const lines = locale === 'zh-CN' ? zhBase[level] : enBase[level];
   return [
-    '## K12 Module Context',
+    locale === 'zh-CN' ? '## 提示词策略' : '## Prompt Policy',
     '',
-    '- This request comes from an elementary teacher workflow, not a general self-learning workflow.',
-    '- If the user does not specify otherwise, assume upper elementary grades (roughly grades 3-6).',
-    '- Produce a teacher-ready lesson pack rather than a generic explainer.',
-    '- Prefer slide and quiz scenes. Use interactive scenes only when interaction clearly improves understanding. Avoid pbl unless the user explicitly asks for project-based learning.',
-    '- Keep the language age-appropriate, concrete, and classroom-friendly. Avoid abstract, research-heavy, or adult-oriented phrasing.',
-    '- Include helpful classroom structure such as warm-up, worked examples, guided questioning, practice, and wrap-up when suitable.',
-    '- When a textbook chapter is selected, prioritize the chapter summary, keywords, and attached source materials rather than treating the request as a generic topic prompt.',
-    '- If the subject is not specified, prioritize the teacher notes and uploaded materials instead of assuming a specific subject.',
-    structuredContext,
-    '',
-    'Apply these K12 constraints without contradicting the user request.',
+    ...lines,
+    stageLine,
   ].join('\n');
 }
 
-export function buildSceneModuleContext(
-  outline: Pick<SceneOutline, 'moduleId' | 'language' | 'k12' | 'type'>,
+export function composePromptContext(args: PromptContextComposeArgs): PromptContextComposeResult {
+  const moduleId = resolveRequirementModuleId(args);
+  const locale = resolveLocale(args.language);
+  const module = getModuleById(moduleId);
+  const provider = module.promptContext;
+  const policy = normalizePromptPolicy(args.policy, provider);
+  const hardRules = normalizeContextLines(args.hardRules);
+  const sourceContext = normalizeContextLines(args.sourceContext);
+  const strategyContext = buildStrategyContext(locale, policy.level, args.stage);
+  const moduleContext =
+    provider?.buildModuleContext?.({
+      moduleId,
+      locale,
+      stage: args.stage,
+      policy,
+      k12: args.k12,
+      presets: module.presets,
+    }) ?? '';
+  const stageContext =
+    provider?.buildStageContext?.({
+      moduleId,
+      locale,
+      stage: args.stage,
+      policy,
+      k12: args.k12,
+      presets: module.presets,
+    }) ?? '';
+  const content = [
+    ...hardRules,
+    strategyContext,
+    moduleContext,
+    ...sourceContext,
+    stageContext,
+  ]
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .join('\n\n');
+
+  return {
+    policy,
+    hardRules,
+    strategyContext,
+    moduleContext,
+    sourceContext,
+    stageContext,
+    content,
+  };
+}
+
+export function buildOutlineModuleContext(
+  requirements: Pick<UserRequirements, 'moduleId' | 'language' | 'k12' | 'promptPolicy'>,
 ): string {
-  const baseContext = buildOutlineModuleContext({
+  return composePromptContext({
+    moduleId: requirements.moduleId,
+    language: requirements.language,
+    stage: 'outline',
+    policy: requirements.promptPolicy,
+    k12: requirements.k12,
+  }).content;
+}
+
+export function buildSceneModuleContext(
+  outline: Pick<SceneOutline, 'moduleId' | 'language' | 'k12' | 'type' | 'promptPolicy'>,
+): string {
+  return composePromptContext({
     moduleId: outline.moduleId,
     language: outline.language ?? 'zh-CN',
+    stage: outline.type,
+    policy: outline.promptPolicy,
     k12: outline.k12,
-  });
-
-  if (!baseContext || outline.moduleId !== 'k12') return '';
-
-  if ((outline.language ?? 'zh-CN') === 'zh-CN') {
-    const sceneSpecific =
-      outline.type === 'quiz'
-        ? '- 题目要简洁清楚，避免陷阱式提问，优先考查课堂刚讲过的核心概念。'
-        : outline.type === 'interactive'
-          ? '- 交互页面应操作简单、反馈明确，适合小学课堂演示和学生跟随观察。'
-          : outline.type === 'pbl'
-            ? '- PBL 任务必须脚手架清晰、目标具体，确保小学生能够在教师引导下完成。'
-            : '- 页面内容要适合投屏和教师口述，重点突出，避免信息堆叠。';
-    return [baseContext, sceneSpecific].join('\n');
-  }
-
-  const sceneSpecific =
-    outline.type === 'quiz'
-      ? '- Keep quiz questions clear and direct. Avoid trick wording and focus on concepts just taught in class.'
-      : outline.type === 'interactive'
-        ? '- Keep the interactive page simple, guided, and easy for an elementary classroom to follow.'
-        : outline.type === 'pbl'
-          ? '- Scaffold the PBL workflow carefully so elementary students can complete it with teacher guidance.'
-          : '- Make the slide content projector-friendly and easy for a teacher to narrate. Keep emphasis clear and avoid clutter.';
-  return [baseContext, sceneSpecific].join('\n');
+  }).content;
 }
