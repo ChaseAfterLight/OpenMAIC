@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useLayoutEffect, useCallback } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useSceneSelector } from '@/lib/contexts/scene-context';
 import { useCanvasStore } from '@/lib/store/canvas';
@@ -30,7 +30,6 @@ export function SpotlightOverlay() {
     (content) => content.canvas.elements,
   );
 
-  // Compute target element position in SVG coordinate system via DOM measurement
   const measure = useCallback(() => {
     if (!spotlightElementId || !containerRef.current) {
       setRect(null);
@@ -43,7 +42,6 @@ export function SpotlightOverlay() {
       return;
     }
 
-    // Prefer measuring .element-content (the actual rendered area for auto-height)
     const contentEl = domElement.querySelector('.element-content');
     const targetEl = contentEl ?? domElement;
 
@@ -55,7 +53,6 @@ export function SpotlightOverlay() {
       return;
     }
 
-    // Convert to SVG viewBox 0-100 coordinates
     setRect({
       x: ((targetRect.left - containerRect.left) / containerRect.width) * 100,
       y: ((targetRect.top - containerRect.top) / containerRect.height) * 100,
@@ -71,6 +68,16 @@ export function SpotlightOverlay() {
 
   const active = !!spotlightElementId && !!spotlightOptions && !!rect;
   const dimness = spotlightOptions?.dimness ?? 0.7;
+  const overlayOpacity = Math.min(dimness * 0.45, 0.38);
+
+  const holeLeft = rect ? rect.x - 1.5 : 0;
+  const holeTop = rect ? rect.y - 1.5 : 0;
+  const holeWidth = rect ? rect.w + 3 : 0;
+  const holeHeight = rect ? rect.h + 3 : 0;
+  const haloLeft = rect ? rect.x - 4 : 0;
+  const haloTop = rect ? rect.y - 4 : 0;
+  const haloWidth = rect ? rect.w + 8 : 0;
+  const haloHeight = rect ? rect.h + 8 : 0;
 
   return (
     <div
@@ -95,24 +102,32 @@ export function SpotlightOverlay() {
             >
               <defs>
                 <mask id={`mask-${spotlightElementId}`}>
-                  {/* White background = show mask layer (dimmed) */}
                   <rect x="0" y="0" width="100" height="100" fill="white" />
-                  {/* Black rectangle = hide mask layer (highlighted area / cutout) */}
+                  <filter
+                    id={`spotlight-hole-soft-${spotlightElementId}`}
+                    x="-20%"
+                    y="-20%"
+                    width="140%"
+                    height="140%"
+                  >
+                    <feGaussianBlur stdDeviation="1.8" />
+                  </filter>
                   <motion.rect
                     fill="black"
+                    filter={`url(#spotlight-hole-soft-${spotlightElementId})`}
                     initial={{
-                      x: rect.x - 8,
-                      y: rect.y - 8,
-                      width: rect.w + 16,
-                      height: rect.h + 16,
-                      rx: 4,
+                      x: holeLeft,
+                      y: holeTop,
+                      width: holeWidth,
+                      height: holeHeight,
+                      rx: 1.2,
                     }}
                     animate={{
-                      x: rect.x - 0.4,
-                      y: rect.y - 0.6,
-                      width: rect.w + 0.8,
-                      height: rect.h + 1.2,
-                      rx: 1,
+                      x: holeLeft,
+                      y: holeTop,
+                      width: holeWidth,
+                      height: holeHeight,
+                      rx: 1.2,
                     }}
                     transition={{
                       duration: 0.6,
@@ -120,42 +135,107 @@ export function SpotlightOverlay() {
                     }}
                   />
                 </mask>
+
+                <filter
+                  id={`spotlight-glow-${spotlightElementId}`}
+                  x="-20%"
+                  y="-20%"
+                  width="140%"
+                  height="140%"
+                >
+                  <feGaussianBlur stdDeviation="1.2" />
+                </filter>
               </defs>
 
-              {/* Dimmed Background */}
+              {/* Softer dim layer outside the spotlight */}
               <rect
                 width="100"
                 height="100"
-                fill={`rgba(0,0,0,${dimness})`}
+                fill={`rgba(0,0,0,${overlayOpacity})`}
                 mask={`url(#mask-${spotlightElementId})`}
-                className="backdrop-blur-[1.5px]"
               />
 
-              {/* THE ONE BORDER - white border */}
+              {/* Subtle center wash to mimic stage light */}
               <motion.rect
                 initial={{
-                  x: rect.x - 4,
-                  y: rect.y - 4,
-                  width: rect.w + 8,
-                  height: rect.h + 8,
+                  x: rect.x - 1,
+                  y: rect.y - 1,
+                  width: rect.w + 2,
+                  height: rect.h + 2,
+                  opacity: 0,
+                  rx: 1,
+                }}
+                animate={{
+                  x: rect.x - 0.2,
+                  y: rect.y - 0.2,
+                  width: rect.w + 0.4,
+                  height: rect.h + 0.4,
+                  opacity: 1,
+                  rx: 1,
+                }}
+                fill="rgba(255,255,255,0.06)"
+                transition={{
+                  duration: 0.45,
+                  ease: [0.16, 1, 0.3, 1],
+                }}
+              />
+
+              {/* Subtle inner rim for definition */}
+              <motion.rect
+                initial={{
+                  x: haloLeft,
+                  y: haloTop,
+                  width: haloWidth,
+                  height: haloHeight,
                   opacity: 0,
                   rx: 2,
                 }}
                 animate={{
-                  x: rect.x - 0.4,
+                  x: rect.x - 0.6,
                   y: rect.y - 0.6,
-                  width: rect.w + 0.8,
+                  width: rect.w + 1.2,
                   height: rect.h + 1.2,
                   opacity: 1,
                   rx: 1,
                 }}
                 fill="none"
-                stroke="rgba(255,255,255,0.7)"
-                strokeWidth="1.2"
+                stroke="rgba(255,255,255,0.88)"
+                strokeWidth="1.1"
+                filter={`url(#spotlight-glow-${spotlightElementId})`}
                 style={{ vectorEffect: 'non-scaling-stroke' } as React.CSSProperties}
                 transition={{
                   duration: 0.5,
                   delay: 0.05,
+                  ease: [0.16, 1, 0.3, 1],
+                }}
+              />
+
+              {/* Outer halo */}
+              <motion.rect
+                initial={{
+                  x: rect.x - 7,
+                  y: rect.y - 7,
+                  width: rect.w + 14,
+                  height: rect.h + 14,
+                  opacity: 0,
+                  rx: 3,
+                }}
+                animate={{
+                  x: rect.x - 4,
+                  y: rect.y - 4,
+                  width: rect.w + 8,
+                  height: rect.h + 8,
+                  opacity: 1,
+                  rx: 2,
+                }}
+                fill="none"
+                stroke="rgba(255,255,255,0.35)"
+                strokeWidth="1.8"
+                filter={`url(#spotlight-glow-${spotlightElementId})`}
+                style={{ vectorEffect: 'non-scaling-stroke' } as React.CSSProperties}
+                transition={{
+                  duration: 0.5,
+                  delay: 0.03,
                   ease: [0.16, 1, 0.3, 1],
                 }}
               />
