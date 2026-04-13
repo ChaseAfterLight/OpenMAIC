@@ -128,7 +128,10 @@ function AgentVoicePill({
             ttsVoice: voiceId,
             ttsSpeed: 1,
             ttsApiKey: providerConfig?.apiKey,
-            ttsBaseUrl: providerConfig?.serverBaseUrl || providerConfig?.baseUrl,
+            ttsBaseUrl:
+              providerConfig?.serverBaseUrl ||
+              providerConfig?.baseUrl ||
+              providerConfig?.customDefaultBaseUrl,
           }),
           signal: controller.signal,
         });
@@ -354,7 +357,10 @@ function TeacherVoicePill({
             ttsVoice: voiceId,
             ttsSpeed: 1,
             ttsApiKey: providerConfig?.apiKey,
-            ttsBaseUrl: providerConfig?.serverBaseUrl || providerConfig?.baseUrl,
+            ttsBaseUrl:
+              providerConfig?.serverBaseUrl ||
+              providerConfig?.baseUrl ||
+              providerConfig?.customDefaultBaseUrl,
           }),
           signal: controller.signal,
         });

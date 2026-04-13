@@ -668,6 +668,20 @@
     "requiresApiKey": "Requires API Key",
     "deleteProvider": "Delete Provider",
     "deleteProviderConfirm": "Are you sure you want to delete this provider?",
+    "addCustomTTSProvider": "Add Custom TTS Provider",
+    "addCustomASRProvider": "Add Custom ASR Provider",
+    "addCustomAudioProviderDescription": "Add a custom OpenAI-compatible audio provider",
+    "customVoices": "Voices",
+    "voiceIdPlaceholder": "Voice ID (e.g. alloy)",
+    "voiceNamePlaceholder": "Display Name",
+    "addVoice": "Add",
+    "modelNamePlaceholder": "Display Name",
+    "addModel": "Add",
+    "defaultModelHint": "Model name sent in API requests (e.g. kokoro, tts-1)",
+    "noVoicesAdded": "No voices added yet. Add voices below for per-agent selection.",
+    "noModelsAdded": "No models added yet. Add models below to enable model selection.",
+    "noModelsWarning": "Please add at least one model below before using this provider.",
+    "asrNoTranscription": "No transcription generated. Try speaking louder or longer.",
     "cannotDeleteBuiltIn": "Cannot delete built-in provider",
     "deleteServerProviderConfig": "Delete Server Config",
     "deleteServerProviderConfigConfirm": "Are you sure you want to delete the server-stored config for {{providerName}}? The provider will fall back to local defaults where available.",
@@ -766,6 +780,7 @@
     "ttsTestFailed": "TTS test failed",
     "asrTestSuccess": "Speech recognition successful",
     "asrTestFailed": "Speech recognition failed",
+    "asrProcessing": "Processing...",
     "asrResult": "Recognition Result",
     "asrNotSupported": "Browser does not support Speech Recognition API",
     "browserTTSNotSupported": "Browser does not support Speech Synthesis API",
@@ -1102,5 +1117,10 @@
     "voice": "Voice",
     "speed": "Speed",
     "language": "Language"
+  },
+  "accessCode": {
+    "title": "Enter Access Code",
+    "placeholder": "Access code",
+    "error": "Invalid access code. Please try again."
   }
 }

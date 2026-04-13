@@ -10,6 +10,7 @@ import { I18nProvider } from '@/lib/hooks/use-i18n';
 import { Toaster } from '@/components/ui/sonner';
 import { ServerProvidersInit } from '@/components/server-providers-init';
 import { AuthSessionInit } from '@/components/auth/session-init';
+import { AccessCodeGuard } from '@/components/access-code-guard';
 import { getActiveModule } from '@/lib/module-host/runtime';
 
 const inter = localFont({
@@ -41,7 +42,7 @@ export default function RootLayout({
           <I18nProvider>
             <ServerProvidersInit />
             <AuthSessionInit />
-            {children}
+            <AccessCodeGuard>{children}</AccessCodeGuard>
             <Toaster position="top-center" />
           </I18nProvider>
         </ThemeProvider>

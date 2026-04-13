@@ -5,6 +5,16 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -15,8 +25,10 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
 import { ASR_PROVIDERS } from '@/lib/audio/constants';
 import type { ASRProviderId } from '@/lib/audio/types';
-import { Mic, MicOff, CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react';
+import { isCustomASRProvider } from '@/lib/audio/types';
+import { Mic, MicOff, CheckCircle2, XCircle, Eye, EyeOff, Plus, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { createLogger } from '@/lib/logger';
 import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
 
@@ -40,14 +52,22 @@ export function ASRSettings({
   const asrLanguage = useSettingsStore((state) => state.asrLanguage);
   const asrProvidersConfig = useSettingsStore((state) => state.asrProvidersConfig);
   const setASRProviderConfig = useSettingsStore((state) => state.setASRProviderConfig);
+  const removeCustomASRProvider = useSettingsStore((state) => state.removeCustomASRProvider);
 
-  const asrProvider = ASR_PROVIDERS[selectedProviderId] ?? ASR_PROVIDERS['openai-whisper'];
-  const isServerConfigured = !!asrProvidersConfig[selectedProviderId]?.isServerConfigured;
+  const asrProvider = ASR_PROVIDERS[selectedProviderId as keyof typeof ASR_PROVIDERS];
+  const isCustom = isCustomASRProvider(selectedProviderId);
+  const providerConfig = asrProvidersConfig[selectedProviderId];
+  const isServerConfigured = !!providerConfig?.isServerConfigured;
+  const requiresApiKey = isCustom
+    ? !!providerConfig?.requiresApiKey
+    : !!asrProvider?.requiresApiKey;
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [adminApiKey, setAdminApiKey] = useState('');
   const [adminBaseUrl, setAdminBaseUrl] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [asrResult, setASRResult] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -64,7 +84,6 @@ export function ASRSettings({
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset credential draft when switching admin records.
     setAdminApiKey('');
     setAdminBaseUrl(adminConfig?.baseUrl || '');
   }, [adminConfig?.baseUrl, selectedProviderId]);
@@ -137,18 +156,24 @@ export function ASRSettings({
           };
           mediaRecorder.onstop = async () => {
             stream.getTracks().forEach((track) => track.stop());
+            setIsProcessing(true);
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
             formData.append('providerId', selectedProviderId);
             formData.append(
               'modelId',
-              asrProvidersConfig[selectedProviderId]?.modelId || asrProvider.defaultModelId,
+              asrProvidersConfig[selectedProviderId]?.modelId || asrProvider?.defaultModelId || '',
             );
             formData.append('language', asrLanguage);
             const apiKeyValue = isAdmin ? adminApiKey : asrProvidersConfig[selectedProviderId]?.apiKey;
             if (apiKeyValue?.trim()) formData.append('apiKey', apiKeyValue);
-            const baseUrlValue = isAdmin ? adminBaseUrl : asrProvidersConfig[selectedProviderId]?.baseUrl;
+            const baseUrlValue =
+              isAdmin
+                ? adminBaseUrl
+                : asrProvidersConfig[selectedProviderId]?.baseUrl ||
+                  providerConfig?.customDefaultBaseUrl ||
+                  '';
             if (baseUrlValue?.trim()) formData.append('baseUrl', baseUrlValue);
 
             try {
@@ -158,9 +183,14 @@ export function ASRSettings({
               });
               if (response.ok) {
                 const data = await response.json();
-                setASRResult(data.text);
-                setTestStatus('success');
-                setTestMessage(t('settings.asrTestSuccess'));
+                if (data.text?.trim()) {
+                  setASRResult(data.text);
+                  setTestStatus('success');
+                  setTestMessage(t('settings.asrTestSuccess'));
+                } else {
+                  setTestStatus('error');
+                  setTestMessage(data.error || t('settings.asrNoTranscription'));
+                }
               } else {
                 setTestStatus('error');
                 const errorData = await response
@@ -171,7 +201,13 @@ export function ASRSettings({
             } catch (error) {
               log.error('ASR test failed:', error);
               setTestStatus('error');
-              setTestMessage(t('settings.asrTestFailed'));
+              setTestMessage(
+                error instanceof Error && error.message
+                  ? `${t('settings.asrTestFailed')}: ${error.message}`
+                  : t('settings.asrTestFailed'),
+              );
+            } finally {
+              setIsProcessing(false);
             }
           };
           mediaRecorder.start();
@@ -200,8 +236,15 @@ export function ASRSettings({
         </div>
       )}
 
+      {/* No models warning for custom providers */}
+      {isCustom && ((providerConfig?.customModels as Array<{ id: string }>) || []).length === 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+          {t('settings.noModelsWarning')}
+        </div>
+      )}
+
       {/* API Key & Base URL */}
-      {isAdmin && (asrProvider.requiresApiKey || isServerConfigured) && (
+      {(requiresApiKey || isServerConfigured || isCustom) && (
         <>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -215,13 +258,21 @@ export function ASRSettings({
                   autoCorrect="off"
                   spellCheck={false}
                   placeholder={
-                    adminConfig?.hasApiKey
-                      ? t('settings.keepExistingApiKey')
+                    isAdmin
+                      ? adminConfig?.hasApiKey
+                        ? t('settings.keepExistingApiKey')
+                        : t('settings.enterApiKey')
+                      : isServerConfigured
+                        ? t('settings.optionalOverride')
                       : t('settings.enterApiKey')
                   }
-                  value={adminApiKey}
-                  onChange={(e) => setAdminApiKey(e.target.value)}
-                  onBlur={handleSaveAdminConnection}
+                  value={isAdmin ? adminApiKey : asrProvidersConfig[selectedProviderId]?.apiKey || ''}
+                  onChange={(e) =>
+                    isAdmin
+                      ? setAdminApiKey(e.target.value)
+                      : setASRProviderConfig(selectedProviderId, { apiKey: e.target.value })
+                  }
+                  onBlur={isAdmin ? handleSaveAdminConnection : undefined}
                   className="font-mono text-sm pr-10"
                 />
                 <button
@@ -241,10 +292,20 @@ export function ASRSettings({
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                placeholder={asrProvider.defaultBaseUrl || t('settings.enterCustomBaseUrl')}
-                value={adminBaseUrl}
-                onChange={(e) => setAdminBaseUrl(e.target.value)}
-                onBlur={handleSaveAdminConnection}
+                placeholder={
+                  isCustom
+                    ? providerConfig?.customDefaultBaseUrl || 'http://localhost:8000/v1'
+                    : asrProvider?.defaultBaseUrl || t('settings.enterCustomBaseUrl')
+                }
+                value={isAdmin ? adminBaseUrl : asrProvidersConfig[selectedProviderId]?.baseUrl || ''}
+                onChange={(e) =>
+                  isAdmin
+                    ? setAdminBaseUrl(e.target.value)
+                    : setASRProviderConfig(selectedProviderId, {
+                        baseUrl: e.target.value,
+                      })
+                }
+                onBlur={isAdmin ? handleSaveAdminConnection : undefined}
                 className="text-sm"
               />
             </div>
@@ -252,16 +313,22 @@ export function ASRSettings({
           {/* Request URL Preview */}
           {(() => {
             const effectiveBaseUrl =
-              adminBaseUrl || asrProvider.defaultBaseUrl || '';
+              (isAdmin ? adminBaseUrl : asrProvidersConfig[selectedProviderId]?.baseUrl) ||
+              (isCustom ? providerConfig?.customDefaultBaseUrl : asrProvider?.defaultBaseUrl) ||
+              '';
             if (!effectiveBaseUrl) return null;
             let endpointPath = '';
-            switch (selectedProviderId) {
-              case 'openai-whisper':
-                endpointPath = '/audio/transcriptions';
-                break;
-              case 'qwen-asr':
-                endpointPath = '/services/aigc/multimodal-generation/generation';
-                break;
+            if (isCustom) {
+              endpointPath = '/audio/transcriptions';
+            } else {
+              switch (selectedProviderId) {
+                case 'openai-whisper':
+                  endpointPath = '/audio/transcriptions';
+                  break;
+                case 'qwen-asr':
+                  endpointPath = '/services/aigc/multimodal-generation/generation';
+                  break;
+              }
             }
             if (!endpointPath) return null;
             return (
@@ -286,13 +353,21 @@ export function ASRSettings({
           <Button
             onClick={handleToggleASRRecording}
             disabled={
-              asrProvider.requiresApiKey &&
-              !(isAdmin ? adminConfig?.hasApiKey : asrProvidersConfig[selectedProviderId]?.apiKey?.trim()) &&
-              !isServerConfigured
+              isProcessing ||
+              (requiresApiKey &&
+                !(isAdmin
+                  ? Boolean(adminApiKey.trim()) || Boolean(adminConfig?.hasApiKey)
+                  : Boolean(asrProvidersConfig[selectedProviderId]?.apiKey?.trim())) &&
+                !isServerConfigured)
             }
             className="gap-2 w-[140px]"
           >
-            {isRecording ? (
+            {isProcessing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {t('settings.asrProcessing')}
+              </>
+            ) : isRecording ? (
               <>
                 <MicOff className="h-4 w-4" />
                 {t('settings.stopRecording')}
@@ -325,19 +400,19 @@ export function ASRSettings({
         </div>
       )}
 
-      {/* Model Selection */}
-      {asrProvider.models.length > 0 && (
+      {/* Model Selection — built-in providers */}
+      {!isCustom && asrProvider?.models?.length > 0 && (
         <div className="space-y-2">
-          <Label className="text-sm">{t('settings.ttsModel')}</Label>
+          <Label className="text-sm">{t('settings.defaultModel')}</Label>
           <Select
-            value={asrProvidersConfig[selectedProviderId]?.modelId || asrProvider.defaultModelId}
+            value={asrProvidersConfig[selectedProviderId]?.modelId || asrProvider?.defaultModelId}
             onValueChange={(value) => setASRProviderConfig(selectedProviderId, { modelId: value })}
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {asrProvider.models.map((model) => (
+              {asrProvider?.models.map((model) => (
                 <SelectItem key={model.id} value={model.id}>
                   {model.name}
                 </SelectItem>
@@ -346,6 +421,188 @@ export function ASRSettings({
           </Select>
         </div>
       )}
+
+      {/* Model Management — custom providers */}
+      {isCustom && (
+        <div className="space-y-3">
+          <Label className="text-sm">{t('settings.availableModels')}</Label>
+          {(() => {
+            const customModels =
+              (providerConfig?.customModels as Array<{ id: string; name: string }>) || [];
+            const activeModelId =
+              asrProvidersConfig[selectedProviderId]?.modelId || customModels[0]?.id || '';
+            return (
+              <>
+                {customModels.length > 0 ? (
+                  <div className="rounded-lg border border-border/60 overflow-hidden">
+                    <div className="grid grid-cols-[20px_1fr_1fr_36px] gap-0 bg-muted/40 px-3 py-1.5 border-b border-border/40">
+                      <span />
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                        ID
+                      </span>
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                        {t('settings.modelNamePlaceholder')}
+                      </span>
+                      <span />
+                    </div>
+                    {customModels.map((model, index) => {
+                      const isActive = model.id === activeModelId;
+                      return (
+                        <div
+                          key={model.id}
+                          onClick={() =>
+                            setASRProviderConfig(selectedProviderId, { modelId: model.id })
+                          }
+                          className={cn(
+                            'grid grid-cols-[20px_1fr_1fr_36px] gap-0 items-center px-3 py-2 group cursor-pointer transition-colors',
+                            isActive ? 'bg-primary/5' : 'hover:bg-muted/20',
+                            index > 0 && 'border-t border-border/30',
+                          )}
+                        >
+                          <div className="flex items-center -ml-1">
+                            <div
+                              className={cn(
+                                'size-4 rounded-full border-2 flex items-center justify-center transition-colors',
+                                isActive
+                                  ? 'border-primary'
+                                  : 'border-muted-foreground/30 group-hover:border-muted-foreground/50',
+                              )}
+                            >
+                              {isActive && <div className="size-2 rounded-full bg-primary" />}
+                            </div>
+                          </div>
+                          <span className="text-sm font-mono text-foreground/80 truncate pr-3">
+                            {model.id}
+                          </span>
+                          <span className="text-sm text-foreground/60 truncate pr-3">
+                            {model.name}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const models = [...customModels];
+                              models.splice(index, 1);
+                              const newModelId = isActive ? models[0]?.id || '' : activeModelId;
+                              setASRProviderConfig(selectedProviderId, {
+                                customModels: models,
+                                modelId: newModelId,
+                              });
+                            }}
+                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                          >
+                            <XCircle className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground/50 italic">
+                    {t('settings.noModelsAdded')}
+                  </p>
+                )}
+                <AddModelRow
+                  existingIds={customModels.map((m) => m.id)}
+                  onAdd={(modelId, modelName) => {
+                    const models = [...customModels, { id: modelId, name: modelName }];
+                    setASRProviderConfig(selectedProviderId, {
+                      customModels: models,
+                      modelId: models[0].id,
+                    });
+                  }}
+                />
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Delete Custom Provider */}
+      {isCustom && (
+        <div className="pt-4 border-t">
+          <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
+            {t('settings.deleteProvider')}
+          </Button>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={showDeleteConfirm}
+        onOpenChange={(open) => !open && setShowDeleteConfirm(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('settings.deleteProvider')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('settings.deleteProviderConfirm')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('settings.cancelEdit')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                removeCustomASRProvider(selectedProviderId);
+                setShowDeleteConfirm(false);
+              }}
+            >
+              {t('settings.deleteProvider')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function AddModelRow({
+  onAdd,
+  existingIds,
+}: {
+  onAdd: (id: string, name: string) => void;
+  existingIds: string[];
+}) {
+  const { t } = useI18n();
+  const [modelId, setModelId] = useState('');
+  const [modelName, setModelName] = useState('');
+
+  const handleAdd = () => {
+    if (!modelId.trim()) return;
+    if (existingIds.includes(modelId.trim())) {
+      toast.error('Duplicate ID');
+      return;
+    }
+    onAdd(modelId.trim(), modelName.trim() || modelId.trim());
+    setModelId('');
+    setModelName('');
+  };
+
+  return (
+    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+      <Input
+        value={modelId}
+        onChange={(e) => setModelId(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+        className="text-sm font-mono"
+        placeholder={t('settings.modelIdPlaceholder')}
+      />
+      <Input
+        value={modelName}
+        onChange={(e) => setModelName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+        className="text-sm"
+        placeholder={t('settings.modelNamePlaceholder')}
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleAdd}
+        disabled={!modelId.trim()}
+        className="shrink-0 gap-1"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        {t('settings.addModel')}
+      </Button>
     </div>
   );
 }

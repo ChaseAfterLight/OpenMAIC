@@ -276,8 +276,9 @@ export async function generateTTSForClassroom(
     return;
   }
   const ttsBaseUrl =
-    (await resolveTTSBaseUrl(providerId)) || TTS_PROVIDERS[providerId]?.defaultBaseUrl;
-  const voice = DEFAULT_TTS_VOICES[providerId] || 'default';
+    (await resolveTTSBaseUrl(providerId)) ||
+    TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS]?.defaultBaseUrl;
+  const voice = DEFAULT_TTS_VOICES[providerId as keyof typeof DEFAULT_TTS_VOICES] || 'default';
 
   for (const scene of scenes) {
     if (!scene.actions) continue;
@@ -295,7 +296,7 @@ export async function generateTTSForClassroom(
           stageId: classroomId,
           text: speechAction.text,
           providerId,
-          modelId: DEFAULT_TTS_MODELS[providerId] || '',
+          modelId: DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '',
           apiKey,
           baseUrl: ttsBaseUrl,
           voice,

@@ -4,15 +4,27 @@ import { useState, useEffect } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
 import { TTS_PROVIDERS, DEFAULT_TTS_VOICES } from '@/lib/audio/constants';
 import type { TTSProviderId } from '@/lib/audio/types';
-import { Volume2, Loader2, CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react';
+import { Volume2, Loader2, CheckCircle2, XCircle, Eye, EyeOff, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { createLogger } from '@/lib/logger';
 import { useTTSPreview } from '@/lib/audio/use-tts-preview';
 import type { AdminProviderConfig, AdminProviderConfigPatch } from './admin-provider-config';
+import { isCustomTTSProvider } from '@/lib/audio/types';
 
 const log = createLogger('TTSSettings');
 
@@ -34,21 +46,33 @@ export function TTSSettings({
   const ttsVoice = useSettingsStore((state) => state.ttsVoice);
   const ttsSpeed = useSettingsStore((state) => state.ttsSpeed);
   const ttsProvidersConfig = useSettingsStore((state) => state.ttsProvidersConfig);
+  const setTTSProviderConfig = useSettingsStore((state) => state.setTTSProviderConfig);
   const activeProviderId = useSettingsStore((state) => state.ttsProviderId);
+  const setTTSVoice = useSettingsStore((state) => state.setTTSVoice);
+  const removeCustomTTSProvider = useSettingsStore((state) => state.removeCustomTTSProvider);
+
+  const ttsProvider = TTS_PROVIDERS[selectedProviderId as keyof typeof TTS_PROVIDERS];
+  const isCustom = isCustomTTSProvider(selectedProviderId);
+  const providerConfig = ttsProvidersConfig[selectedProviderId];
+  const isServerConfigured = !!providerConfig?.isServerConfigured;
+  const requiresApiKey = isCustom
+    ? !!providerConfig?.requiresApiKey
+    : !!ttsProvider?.requiresApiKey;
 
   // When testing a non-active provider, use that provider's default voice
   // instead of the active provider's voice (which may be incompatible).
   const effectiveVoice =
     selectedProviderId === activeProviderId
       ? ttsVoice
-      : DEFAULT_TTS_VOICES[selectedProviderId] || 'default';
-
-  const ttsProvider = TTS_PROVIDERS[selectedProviderId] ?? TTS_PROVIDERS['openai-tts'];
-  const isServerConfigured = !!ttsProvidersConfig[selectedProviderId]?.isServerConfigured;
+      : isCustomTTSProvider(selectedProviderId)
+        ? ((providerConfig?.customVoices as Array<{ id: string }> | undefined) || [])[0]?.id ||
+          'default'
+        : DEFAULT_TTS_VOICES[selectedProviderId as keyof typeof DEFAULT_TTS_VOICES] || 'default';
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [adminApiKey, setAdminApiKey] = useState('');
   const [adminBaseUrl, setAdminBaseUrl] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [testText, setTestText] = useState(t('settings.ttsTestTextDefault'));
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -70,6 +94,8 @@ export function TTSSettings({
     const combined = appId && accessKey ? `${appId}:${accessKey}` : appId || accessKey;
     if (isAdmin) {
       setAdminApiKey(combined);
+    } else {
+      setTTSProviderConfig(selectedProviderId, { apiKey: combined });
     }
   };
 
@@ -111,11 +137,17 @@ export function TTSSettings({
       await startPreview({
         text: testText,
         providerId: selectedProviderId,
-        modelId: ttsProvidersConfig[selectedProviderId]?.modelId || ttsProvider.defaultModelId,
+        modelId:
+          ttsProvidersConfig[selectedProviderId]?.modelId || ttsProvider?.defaultModelId || '',
         voice: effectiveVoice,
         speed: ttsSpeed,
-        apiKey: ttsProvidersConfig[selectedProviderId]?.apiKey,
-        baseUrl: ttsProvidersConfig[selectedProviderId]?.baseUrl,
+        apiKey: isAdmin ? adminApiKey : ttsProvidersConfig[selectedProviderId]?.apiKey,
+        baseUrl:
+          isAdmin
+            ? adminBaseUrl
+            : ttsProvidersConfig[selectedProviderId]?.baseUrl ||
+              providerConfig?.customDefaultBaseUrl ||
+              '',
       });
       setTestStatus('success');
       setTestMessage(t('settings.ttsTestSuccess'));
@@ -140,7 +172,7 @@ export function TTSSettings({
       )}
 
       {/* API Key & Base URL */}
-      {isAdmin && (ttsProvider.requiresApiKey || isServerConfigured) && (
+      {(requiresApiKey || isServerConfigured || isCustom) && (
         <>
           <div className={cn('grid gap-4', isDoubao ? 'grid-cols-3' : 'grid-cols-2')}>
             {isDoubao ? (
@@ -156,13 +188,17 @@ export function TTSSettings({
                       autoCorrect="off"
                       spellCheck={false}
                       placeholder={
-                        adminConfig?.hasApiKey
-                          ? t('settings.keepExistingApiKey')
-                          : t('settings.enterApiKey')
+                        isAdmin
+                          ? adminConfig?.hasApiKey
+                            ? t('settings.keepExistingApiKey')
+                            : t('settings.enterApiKey')
+                          : isServerConfigured
+                            ? t('settings.optionalOverride')
+                            : t('settings.enterApiKey')
                       }
                       value={doubaoAppId}
                       onChange={(e) => setDoubaoCompoundKey(e.target.value, doubaoAccessKey)}
-                      onBlur={handleSaveAdminConnection}
+                      onBlur={isAdmin ? handleSaveAdminConnection : undefined}
                       className="font-mono text-sm pr-10"
                     />
                     <button
@@ -185,13 +221,17 @@ export function TTSSettings({
                       autoCorrect="off"
                       spellCheck={false}
                       placeholder={
-                        adminConfig?.hasApiKey
-                          ? t('settings.keepExistingApiKey')
-                          : t('settings.enterApiKey')
+                        isAdmin
+                          ? adminConfig?.hasApiKey
+                            ? t('settings.keepExistingApiKey')
+                            : t('settings.enterApiKey')
+                          : isServerConfigured
+                            ? t('settings.optionalOverride')
+                            : t('settings.enterApiKey')
                       }
                       value={doubaoAccessKey}
                       onChange={(e) => setDoubaoCompoundKey(doubaoAppId, e.target.value)}
-                      onBlur={handleSaveAdminConnection}
+                      onBlur={isAdmin ? handleSaveAdminConnection : undefined}
                       className="font-mono text-sm pr-10"
                     />
                     <button
@@ -216,13 +256,21 @@ export function TTSSettings({
                     autoCorrect="off"
                     spellCheck={false}
                     placeholder={
-                      adminConfig?.hasApiKey
-                        ? t('settings.keepExistingApiKey')
-                        : t('settings.enterApiKey')
+                      isAdmin
+                        ? adminConfig?.hasApiKey
+                          ? t('settings.keepExistingApiKey')
+                          : t('settings.enterApiKey')
+                        : isServerConfigured
+                          ? t('settings.optionalOverride')
+                          : t('settings.enterApiKey')
                     }
-                    value={adminApiKey}
-                    onChange={(e) => setAdminApiKey(e.target.value)}
-                    onBlur={handleSaveAdminConnection}
+                    value={isAdmin ? adminApiKey : ttsProvidersConfig[selectedProviderId]?.apiKey || ''}
+                    onChange={(e) =>
+                      isAdmin
+                        ? setAdminApiKey(e.target.value)
+                        : setTTSProviderConfig(selectedProviderId, { apiKey: e.target.value })
+                    }
+                    onBlur={isAdmin ? handleSaveAdminConnection : undefined}
                     className="font-mono text-sm pr-10"
                   />
                   <button
@@ -243,10 +291,20 @@ export function TTSSettings({
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                placeholder={ttsProvider.defaultBaseUrl || t('settings.enterCustomBaseUrl')}
-                value={adminBaseUrl}
-                onChange={(e) => setAdminBaseUrl(e.target.value)}
-                onBlur={handleSaveAdminConnection}
+                placeholder={
+                  isCustom
+                    ? providerConfig?.customDefaultBaseUrl || 'http://localhost:8000/v1'
+                    : ttsProvider?.defaultBaseUrl || t('settings.enterCustomBaseUrl')
+                }
+                value={isAdmin ? adminBaseUrl : ttsProvidersConfig[selectedProviderId]?.baseUrl || ''}
+                onChange={(e) =>
+                  isAdmin
+                    ? setAdminBaseUrl(e.target.value)
+                    : setTTSProviderConfig(selectedProviderId, {
+                        baseUrl: e.target.value,
+                      })
+                }
+                onBlur={isAdmin ? handleSaveAdminConnection : undefined}
                 className="text-sm"
               />
             </div>
@@ -254,26 +312,32 @@ export function TTSSettings({
           {/* Request URL Preview */}
           {(() => {
             const effectiveBaseUrl =
-              adminBaseUrl || ttsProvider.defaultBaseUrl || '';
+              (isAdmin ? adminBaseUrl : ttsProvidersConfig[selectedProviderId]?.baseUrl) ||
+              (isCustom ? providerConfig?.customDefaultBaseUrl : ttsProvider?.defaultBaseUrl) ||
+              '';
             if (!effectiveBaseUrl) return null;
             let endpointPath = '';
-            switch (selectedProviderId) {
-              case 'openai-tts':
-              case 'glm-tts':
-                endpointPath = '/audio/speech';
-                break;
-              case 'azure-tts':
-                endpointPath = '/cognitiveservices/v1';
-                break;
-              case 'qwen-tts':
-                endpointPath = '/services/aigc/multimodal-generation/generation';
-                break;
-              case 'elevenlabs-tts':
-                endpointPath = '/text-to-speech';
-                break;
-              case 'doubao-tts':
-                endpointPath = '/unidirectional';
-                break;
+            if (isCustom) {
+              endpointPath = '/audio/speech';
+            } else {
+              switch (selectedProviderId) {
+                case 'openai-tts':
+                case 'glm-tts':
+                  endpointPath = '/audio/speech';
+                  break;
+                case 'azure-tts':
+                  endpointPath = '/cognitiveservices/v1';
+                  break;
+                case 'qwen-tts':
+                  endpointPath = '/services/aigc/multimodal-generation/generation';
+                  break;
+                case 'elevenlabs-tts':
+                  endpointPath = '/text-to-speech';
+                  break;
+                case 'doubao-tts':
+                  endpointPath = '/unidirectional';
+                  break;
+              }
             }
             if (!endpointPath) return null;
             return (
@@ -300,8 +364,10 @@ export function TTSSettings({
             disabled={
               testingTTS ||
               !testText.trim() ||
-              (ttsProvider.requiresApiKey &&
-                !(isAdmin ? adminConfig?.hasApiKey : ttsProvidersConfig[selectedProviderId]?.apiKey?.trim()) &&
+              (requiresApiKey &&
+                !(isAdmin
+                  ? Boolean(adminApiKey.trim()) || Boolean(adminConfig?.hasApiKey)
+                  : Boolean(ttsProvidersConfig[selectedProviderId]?.apiKey?.trim())) &&
                 !isServerConfigured)
             }
             size="default"
@@ -336,7 +402,7 @@ export function TTSSettings({
       )}
 
       {/* Available Models */}
-      {ttsProvider.models.length > 0 && (
+      {ttsProvider?.models?.length > 0 && (
         <div className="space-y-2">
           <Label className="text-sm text-muted-foreground">{t('settings.availableModels')}</Label>
           <div className="flex flex-wrap gap-2">
@@ -355,6 +421,175 @@ export function TTSSettings({
           </p>
         </div>
       )}
+
+      {/* Custom Voice List Management */}
+      {isCustom && (
+        <div className="space-y-3">
+          <Label className="text-sm">{t('settings.customVoices')}</Label>
+          {(providerConfig?.customVoices as Array<{ id: string; name: string }> | undefined)
+            ?.length ? (
+            <div className="rounded-lg border border-border/60 overflow-hidden">
+              {/* Column headers */}
+              <div className="grid grid-cols-[1fr_1fr_36px] gap-0 bg-muted/40 px-3 py-1.5 border-b border-border/40">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  ID
+                </span>
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  {t('settings.voiceNamePlaceholder')}
+                </span>
+                <span />
+              </div>
+              {/* Voice rows */}
+              {(
+                providerConfig?.customVoices as Array<{
+                  id: string;
+                  name: string;
+                }>
+              ).map((voice, index) => (
+                <div
+                  key={voice.id}
+                  className={cn(
+                    'grid grid-cols-[1fr_1fr_36px] gap-0 items-center px-3 py-2 group hover:bg-muted/20 transition-colors',
+                    index > 0 && 'border-t border-border/30',
+                  )}
+                >
+                  <span className="text-sm font-mono text-foreground/80 truncate pr-3">
+                    {voice.id}
+                  </span>
+                  <span className="text-sm text-foreground/60 truncate pr-3">{voice.name}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      const voices = [
+                        ...(providerConfig?.customVoices as Array<{
+                          id: string;
+                          name: string;
+                        }>),
+                      ];
+                      voices.splice(index, 1);
+                      setTTSProviderConfig(selectedProviderId, {
+                        customVoices: voices,
+                      });
+                    }}
+                    className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground/50 italic">{t('settings.noVoicesAdded')}</p>
+          )}
+          <AddVoiceRow
+            existingIds={(
+              (providerConfig?.customVoices as Array<{ id: string; name: string }> | undefined) ||
+              []
+            ).map((v) => v.id)}
+            onAdd={(voiceId, voiceName) => {
+              const voices = [
+                ...((providerConfig?.customVoices as
+                  | Array<{ id: string; name: string }>
+                  | undefined) || []),
+                { id: voiceId, name: voiceName },
+              ];
+              setTTSProviderConfig(selectedProviderId, {
+                customVoices: voices,
+              } as Record<string, unknown>);
+              // Auto-select the first voice if current voice is 'default'
+              if (ttsVoice === 'default' && selectedProviderId === activeProviderId) {
+                setTTSVoice(voiceId);
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* Delete Custom Provider */}
+      {isCustom && (
+        <div className="pt-4 border-t">
+          <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
+            {t('settings.deleteProvider')}
+          </Button>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={showDeleteConfirm}
+        onOpenChange={(open) => !open && setShowDeleteConfirm(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('settings.deleteProvider')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('settings.deleteProviderConfirm')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('settings.cancelEdit')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                removeCustomTTSProvider(selectedProviderId);
+                setShowDeleteConfirm(false);
+              }}
+            >
+              {t('settings.deleteProvider')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function AddVoiceRow({
+  onAdd,
+  existingIds,
+}: {
+  onAdd: (id: string, name: string) => void;
+  existingIds: string[];
+}) {
+  const { t } = useI18n();
+  const [voiceId, setVoiceId] = useState('');
+  const [voiceName, setVoiceName] = useState('');
+
+  const handleAdd = () => {
+    if (!voiceId.trim()) return;
+    if (existingIds.includes(voiceId.trim())) {
+      toast.error('Duplicate ID');
+      return;
+    }
+    onAdd(voiceId.trim(), voiceName.trim() || voiceId.trim());
+    setVoiceId('');
+    setVoiceName('');
+  };
+
+  return (
+    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+      <Input
+        value={voiceId}
+        onChange={(e) => setVoiceId(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+        className="text-sm font-mono"
+        placeholder={t('settings.voiceIdPlaceholder')}
+      />
+      <Input
+        value={voiceName}
+        onChange={(e) => setVoiceName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+        className="text-sm"
+        placeholder={t('settings.voiceNamePlaceholder')}
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleAdd}
+        disabled={!voiceId.trim()}
+        className="shrink-0 gap-1"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        {t('settings.addVoice')}
+      </Button>
     </div>
   );
 }
