@@ -49,10 +49,10 @@ export async function POST(req: NextRequest) {
       providerId: effectiveProviderId,
       apiKey: clientBaseUrl
         ? apiKey || ''
-        : resolvePDFApiKey(effectiveProviderId, apiKey || undefined),
+        : await resolvePDFApiKey(effectiveProviderId, apiKey || undefined),
       baseUrl: clientBaseUrl
         ? clientBaseUrl
-        : resolvePDFBaseUrl(effectiveProviderId, baseUrl || undefined),
+        : await resolvePDFBaseUrl(effectiveProviderId, baseUrl || undefined),
     };
 
     // Convert PDF to buffer

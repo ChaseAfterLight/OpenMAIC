@@ -222,7 +222,7 @@ function LessonPackThumbnail({
       className="relative aspect-[16/9] w-full bg-slate-100 dark:bg-slate-950"
     >
       <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-105">
-        {canRenderThumbnail ? (
+        {canRenderThumbnail && slide ? (
           <ThumbnailSlide
             slide={slide}
             size={containerWidth}

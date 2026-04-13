@@ -27,21 +27,49 @@ import {
   replaceMediaPlaceholders,
   generateTTSForClassroom,
 } from '@/lib/server/classroom-media-generation';
-import type { UserRequirements } from '@/lib/types/generation';
+import type { PdfImage, SceneOutline, UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 
 const log = createLogger('Classroom');
 
+function isUnavailableAccountsError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? `${error.name}: ${error.message}${error.cause ? ` | cause: ${String(error.cause)}` : ''}`
+      : String(error);
+  return /No available .* accounts|no available accounts/i.test(message);
+}
+
 export interface GenerateClassroomInput {
   requirement: string;
+  moduleId?: UserRequirements['moduleId'];
+  k12?: UserRequirements['k12'];
   pdfContent?: { text: string; images: string[] };
+  pdfFileName?: string;
+  pdfImages?: PdfImage[];
+  sceneOutlines?: SceneOutline[];
   language?: string;
+  modelString?: string;
+  providerType?: string;
+  stageSeed?: Pick<Stage, 'id' | 'name' | 'description' | 'language' | 'style' | 'lessonPack'>;
+  agentProfiles?: AgentInfo[];
   enableWebSearch?: boolean;
   enableImageGeneration?: boolean;
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
   agentMode?: 'default' | 'generate';
+  webSearchProviderId?: string;
+  baiduSubSources?: unknown;
+  userProfile?: string;
+  pdfStorageKey?: string;
+  documentType?: 'pdf' | 'text';
+  pdfProviderId?: string;
+  pdfProviderConfig?: { apiKey?: string; baseUrl?: string };
+  selectedTextbookResources?: import('@/lib/module-host/types').K12TextbookResource[];
+  selectedTextbookResourcesParsed?: boolean;
+  researchContext?: string;
+  researchSources?: Array<{ title: string; url: string }>;
 }
 
 export type ClassroomGenerationStep =
@@ -60,6 +88,16 @@ export interface ClassroomGenerationProgress {
   message: string;
   scenesGenerated: number;
   totalScenes?: number;
+  checkpoint?: ClassroomGenerationCheckpoint;
+  result?: {
+    classroomId: string;
+    url: string;
+    scenesCount: number;
+  };
+}
+
+export interface ClassroomGenerationCheckpoint {
+  classroomId?: string;
 }
 
 export interface GenerateClassroomResult {
@@ -166,6 +204,8 @@ export async function generateClassroom(
   options: {
     baseUrl: string;
     onProgress?: (progress: ClassroomGenerationProgress) => Promise<void> | void;
+    resumeCheckpoint?: ClassroomGenerationCheckpoint;
+    onCheckpoint?: (checkpoint: ClassroomGenerationCheckpoint) => Promise<void> | void;
   },
 ): Promise<GenerateClassroomResult> {
   const { requirement, pdfContent } = input;
@@ -334,7 +374,7 @@ export async function generateClassroom(
   // Web search (optional, graceful degradation)
   let researchContext: string | undefined;
   if (input.enableWebSearch) {
-    const tavilyKey = resolveWebSearchApiKey();
+    const tavilyKey = await resolveWebSearchApiKey();
     if (tavilyKey) {
       try {
         const searchQuery = await buildSearchQuery(requirement, pdfText, searchQueryAiCall);

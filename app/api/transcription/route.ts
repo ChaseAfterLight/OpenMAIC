@@ -44,10 +44,10 @@ export async function POST(req: NextRequest) {
       language: language || 'auto',
       apiKey: clientBaseUrl
         ? apiKey || ''
-        : resolveASRApiKey(effectiveProviderId, apiKey || undefined),
+        : await resolveASRApiKey(effectiveProviderId, apiKey || undefined),
       baseUrl: clientBaseUrl
         ? clientBaseUrl
-        : resolveASRBaseUrl(effectiveProviderId, baseUrl || undefined),
+        : await resolveASRBaseUrl(effectiveProviderId, baseUrl || undefined),
     };
 
     // Convert audio file to buffer

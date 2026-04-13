@@ -51,6 +51,9 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
 };
 
 type TabValue = 'content' | 'advanced' | 'materials' | 'aigen';
+type QuizQuestionType = 'single' | 'multiple' | 'text';
+
+const DEFAULT_QUIZ_QUESTION_TYPES: QuizQuestionType[] = ['single'];
 
 function supportsAdvancedTab(_type: SceneOutline['type']) {
   return false;
@@ -142,6 +145,20 @@ export function OutlinesEditor({
 
   const activeOutline = outlines[activeIndex];
   const activeSuggestedImageIds = activeOutline?.suggestedImageIds || [];
+  const activeInteractiveConfig: NonNullable<SceneOutline['interactiveConfig']> =
+    activeOutline?.interactiveConfig ?? {
+      conceptName: '',
+      conceptOverview: '',
+      designIdea: '',
+    };
+  const activePblConfig: NonNullable<SceneOutline['pblConfig']> = activeOutline?.pblConfig
+    ? activeOutline.pblConfig
+    : {
+        projectTopic: '',
+        projectDescription: '',
+        targetSkills: [],
+        language: (activeOutline?.language || 'zh-CN') as 'zh-CN' | 'en-US',
+      };
 
   // === 业务逻辑函数 ===
   const toggleSuggestedImage = (imageId: string) => {
@@ -151,9 +168,11 @@ export function OutlinesEditor({
     updateOutline({ suggestedImageIds: Array.from(currentIds) });
   };
 
-  const toggleQuizQuestionType = (questionType: 'single' | 'multiple' | 'text', checked: boolean) => {
+  const toggleQuizQuestionType = (questionType: QuizQuestionType, checked: boolean) => {
     if (!activeOutline) return;
-    const currentTypes = new Set(activeOutline.quizConfig?.questionTypes || ['single']);
+    const currentTypes = new Set<QuizQuestionType>(
+      activeOutline.quizConfig?.questionTypes || DEFAULT_QUIZ_QUESTION_TYPES,
+    );
     if (checked) currentTypes.add(questionType);
     else if (currentTypes.size > 1) currentTypes.delete(questionType);
     
@@ -378,7 +397,7 @@ export function OutlinesEditor({
                             <Input
                               type="number" min={1} max={10}
                               value={activeOutline.quizConfig?.questionCount || 3}
-                              onChange={(e) => updateOutline({ quizConfig: { ...activeOutline.quizConfig, difficulty: activeOutline.quizConfig?.difficulty || 'medium', questionTypes: activeOutline.quizConfig?.questionTypes || ['single'], questionCount: parseInt(e.target.value) || 3 }})}
+                              onChange={(e) => updateOutline({ quizConfig: { ...activeOutline.quizConfig, difficulty: activeOutline.quizConfig?.difficulty || 'medium', questionTypes: activeOutline.quizConfig?.questionTypes || DEFAULT_QUIZ_QUESTION_TYPES, questionCount: parseInt(e.target.value) || 3 }})}
                               disabled={isLoading}
                             />
                           </div>
@@ -386,7 +405,7 @@ export function OutlinesEditor({
                             <Label className="text-xs">{t('generation.quizDifficulty')}</Label>
                             <Select
                               value={activeOutline.quizConfig?.difficulty || 'medium'}
-                              onValueChange={(value: 'easy'|'medium'|'hard') => updateOutline({ quizConfig: { ...activeOutline.quizConfig, questionCount: activeOutline.quizConfig?.questionCount || 3, questionTypes: activeOutline.quizConfig?.questionTypes || ['single'], difficulty: value }})}
+                              onValueChange={(value: 'easy'|'medium'|'hard') => updateOutline({ quizConfig: { ...activeOutline.quizConfig, questionCount: activeOutline.quizConfig?.questionCount || 3, questionTypes: activeOutline.quizConfig?.questionTypes || DEFAULT_QUIZ_QUESTION_TYPES, difficulty: value }})}
                               disabled={isLoading}
                             >
                               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -423,19 +442,19 @@ export function OutlinesEditor({
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-2">
                             <Label>{t('generation.interactiveConceptName')}</Label>
-                            <Input value={activeOutline.interactiveConfig?.conceptName || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, conceptName: e.target.value } })} disabled={isLoading}/>
+                            <Input value={activeInteractiveConfig.conceptName} onChange={(e) => updateOutline({ interactiveConfig: { ...activeInteractiveConfig, conceptName: e.target.value } })} disabled={isLoading}/>
                           </div>
                           <div className="space-y-2">
                             <Label>{t('generation.interactiveSubject')}</Label>
-                            <Input value={activeOutline.interactiveConfig?.subject || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, subject: e.target.value } })} disabled={isLoading}/>
+                            <Input value={activeInteractiveConfig.subject || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeInteractiveConfig, subject: e.target.value } })} disabled={isLoading}/>
                           </div>
                           <div className="space-y-2 md:col-span-2">
                             <Label>{t('generation.interactiveOverview')}</Label>
-                            <Textarea value={activeOutline.interactiveConfig?.conceptOverview || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, conceptOverview: e.target.value } })} rows={2} disabled={isLoading}/>
+                            <Textarea value={activeInteractiveConfig.conceptOverview} onChange={(e) => updateOutline({ interactiveConfig: { ...activeInteractiveConfig, conceptOverview: e.target.value } })} rows={2} disabled={isLoading}/>
                           </div>
                           <div className="space-y-2 md:col-span-2">
                             <Label>{t('generation.interactiveDesignIdea')}</Label>
-                            <Textarea value={activeOutline.interactiveConfig?.designIdea || ''} onChange={(e) => updateOutline({ interactiveConfig: { ...activeOutline.interactiveConfig, designIdea: e.target.value } })} rows={3} disabled={isLoading}/>
+                            <Textarea value={activeInteractiveConfig.designIdea} onChange={(e) => updateOutline({ interactiveConfig: { ...activeInteractiveConfig, designIdea: e.target.value } })} rows={3} disabled={isLoading}/>
                           </div>
                         </div>
                       </div>
@@ -448,15 +467,21 @@ export function OutlinesEditor({
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-2">
                             <Label>{t('generation.pblTopic')}</Label>
-                            <Input value={activeOutline.pblConfig?.projectTopic || ''} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, projectTopic: e.target.value } })} disabled={isLoading}/>
+                            <Input value={activePblConfig.projectTopic} onChange={(e) => updateOutline({ pblConfig: { ...activePblConfig, projectTopic: e.target.value } })} disabled={isLoading}/>
                           </div>
                           <div className="space-y-2">
                             <Label>{t('generation.pblIssueCount')}</Label>
-                            <Input type="number" min={1} value={activeOutline.pblConfig?.issueCount || 3} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, issueCount: Math.max(1, Number(e.target.value) || 1) } })} disabled={isLoading}/>
+                            <Input type="number" min={1} value={activePblConfig.issueCount || 3} onChange={(e) => updateOutline({ pblConfig: { ...activePblConfig, issueCount: Math.max(1, Number(e.target.value) || 1) } })} disabled={isLoading}/>
                           </div>
                           <div className="space-y-2">
                             <Label>{t('generation.pblLanguage')}</Label>
-                            <Select value={activeOutline.pblConfig?.language || activeOutline.language || 'zh-CN'} onValueChange={(v) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, language: v } })} disabled={isLoading}>
+                            <Select
+                              value={activePblConfig.language}
+                              onValueChange={(v: 'zh-CN' | 'en-US') =>
+                                updateOutline({ pblConfig: { ...activePblConfig, language: v } })
+                              }
+                              disabled={isLoading}
+                            >
                               <SelectTrigger><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="zh-CN">简体中文 (zh-CN)</SelectItem>
@@ -466,11 +491,11 @@ export function OutlinesEditor({
                           </div>
                           <div className="space-y-2 md:col-span-2">
                             <Label>{t('generation.pblDescription')}</Label>
-                            <Textarea value={activeOutline.pblConfig?.projectDescription || ''} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, projectDescription: e.target.value } })} rows={2} disabled={isLoading}/>
+                            <Textarea value={activePblConfig.projectDescription} onChange={(e) => updateOutline({ pblConfig: { ...activePblConfig, projectDescription: e.target.value } })} rows={2} disabled={isLoading}/>
                           </div>
                           <div className="space-y-2 md:col-span-2">
                             <Label>{t('generation.pblSkills')}</Label>
-                            <Textarea value={activeOutline.pblConfig?.targetSkills?.join('\n') || ''} onChange={(e) => updateOutline({ pblConfig: { ...activeOutline.pblConfig, targetSkills: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })} rows={2} placeholder="每行输入一项核心素养/技能" disabled={isLoading}/>
+                            <Textarea value={activePblConfig.targetSkills.join('\n')} onChange={(e) => updateOutline({ pblConfig: { ...activePblConfig, targetSkills: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })} rows={2} placeholder="每行输入一项核心素养/技能" disabled={isLoading}/>
                           </div>
                         </div>
                       </div>

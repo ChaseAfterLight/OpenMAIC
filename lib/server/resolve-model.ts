@@ -46,9 +46,9 @@ export async function resolveModel(params: {
 
   const apiKey = clientBaseUrl
     ? params.apiKey || ''
-    : resolveApiKey(providerId, params.apiKey || '');
-  const baseUrl = clientBaseUrl ? clientBaseUrl : resolveBaseUrl(providerId, params.baseUrl);
-  const proxy = resolveProxy(providerId);
+    : await resolveApiKey(providerId, params.apiKey || '');
+  const baseUrl = clientBaseUrl ? clientBaseUrl : await resolveBaseUrl(providerId, params.baseUrl);
+  const proxy = await resolveProxy(providerId);
   const { model, modelInfo } = getModel({
     providerId,
     modelId,

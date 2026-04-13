@@ -63,10 +63,10 @@ export async function POST(req: NextRequest) {
 
     const apiKey = clientBaseUrl
       ? ttsApiKey || ''
-      : resolveTTSApiKey(ttsProviderId, ttsApiKey || undefined);
+      : await resolveTTSApiKey(ttsProviderId, ttsApiKey || undefined);
     const baseUrl = clientBaseUrl
       ? clientBaseUrl
-      : resolveTTSBaseUrl(ttsProviderId, ttsBaseUrl || undefined);
+      : await resolveTTSBaseUrl(ttsProviderId, ttsBaseUrl || undefined);
 
     // Build TTS config
     const config = {

@@ -1,7 +1,7 @@
 import { createLogger } from '@/lib/logger';
 import { DEFAULT_TTS_MODELS } from '@/lib/audio/constants';
 import { generateTTS } from '@/lib/audio/tts-providers';
-import type { TTSProviderId } from '@/lib/audio/types';
+import type { BuiltInTTSProviderId, TTSProviderId } from '@/lib/audio/types';
 import {
   buildSharedTTSAssetId,
   buildSharedTTSDownloadUrl,
@@ -81,7 +81,12 @@ export async function generateSharedTTSAsset(
 
   const config = {
     providerId: input.providerId,
-    modelId: input.modelId || DEFAULT_TTS_MODELS[input.providerId] || '',
+    modelId:
+      input.modelId ||
+      (input.providerId in DEFAULT_TTS_MODELS
+        ? DEFAULT_TTS_MODELS[input.providerId as BuiltInTTSProviderId]
+        : '') ||
+      '',
     voice: input.voice,
     speed: input.speed ?? 1,
     apiKey: input.apiKey,

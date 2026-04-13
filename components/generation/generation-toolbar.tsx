@@ -93,9 +93,10 @@ export function GenerationToolbar({
           const localConfig = providersConfig?.[providerId];
           const builtinConfig = PROVIDERS[providerId as keyof typeof PROVIDERS];
           const modelsSource = localConfig?.models || builtinConfig?.models || [];
+          const serverModels = info.models ?? [];
           const models =
-            info.models?.length > 0
-              ? modelsSource.filter((model) => info.models!.includes(model.id))
+            serverModels.length > 0
+              ? modelsSource.filter((model) => serverModels.includes(model.id))
               : modelsSource;
 
           if (models.length === 0) {
