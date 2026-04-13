@@ -16,6 +16,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TextbookPdfImportReviewPanel } from './textbook-pdf-import-review-panel';
 import { downloadTextbookFile } from './textbook-download';
+import { getEducationModulePresets } from '@/lib/module-host/education';
+import { getActiveModule } from '@/lib/module-host/runtime';
 import { k12ModuleManifest } from '@/modules/k12/manifest';
 import {
   resolveLocalizedText,
@@ -33,7 +35,52 @@ import type {
 // ============================================================================
 // 1. 基础辅助函数与类型 (保持不变)
 // ============================================================================
-interface TextbookLibraryManagerProps { scope: 'official' | 'personal'; }
+interface ResourceLibraryManagerProps { scope: 'official' | 'personal'; }
+
+type ResourceLibraryCopy = {
+  title: string;
+  description: string;
+  createLabel: string;
+  searchPlaceholder: string;
+  emptyState: string;
+  noResultsSuffix: string;
+  providerFallback: string;
+  itemCoverAlt: string;
+  itemUntitled: string;
+  unitCountLabel: string;
+  deleteSuccess: string;
+  itemLabel: string;
+  itemNameLabel: string;
+  itemCoverLabel: string;
+  itemStudioTitle: string;
+  providerLabel: string;
+  providerPlaceholder: string;
+  providerCustomPlaceholder: string;
+  subjectLabel: string;
+  subjectPlaceholder: string;
+  subjectCustomPlaceholder: string;
+  gradeLabel: string;
+  gradePlaceholder: string;
+  gradeCustomPlaceholder: string;
+  structureTitle: string;
+  structureDescription: string;
+  addVolumeLabel: string;
+  volumePlaceholder: string;
+  noVolumesText: string;
+  unitPlaceholder: string;
+  addUnitLabel: string;
+  addChapterLabel: string;
+  deleteButtonLabel: string;
+  initialEditionLabel: string;
+  initialVolumeLabel: string;
+  initialUnitLabel: string;
+  initialChapterLabel: string;
+  newVolumeLabel: string;
+  newUnitLabel: string;
+  newChapterLabel: string;
+  importConfirmText: string;
+  sidePanelHint: string;
+};
 
 function createId(prefix: string) { return `${prefix}-${Date.now()}`; }
 
@@ -128,6 +175,14 @@ const EXTRA_PUBLISHER_OPTIONS = [
   '河北教育出版社', '辽宁教育出版社', '语文出版社', '高等教育出版社',
   '外语教学与研究出版社', '人民音乐出版社', '人民美术出版社', '电子工业出版社',
 ];
+const EXTRA_PROVIDER_OPTIONS = [
+  '企业大学',
+  '职业培训中心',
+  '继续教育学院',
+  '行业协会',
+  '认证机构',
+  '内部讲师团队',
+];
 const PUBLISHER_OPTIONS = Array.from(
   new Set([
     ...K12_PRESETS.textbookEditions
@@ -152,27 +207,133 @@ function buildPresetSelectOptions(options: ModuleOption[], currentValue: string)
   return [...options, { id: currentValue, label: { 'zh-CN': `${currentValue}（当前值）`, 'en-US': currentValue } }];
 }
 
-function getPublisherDisplayValue(publisher: string) { return publisher || '未指定出版社'; }
-function isPresetPublisher(publisher: string) { return PUBLISHER_OPTIONS.includes(publisher); }
+function getPublisherDisplayValue(publisher: string, fallback: string) { return publisher || fallback; }
+function isPresetPublisher(publisher: string, options: string[]) { return options.includes(publisher); }
 function isPresetOption(value: string, options: ModuleOption[]) { return options.some((option) => option.id === value || resolveLocalizedText(option.label, 'zh-CN') === value); }
 
-function createEmptyLibrary(scope: 'official' | 'personal'): TextbookLibraryRecord {
-  const now = Date.now();
-  const defaultSubject = SUBJECT_OPTIONS.find((option) => option.id === K12_PRESETS.defaults.subjectId) ?? SUBJECT_OPTIONS[0];
-  const defaultGrade = GRADE_OPTIONS.find((option) => option.id === K12_PRESETS.defaults.gradeId) ?? GRADE_OPTIONS[0];
-  const defaultPublisher = PUBLISHER_OPTIONS[0] ?? '';
+function getResourceLibraryCopy(args: {
+  isAdultEducation: boolean;
+  isOfficial: boolean;
+}): ResourceLibraryCopy {
+  if (args.isAdultEducation) {
+    return {
+      title: args.isOfficial ? '官方资源库' : '我的私人资源库',
+      description: args.isOfficial
+        ? '维护全站可见的课程资料目录、模块结构与附件。'
+        : '维护仅供自己使用的课程资料与章节附件，沉淀个人培训素材。',
+      createLabel: '新建资料',
+      searchPlaceholder: '搜索资料名、提供方...',
+      emptyState: '资源库还是空的，新建一份资料吧。',
+      noResultsSuffix: '或该分类的资料。',
+      providerFallback: '未指定提供方',
+      itemCoverAlt: '资料封面',
+      itemUntitled: '未命名资料',
+      unitCountLabel: '模块',
+      deleteSuccess: '已删除资料',
+      itemLabel: '资料',
+      itemNameLabel: '资料名称',
+      itemCoverLabel: '资料封面',
+      itemStudioTitle: '资料基础属性',
+      providerLabel: '提供方',
+      providerPlaceholder: '请选择提供方',
+      providerCustomPlaceholder: '手动输入提供方名称',
+      subjectLabel: '方向',
+      subjectPlaceholder: '请选择方向',
+      subjectCustomPlaceholder: '手动输入方向名称',
+      gradeLabel: '对象',
+      gradePlaceholder: '请选择对象',
+      gradeCustomPlaceholder: '手动输入对象名称',
+      structureTitle: '资料内容结构',
+      structureDescription: '管理资料目录。选中章节以配置资源。',
+      addVolumeLabel: '添加资料集',
+      volumePlaceholder: '资料集名称',
+      noVolumesText: '目前没有资料集，点击右上角添加。',
+      unitPlaceholder: '模块名称',
+      addUnitLabel: '新建模块',
+      addChapterLabel: '添加章节',
+      deleteButtonLabel: '删除资料',
+      initialEditionLabel: '新建资料',
+      initialVolumeLabel: '资料集 1',
+      initialUnitLabel: '模块 1',
+      initialChapterLabel: '章节 1',
+      newVolumeLabel: '新资料集',
+      newUnitLabel: '新模块',
+      newChapterLabel: '新章节',
+      importConfirmText: '确认用当前导入结果覆盖这个资料集的目录与章节附件吗？',
+      sidePanelHint: '在左侧选中任意一个章节即可编辑资源，也可以在资料集标题旁直接从 PDF 导入章节结构。',
+    };
+  }
+
   return {
-    id: `library-${now}`, scope, cover: undefined, publisher: defaultPublisher,
-    subjectId: defaultSubject?.id ?? K12_PRESETS.defaults.subjectId,
+    title: args.isOfficial ? '官方教材库' : '我的私人教材库',
+    description: args.isOfficial ? '维护全站可见的教材目录、章节结构与附件。' : '维护仅供自己使用的教材目录与章节附件，沉淀个人备课资料。',
+    createLabel: '新建教材',
+    searchPlaceholder: '搜索书名、出版社...',
+    emptyState: '书架空空如也，新建一本教材吧。',
+    noResultsSuffix: '或该分类的教材。',
+    providerFallback: '未指定出版社',
+    itemCoverAlt: '教材封面',
+    itemUntitled: '未命名教材',
+    unitCountLabel: '单元',
+    deleteSuccess: '已删除教材',
+    itemLabel: '教材',
+    itemNameLabel: '书籍名称',
+    itemCoverLabel: '书籍封面',
+    itemStudioTitle: '书籍基础属性',
+    providerLabel: '出版社',
+    providerPlaceholder: '请选择出版社',
+    providerCustomPlaceholder: '手动输入出版社',
+    subjectLabel: '学科',
+    subjectPlaceholder: '请选择学科',
+    subjectCustomPlaceholder: '手动输入学科名称',
+    gradeLabel: '年级',
+    gradePlaceholder: '请选择年级',
+    gradeCustomPlaceholder: '手动输入年级名称',
+    structureTitle: '书籍内容结构',
+    structureDescription: '管理书籍大纲。选中章节以配置资源。',
+    addVolumeLabel: '添加册次',
+    volumePlaceholder: '册次名称',
+    noVolumesText: '目前没有册次，点击右上角添加。',
+    unitPlaceholder: '单元名称',
+    addUnitLabel: '新建单元',
+    addChapterLabel: '添加章节',
+    deleteButtonLabel: '删除本书',
+    initialEditionLabel: '新建教材',
+    initialVolumeLabel: '第一册',
+    initialUnitLabel: '第一单元',
+    initialChapterLabel: '第一课',
+    newVolumeLabel: '新册次',
+    newUnitLabel: '新单元',
+    newChapterLabel: '新章节',
+    importConfirmText: '确认用当前导入结果覆盖这个册次的目录与章节附件吗？',
+    sidePanelHint: '在左侧选中任意一个章节即可编辑资源，也可以在册次标题旁直接从 PDF 导入章节结构。',
+  };
+}
+
+function createEmptyLibrary(args: {
+  scope: 'official' | 'personal';
+  copy: ResourceLibraryCopy;
+  presets: K12ModulePresets;
+  subjectOptions: ModuleOption[];
+  gradeOptions: ModuleOption[];
+  providerOptions: string[];
+}): TextbookLibraryRecord {
+  const now = Date.now();
+  const defaultSubject = args.subjectOptions.find((option) => option.id === args.presets.defaults.subjectId) ?? args.subjectOptions[0];
+  const defaultGrade = args.gradeOptions.find((option) => option.id === args.presets.defaults.gradeId) ?? args.gradeOptions[0];
+  const defaultPublisher = args.providerOptions[0] ?? '';
+  return {
+    id: `library-${now}`, scope: args.scope, cover: undefined, publisher: defaultPublisher,
+    subjectId: defaultSubject?.id ?? args.presets.defaults.subjectId,
     subjectLabel: defaultSubject ? resolveLocalizedText(defaultSubject.label, 'zh-CN') : undefined,
-    gradeId: defaultGrade?.id ?? K12_PRESETS.defaults.gradeId,
+    gradeId: defaultGrade?.id ?? args.presets.defaults.gradeId,
     gradeLabel: defaultGrade ? resolveLocalizedText(defaultGrade.label, 'zh-CN') : undefined,
-    editionId: `edition-${now}`, editionLabel: '新建教材', createdAt: now, updatedAt: now,
+    editionId: `edition-${now}`, editionLabel: args.copy.initialEditionLabel, createdAt: now, updatedAt: now,
     volumes: [
       {
-        id: createId('volume'), label: '第一册', order: 0,
-        gradeId: defaultGrade?.id ?? K12_PRESETS.defaults.gradeId, semester: 'upper',
-        units: [{ id: createId('unit'), title: '第一单元', order: 0, chapters: [{ id: createId('chapter'), title: '第一课', summary: '', keywords: [], order: 0, attachments: [] }] }],
+        id: createId('volume'), label: args.copy.initialVolumeLabel, order: 0,
+        gradeId: defaultGrade?.id ?? args.presets.defaults.gradeId, semester: 'upper',
+        units: [{ id: createId('unit'), title: args.copy.initialUnitLabel, order: 0, chapters: [{ id: createId('chapter'), title: args.copy.initialChapterLabel, summary: '', keywords: [], order: 0, attachments: [] }] }],
       }
     ],
   };
@@ -233,17 +394,29 @@ function buildImportDraftReviewPayload(importDraft: TextbookPdfImportDraftRecord
 // ============================================================================
 // 2. UI 组件：沉浸式书籍封面 (保持不变)
 // ============================================================================
-const BookCover = ({ library, onClick }: { library: TextbookLibraryRecord; onClick: () => void }) => {
+const ResourceCover = ({
+  library,
+  onClick,
+  subjectOptions,
+  gradeOptions,
+  copy,
+}: {
+  library: TextbookLibraryRecord;
+  onClick: () => void;
+  subjectOptions: ModuleOption[];
+  gradeOptions: ModuleOption[];
+  copy: ResourceLibraryCopy;
+}) => {
   const gradient = useMemo(() => getBookGradient(library.id), [library.id]);
-  const subjectLabel = library.subjectLabel ?? resolvePresetOptionLabel(library.subjectId, SUBJECT_OPTIONS);
-  const gradeLabel = library.gradeLabel ?? resolvePresetOptionLabel(library.gradeId, GRADE_OPTIONS);
+  const subjectLabel = library.subjectLabel ?? resolvePresetOptionLabel(library.subjectId, subjectOptions);
+  const gradeLabel = library.gradeLabel ?? resolvePresetOptionLabel(library.gradeId, gradeOptions);
   const unitCount = useMemo(() => library.volumes.reduce((total, volume) => total + volume.units.length, 0), [library.volumes]);
   const hasCover = Boolean(library.cover);
   return (
     <div onClick={onClick} className="group relative cursor-pointer perspective-1000 transition-all duration-500 hover:-translate-y-2">
       <div className={`relative w-full aspect-[2/3] rounded-r-2xl rounded-l-md shadow-lg transition-all duration-500 group-hover:shadow-2xl overflow-hidden ${hasCover ? 'bg-slate-900' : `bg-gradient-to-br ${gradient}`}`}>
         {hasCover ? (
-          <img src={library.cover} alt={library.editionLabel || '教材封面'} className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
+          <img src={library.cover} alt={library.editionLabel || copy.itemCoverAlt} className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
         ) : (
           <>
             <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
@@ -254,14 +427,14 @@ const BookCover = ({ library, onClick }: { library: TextbookLibraryRecord; onCli
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/25 to-black/10" />
         <div className="absolute inset-0 p-5 flex flex-col justify-between text-white z-20">
           <Badge variant="secondary" className="bg-white/20 hover:bg-white/30 text-white backdrop-blur-md border-0 self-start text-xs shadow-sm">
-            {getPublisherDisplayValue(library.publisher)}
+            {getPublisherDisplayValue(library.publisher, copy.providerFallback)}
           </Badge>
           <div className="space-y-1 mt-auto mb-6">
-            <h3 className="font-bold text-xl leading-tight drop-shadow-md line-clamp-3">{library.editionLabel || '未命名教材'}</h3>
+            <h3 className="font-bold text-xl leading-tight drop-shadow-md line-clamp-3">{library.editionLabel || copy.itemUntitled}</h3>
             <p className="text-xs text-white/80">{subjectLabel} • {gradeLabel}</p>
           </div>
           <div className="flex gap-3 text-xs font-medium text-white/80 backdrop-blur-sm bg-black/10 p-2.5 rounded-xl -mx-1">
-            <span className="flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> {unitCount} 单元</span>
+            <span className="flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> {unitCount} {copy.unitCountLabel}</span>
           </div>
         </div>
       </div>
@@ -272,9 +445,28 @@ const BookCover = ({ library, onClick }: { library: TextbookLibraryRecord; onCli
 // ============================================================================
 // 3. 主控组件 
 // ============================================================================
-export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
+export function ResourceLibraryManager({ scope }: ResourceLibraryManagerProps) {
   const router = useRouter();
+  const activeModule = getActiveModule();
   const isOfficial = scope === 'official';
+  const isAdultEducation = activeModule.id === 'adult-education';
+  const activePresets = getEducationModulePresets(activeModule.id) ?? K12_PRESETS;
+  const subjectOptions = useMemo(
+    () => (isAdultEducation ? activePresets.subjects : SUBJECT_OPTIONS),
+    [activePresets.subjects, isAdultEducation],
+  );
+  const gradeOptions = useMemo(
+    () => (isAdultEducation ? activePresets.grades : GRADE_OPTIONS),
+    [activePresets.grades, isAdultEducation],
+  );
+  const providerOptions = useMemo(
+    () => (isAdultEducation ? EXTRA_PROVIDER_OPTIONS : PUBLISHER_OPTIONS),
+    [isAdultEducation],
+  );
+  const copy = useMemo(
+    () => getResourceLibraryCopy({ isAdultEducation, isOfficial }),
+    [isAdultEducation, isOfficial],
+  );
   
   // --- 状态管理 ---
   const [libraries, setLibraries] = useState<TextbookLibraryRecord[]>([]);
@@ -305,9 +497,6 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSubject, setActiveSubject] = useState<string>('全部');
 
-  const title = isOfficial ? '官方教材库' : '我的私人教材库';
-  const description = isOfficial ? '维护全站可见的教材目录、章节结构与附件。' : '维护仅供自己使用的教材目录与章节附件，沉淀个人备课资料。';
-
   const selectedChapter = useMemo(() => {
     if (!draft || !selectedChapterId) return null;
     for (const vol of draft.volumes) {
@@ -323,30 +512,30 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   const pendingImportDraft = useMemo(() => importDrafts.find((item) => item.id === pendingImportDraftId) ?? null, [importDrafts, pendingImportDraftId]);
   const importBindingDiagnostics = useMemo(() => computeImportBindingDiagnostics(activeImportDraft), [activeImportDraft]);
 
-  const selectedPublisherValue = publisherMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetPublisher(draft?.publisher ?? '') ? draft?.publisher ?? '' : CUSTOM_PUBLISHER_VALUE);
-  const selectedSubjectValue = subjectMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetOption(draft?.subjectId ?? '', SUBJECT_OPTIONS) ? draft?.subjectId ?? '' : CUSTOM_PUBLISHER_VALUE);
-  const selectedGradeValue = gradeMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetOption(draft?.gradeId ?? '', GRADE_OPTIONS) ? draft?.gradeId ?? '' : CUSTOM_PUBLISHER_VALUE);
+  const selectedPublisherValue = publisherMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetPublisher(draft?.publisher ?? '', providerOptions) ? draft?.publisher ?? '' : CUSTOM_PUBLISHER_VALUE);
+  const selectedSubjectValue = subjectMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetOption(draft?.subjectId ?? '', subjectOptions) ? draft?.subjectId ?? '' : CUSTOM_PUBLISHER_VALUE);
+  const selectedGradeValue = gradeMode === 'custom' ? CUSTOM_PUBLISHER_VALUE : (isPresetOption(draft?.gradeId ?? '', gradeOptions) ? draft?.gradeId ?? '' : CUSTOM_PUBLISHER_VALUE);
 
-  const subjectSelectOptions = useMemo(() => buildPresetSelectOptions(SUBJECT_OPTIONS, draft?.subjectId ?? ''), [draft?.subjectId]);
-  const gradeSelectOptions = useMemo(() => buildPresetSelectOptions(GRADE_OPTIONS, draft?.gradeId ?? ''), [draft?.gradeId]);
+  const subjectSelectOptions = useMemo(() => buildPresetSelectOptions(subjectOptions, draft?.subjectId ?? ''), [draft?.subjectId, subjectOptions]);
+  const gradeSelectOptions = useMemo(() => buildPresetSelectOptions(gradeOptions, draft?.gradeId ?? ''), [draft?.gradeId, gradeOptions]);
 
   const subjectList = useMemo(() => {
-    const subjects = new Set(libraries.map((lib) => lib.subjectLabel ?? resolvePresetOptionLabel(lib.subjectId, SUBJECT_OPTIONS)).filter(Boolean));
+    const subjects = new Set(libraries.map((lib) => lib.subjectLabel ?? resolvePresetOptionLabel(lib.subjectId, subjectOptions)).filter(Boolean));
     return ['全部', ...Array.from(subjects)];
-  }, [libraries]);
+  }, [libraries, subjectOptions]);
 
   const filteredLibraries = useMemo(() => {
     return libraries.filter(lib => {
       const matchesSearch = !searchQuery || 
         (lib.editionLabel?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
         (lib.publisher?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-        (lib.subjectLabel ?? resolvePresetOptionLabel(lib.subjectId, SUBJECT_OPTIONS)).toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (lib.gradeLabel ?? resolvePresetOptionLabel(lib.gradeId, GRADE_OPTIONS)).toLowerCase().includes(searchQuery.toLowerCase());
+        (lib.subjectLabel ?? resolvePresetOptionLabel(lib.subjectId, subjectOptions)).toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (lib.gradeLabel ?? resolvePresetOptionLabel(lib.gradeId, gradeOptions)).toLowerCase().includes(searchQuery.toLowerCase());
       
-      const matchesSubject = activeSubject === '全部' || (lib.subjectLabel ?? resolvePresetOptionLabel(lib.subjectId, SUBJECT_OPTIONS)) === activeSubject;
+      const matchesSubject = activeSubject === '全部' || (lib.subjectLabel ?? resolvePresetOptionLabel(lib.subjectId, subjectOptions)) === activeSubject;
       return matchesSearch && matchesSubject;
     });
-  }, [libraries, searchQuery, activeSubject]);
+  }, [libraries, searchQuery, activeSubject, gradeOptions, subjectOptions]);
 
   const loadImportDrafts = useCallback(async (libraryId: string, nextActiveId?: string | null) => {
     try {
@@ -419,9 +608,9 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
         const nextDraft = nextLibraries.find((library) => library.id === nextSelectedId);
         if (nextDraft) {
           setDraft(structuredClone(nextDraft));
-          setPublisherMode(isPresetPublisher(nextDraft.publisher) ? 'preset' : 'custom');
-          setSubjectMode(isPresetOption(nextDraft.subjectId, SUBJECT_OPTIONS) ? 'preset' : 'custom');
-          setGradeMode(isPresetOption(nextDraft.gradeId, GRADE_OPTIONS) ? 'preset' : 'custom');
+          setPublisherMode(isPresetPublisher(nextDraft.publisher, providerOptions) ? 'preset' : 'custom');
+          setSubjectMode(isPresetOption(nextDraft.subjectId, subjectOptions) ? 'preset' : 'custom');
+          setGradeMode(isPresetOption(nextDraft.gradeId, gradeOptions) ? 'preset' : 'custom');
           void loadImportDrafts(nextDraft.id);
         }
       } else {
@@ -430,15 +619,15 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
       }
     } catch (error) { toast.error(error instanceof Error ? error.message : '加载失败'); } 
     finally { setLoading(false); }
-  }, [scope, isOfficial, loadImportDrafts]);
+  }, [scope, isOfficial, gradeOptions, loadImportDrafts, providerOptions, subjectOptions]);
 
   useEffect(() => { void loadLibraries(); }, [loadLibraries]);
 
   function selectLibrary(library: TextbookLibraryRecord) {
     setDraft(structuredClone(library));
-    setPublisherMode(isPresetPublisher(library.publisher) ? 'preset' : 'custom');
-    setSubjectMode(isPresetOption(library.subjectId, SUBJECT_OPTIONS) ? 'preset' : 'custom');
-    setGradeMode(isPresetOption(library.gradeId, GRADE_OPTIONS) ? 'preset' : 'custom');
+    setPublisherMode(isPresetPublisher(library.publisher, providerOptions) ? 'preset' : 'custom');
+    setSubjectMode(isPresetOption(library.subjectId, subjectOptions) ? 'preset' : 'custom');
+    setGradeMode(isPresetOption(library.gradeId, gradeOptions) ? 'preset' : 'custom');
     setSelectedChapterId(null); setUploadFile(null); setUploadTitle(''); setUploadDescription('');
     setActiveImportDraftId(null);
     setPendingImportDraftId(null);
@@ -461,11 +650,11 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   const updateUnit = (vId: string, uId: string, patch: Partial<TextbookUnitRecord>) => updateDraft({ volumes: draft!.volumes.map(v => v.id === vId ? { ...v, units: v.units.map(u => u.id === uId ? { ...u, ...patch } : u) } : v) });
   const updateChapter = (vId: string, uId: string, cId: string, patch: Partial<TextbookChapterRecord>) => updateDraft({ volumes: draft!.volumes.map(v => v.id === vId ? { ...v, units: v.units.map(u => u.id === uId ? { ...u, chapters: u.chapters.map(c => c.id === cId ? { ...c, ...patch } : c) } : u) } : v) });
   
-  const addVolume = () => updateDraft({ volumes: [...draft!.volumes, { id: createId('volume'), label: '新册次', order: draft!.volumes.length, gradeId: '', semester: 'upper', units: [] }] });
-  const addUnit = (vId: string) => updateVolume(vId, { units: [...draft!.volumes.find(v => v.id === vId)!.units, { id: createId('unit'), title: '新单元', order: 0, chapters: [] }] });
+  const addVolume = () => updateDraft({ volumes: [...draft!.volumes, { id: createId('volume'), label: copy.newVolumeLabel, order: draft!.volumes.length, gradeId: '', semester: 'upper', units: [] }] });
+  const addUnit = (vId: string) => updateVolume(vId, { units: [...draft!.volumes.find(v => v.id === vId)!.units, { id: createId('unit'), title: copy.newUnitLabel, order: 0, chapters: [] }] });
   const addChapter = (vId: string, uId: string) => {
     const newId = createId('chapter');
-    updateUnit(vId, uId, { chapters: [...draft!.volumes.find(v => v.id === vId)!.units.find(u => u.id === uId)!.chapters, { id: newId, title: '新章节', summary: '', keywords: [], order: 0, attachments: [] }] });
+    updateUnit(vId, uId, { chapters: [...draft!.volumes.find(v => v.id === vId)!.units.find(u => u.id === uId)!.chapters, { id: newId, title: copy.newChapterLabel, summary: '', keywords: [], order: 0, attachments: [] }] });
     setSelectedChapterId(newId);
   };
   
@@ -483,9 +672,9 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
       nextLibraries[existingIndex] = nextLibrary;
       return nextLibraries;
     });
-    setPublisherMode(isPresetPublisher(savedLibrary.publisher) ? 'preset' : 'custom');
-    setSubjectMode(isPresetOption(savedLibrary.subjectId, SUBJECT_OPTIONS) ? 'preset' : 'custom');
-    setGradeMode(isPresetOption(savedLibrary.gradeId, GRADE_OPTIONS) ? 'preset' : 'custom');
+    setPublisherMode(isPresetPublisher(savedLibrary.publisher, providerOptions) ? 'preset' : 'custom');
+    setSubjectMode(isPresetOption(savedLibrary.subjectId, subjectOptions) ? 'preset' : 'custom');
+    setGradeMode(isPresetOption(savedLibrary.gradeId, gradeOptions) ? 'preset' : 'custom');
   }
 
   async function persistLibraryDraft(library: TextbookLibraryRecord, options?: { successMessage?: string }) {
@@ -526,7 +715,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
       const response = await fetch('/api/textbook-libraries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteLibrary', scope, libraryId: draft.id }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) throw new Error(data.error || '删除失败');
-      toast.success('已删除教材'); setViewMode('hub'); await loadLibraries();
+      toast.success(copy.deleteSuccess); setViewMode('hub'); await loadLibraries();
     } catch (error) { toast.error(error instanceof Error ? error.message : '删除失败'); }
   }
 
@@ -572,7 +761,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   }
 
   function addImportUnit() {
-    updateImportDraftLocal((current) => ({ ...current, units: [...current.units, { id: createId('import-unit'), title: `新单元 ${current.units.length + 1}`, order: current.units.length, chapters: [] }] }));
+    updateImportDraftLocal((current) => ({ ...current, units: [...current.units, { id: createId('import-unit'), title: `${copy.newUnitLabel} ${current.units.length + 1}`, order: current.units.length, chapters: [] }] }));
   }
 
   function removeImportUnit(unitId: string) {
@@ -592,7 +781,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
   }
 
   function addImportChapter(unitId: string) {
-    updateImportDraftLocal((current) => ({ ...current, units: current.units.map((unit) => unit.id === unitId ? { ...unit, chapters: [...unit.chapters, { id: createId('import-chapter'), title: `新章节 ${unit.chapters.length + 1}`, order: unit.chapters.length, pageStart: 1, pageEnd: 1, confidence: 0.4 }] } : unit) }));
+    updateImportDraftLocal((current) => ({ ...current, units: current.units.map((unit) => unit.id === unitId ? { ...unit, chapters: [...unit.chapters, { id: createId('import-chapter'), title: `${copy.newChapterLabel} ${unit.chapters.length + 1}`, order: unit.chapters.length, pageStart: 1, pageEnd: 1, confidence: 0.4 }] } : unit) }));
   }
 
   function removeImportChapter(unitId: string, chapterId: string) {
@@ -648,7 +837,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
 
   async function confirmImportDraft() {
     if (!activeImportDraft || !draft) return;
-    if (!window.confirm('确认用当前导入结果覆盖这个册次的目录与章节附件吗？')) return;
+    if (!window.confirm(copy.importConfirmText)) return;
     setImportSaving(true);
     try {
       const response = await fetch('/api/textbook-libraries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'confirmImportDraft', draftId: activeImportDraft.id }) });
@@ -687,8 +876,8 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
               <Button variant="ghost" size="sm" onClick={() => router.push('/')} className="mb-2 -ml-3 text-slate-500 rounded-full">
                 <ArrowLeft className="mr-2 h-4 w-4" /> 返回主站
               </Button>
-              <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50">{title}</h1>
-              <p className="text-lg text-slate-500 dark:text-slate-400 font-medium">{description}</p>
+              <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50">{copy.title}</h1>
+              <p className="text-lg text-slate-500 dark:text-slate-400 font-medium">{copy.description}</p>
             </div>
             <div className="flex items-center gap-3">
               {isOfficial && (
@@ -696,7 +885,19 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                   <Send className="mr-2 h-4 w-4" /> 发布全站
                 </Button>
               )}
-              <Button className="rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md" onClick={() => selectLibrary(createEmptyLibrary(scope))}><Plus className="mr-2 h-4 w-4" /> 新建教材</Button>
+              <Button
+                className="rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md"
+                onClick={() => selectLibrary(createEmptyLibrary({
+                  scope,
+                  copy,
+                  presets: activePresets,
+                  subjectOptions,
+                  gradeOptions,
+                  providerOptions,
+                }))}
+              >
+                <Plus className="mr-2 h-4 w-4" /> {copy.createLabel}
+              </Button>
             </div>
           </header>
 
@@ -704,7 +905,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
             <div className="bg-white dark:bg-slate-900 p-2 rounded-2xl shadow-sm border border-slate-200/60 dark:border-slate-800 flex flex-col md:flex-row items-center gap-4 sticky top-4 z-30 backdrop-blur-xl bg-white/80">
               <div className="relative w-full md:max-w-[300px] shrink-0">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input placeholder="搜索书名、出版社..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 rounded-xl bg-slate-50/50 border-slate-200 focus-visible:ring-indigo-500 shadow-inner h-10" />
+                <Input placeholder={copy.searchPlaceholder} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 rounded-xl bg-slate-50/50 border-slate-200 focus-visible:ring-indigo-500 shadow-inner h-10" />
               </div>
               <div className="flex items-center gap-2 overflow-x-auto w-full pb-1 md:pb-0 scrollbar-hide">
                 {subjectList.map(subject => (
@@ -721,17 +922,26 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
           ) : libraries.length === 0 ? (
             <div className="text-center py-32 bg-white/50 rounded-3xl border border-slate-100 dark:border-slate-800">
               <BookOpen className="mx-auto h-12 w-12 text-slate-300 mb-4" />
-              <p className="text-slate-400 text-lg">书架空空如也，新建一本教材吧。</p>
+              <p className="text-slate-400 text-lg">{copy.emptyState}</p>
             </div>
           ) : filteredLibraries.length === 0 ? (
             <div className="text-center py-32">
               <BookDashed className="mx-auto h-12 w-12 text-slate-300 mb-4" />
-              <p className="text-slate-500 text-lg">没有找到匹配 <strong>&quot;{searchQuery}&quot;</strong> 或该分类的教材。</p>
+              <p className="text-slate-500 text-lg">没有找到匹配 <strong>&quot;{searchQuery}&quot;</strong> {copy.noResultsSuffix}</p>
               <Button variant="link" className="text-indigo-500 mt-2" onClick={() => {setSearchQuery(''); setActiveSubject('全部')}}>清空过滤条件</Button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-6 gap-y-12 animate-in fade-in duration-500">
-              {filteredLibraries.map(lib => <BookCover key={lib.id} library={lib} onClick={() => selectLibrary(lib)} />)}
+              {filteredLibraries.map((lib) => (
+                <ResourceCover
+                  key={lib.id}
+                  library={lib}
+                  onClick={() => selectLibrary(lib)}
+                  subjectOptions={subjectOptions}
+                  gradeOptions={gradeOptions}
+                  copy={copy}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -749,11 +959,11 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
           <Button variant="ghost" size="icon" onClick={() => { setViewMode('hub'); setDraft(null); }} className="rounded-full hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></Button>
           <div className="flex flex-col">
             <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">当前编辑</span>
-            <span className="text-sm font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">{draft?.editionLabel || '未命名'}</span>
+            <span className="text-sm font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">{draft?.editionLabel || copy.itemUntitled}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" className="text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-full" onClick={deleteLibrary}><Trash2 className="h-4 w-4 mr-1" /> 删除本书</Button>
+          <Button variant="ghost" className="text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-full" onClick={deleteLibrary}><Trash2 className="h-4 w-4 mr-1" /> {copy.deleteButtonLabel}</Button>
           <Button className="rounded-full bg-slate-900 text-white hover:bg-slate-800 shadow-md" onClick={saveLibrary} disabled={saving}>{saving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} 保存更改</Button>
         </div>
       </header>
@@ -782,15 +992,15 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
           {activeTab === 'settings' && draft && (
             <div className="w-full overflow-y-auto p-8 md:p-12">
               <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in">
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">书籍基础属性</h2>
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{copy.itemStudioTitle}</h2>
                 <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2 col-span-2"><label className="text-xs font-bold uppercase text-slate-500">书籍名称</label><Input value={draft.editionLabel} onChange={e => updateDraft({ editionLabel: e.target.value })} className="text-lg font-medium py-6" /></div>
+                  <div className="space-y-2 col-span-2"><label className="text-xs font-bold uppercase text-slate-500">{copy.itemNameLabel}</label><Input value={draft.editionLabel} onChange={e => updateDraft({ editionLabel: e.target.value })} className="text-lg font-medium py-6" /></div>
                   <div className="space-y-3 col-span-2">
-                    <label className="text-xs font-bold uppercase text-slate-500">书籍封面</label>
+                    <label className="text-xs font-bold uppercase text-slate-500">{copy.itemCoverLabel}</label>
                     <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4 md:flex-row md:items-start">
                       <div className="relative w-full max-w-[120px] aspect-[2/3] overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-sm">
                         {draft.cover ? (
-                          <img src={draft.cover} alt={draft.editionLabel || '教材封面'} className="h-full w-full object-cover" />
+                          <img src={draft.cover} alt={draft.editionLabel || copy.itemCoverAlt} className="h-full w-full object-cover" />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-center text-[11px] font-medium text-slate-400">未上传封面</div>
                         )}
@@ -809,7 +1019,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold uppercase text-slate-500">出版社</label>
+                    <label className="text-xs font-bold uppercase text-slate-500">{copy.providerLabel}</label>
                     <Select
                       value={selectedPublisherValue}
                       onValueChange={(value) => {
@@ -817,52 +1027,52 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                         setPublisherMode('preset'); updateDraft({ publisher: value });
                       }}
                     >
-                      <SelectTrigger className="w-full"><SelectValue placeholder="请选择出版社" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder={copy.providerPlaceholder} /></SelectTrigger>
                       <SelectContent>
-                        {PUBLISHER_OPTIONS.map((publisher) => (<SelectItem key={publisher} value={publisher}>{publisher}</SelectItem>))}
+                        {providerOptions.map((publisher) => (<SelectItem key={publisher} value={publisher}>{publisher}</SelectItem>))}
                         <SelectItem value={CUSTOM_PUBLISHER_VALUE}>自定义输入</SelectItem>
                       </SelectContent>
                     </Select>
-                    {publisherMode === 'custom' && (<Input value={draft.publisher} onChange={e => updateDraft({ publisher: e.target.value })} placeholder="手动输入出版社" />)}
+                    {publisherMode === 'custom' && (<Input value={draft.publisher} onChange={e => updateDraft({ publisher: e.target.value })} placeholder={copy.providerCustomPlaceholder} />)}
                   </div>
                   <div className="space-y-2"><label className="text-xs font-bold uppercase text-slate-500">唯一标识 (ID)</label><Input value={draft.editionId} onChange={e => updateDraft({ editionId: e.target.value })} className="font-mono bg-slate-50" /></div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold uppercase text-slate-500">学科</label>
+                    <label className="text-xs font-bold uppercase text-slate-500">{copy.subjectLabel}</label>
                     <Select
                       value={selectedSubjectValue}
                       onValueChange={(value) => {
                         if (value === CUSTOM_PUBLISHER_VALUE) { setSubjectMode('custom'); return; }
                         setSubjectMode('preset');
-                        const option = SUBJECT_OPTIONS.find((item) => item.id === value);
+                        const option = subjectOptions.find((item) => item.id === value);
                         updateDraft({ subjectId: option?.id ?? value, subjectLabel: option ? resolveLocalizedText(option.label, 'zh-CN') : value });
                       }}
                     >
-                      <SelectTrigger className="w-full"><SelectValue placeholder="请选择学科" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder={copy.subjectPlaceholder} /></SelectTrigger>
                       <SelectContent>
                         {subjectSelectOptions.map((subject) => (<SelectItem key={subject.id} value={subject.id}>{resolveLocalizedText(subject.label, 'zh-CN')}</SelectItem>))}
                         <SelectItem value={CUSTOM_PUBLISHER_VALUE}>自定义输入</SelectItem>
                       </SelectContent>
                     </Select>
-                    {subjectMode === 'custom' && (<Input value={draft.subjectLabel ?? draft.subjectId} onChange={e => updateDraft({ subjectId: e.target.value, subjectLabel: e.target.value })} placeholder="手动输入学科名称" />)}
+                    {subjectMode === 'custom' && (<Input value={draft.subjectLabel ?? draft.subjectId} onChange={e => updateDraft({ subjectId: e.target.value, subjectLabel: e.target.value })} placeholder={copy.subjectCustomPlaceholder} />)}
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold uppercase text-slate-500">年级</label>
+                    <label className="text-xs font-bold uppercase text-slate-500">{copy.gradeLabel}</label>
                     <Select
                       value={selectedGradeValue}
                       onValueChange={(value) => {
                         if (value === CUSTOM_PUBLISHER_VALUE) { setGradeMode('custom'); return; }
                         setGradeMode('preset');
-                        const option = GRADE_OPTIONS.find((item) => item.id === value);
+                        const option = gradeOptions.find((item) => item.id === value);
                         updateDraft({ gradeId: option?.id ?? value, gradeLabel: option ? resolveLocalizedText(option.label, 'zh-CN') : value });
                       }}
                     >
-                      <SelectTrigger className="w-full"><SelectValue placeholder="请选择年级" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder={copy.gradePlaceholder} /></SelectTrigger>
                       <SelectContent>
                         {gradeSelectOptions.map((grade) => (<SelectItem key={grade.id} value={grade.id}>{resolveLocalizedText(grade.label, 'zh-CN')}</SelectItem>))}
                         <SelectItem value={CUSTOM_PUBLISHER_VALUE}>自定义输入</SelectItem>
                       </SelectContent>
                     </Select>
-                    {gradeMode === 'custom' && (<Input value={draft.gradeLabel ?? draft.gradeId} onChange={e => updateDraft({ gradeId: e.target.value, gradeLabel: e.target.value })} placeholder="手动输入年级名称" />)}
+                    {gradeMode === 'custom' && (<Input value={draft.gradeLabel ?? draft.gradeId} onChange={e => updateDraft({ gradeId: e.target.value, gradeLabel: e.target.value })} placeholder={copy.gradeCustomPlaceholder} />)}
                   </div>
                 </div>
               </div>
@@ -884,10 +1094,10 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                 <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
                   <div className="flex justify-between items-end">
                     <div>
-                      <h2 className="text-2xl font-bold text-slate-900 dark:text-white">书籍内容结构</h2>
-                      <p className="text-sm text-slate-500 mt-1">管理书籍大纲。选中章节以配置资源。</p>
+                      <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{copy.structureTitle}</h2>
+                      <p className="text-sm text-slate-500 mt-1">{copy.structureDescription}</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={addVolume} className="rounded-full bg-white"><Plus className="w-4 h-4 mr-1"/> 添加册次</Button>
+                    <Button variant="outline" size="sm" onClick={addVolume} className="rounded-full bg-white"><Plus className="w-4 h-4 mr-1"/> {copy.addVolumeLabel}</Button>
                   </div>
                   
                   <div className="space-y-6">
@@ -900,7 +1110,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                         <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50/80 p-4 md:p-5 border-b border-slate-100">
                           <div className="flex items-center gap-3">
                             <div className="h-8 w-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold shrink-0">{vIdx + 1}</div>
-                            <Input value={vol.label} onChange={e => updateVolume(vol.id, { label: e.target.value })} className="text-lg font-bold border-none bg-transparent hover:bg-white focus-visible:ring-1 md:max-w-[200px]" placeholder="册次名称" />
+                            <Input value={vol.label} onChange={e => updateVolume(vol.id, { label: e.target.value })} className="text-lg font-bold border-none bg-transparent hover:bg-white focus-visible:ring-1 md:max-w-[200px]" placeholder={copy.volumePlaceholder} />
                           </div>
                           <div className="flex items-center gap-2">
                             {volumeImportDrafts.length === 0 ? (
@@ -977,7 +1187,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                               <div key={unit.id} className="relative group/unit">
                                 <div className="flex items-center gap-2 mb-2">
                                   <Folder className="w-5 h-5 text-emerald-500 shrink-0" />
-                                  <Input value={unit.title} onChange={e => updateUnit(vol.id, unit.id, { title: e.target.value })} className="font-semibold border-none bg-transparent hover:bg-slate-50 focus-visible:ring-1 md:max-w-[300px]" placeholder="单元名称" />
+                                  <Input value={unit.title} onChange={e => updateUnit(vol.id, unit.id, { title: e.target.value })} className="font-semibold border-none bg-transparent hover:bg-slate-50 focus-visible:ring-1 md:max-w-[300px]" placeholder={copy.unitPlaceholder} />
                                   <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 opacity-0 group-hover/unit:opacity-100 hover:text-rose-500 shrink-0" onClick={() => removeUnit(vol.id, unit.id)}><X className="w-3 h-3"/></Button>
                                 </div>
 
@@ -1007,17 +1217,17 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                                       </div>
                                     );
                                   })}
-                                  <div className="pt-1.5"><Button variant="ghost" size="sm" onClick={() => addChapter(vol.id, unit.id)} className="text-xs text-slate-400 hover:text-indigo-600 h-7 px-2"><Plus className="w-3 h-3 mr-1"/> 添加章节</Button></div>
+                                  <div className="pt-1.5"><Button variant="ghost" size="sm" onClick={() => addChapter(vol.id, unit.id)} className="text-xs text-slate-400 hover:text-indigo-600 h-7 px-2"><Plus className="w-3 h-3 mr-1"/> {copy.addChapterLabel}</Button></div>
                                 </div>
                               </div>
                             ))}
-                            <div className="pt-2"><Button variant="secondary" size="sm" onClick={() => addUnit(vol.id)} className="text-xs text-slate-600 h-8"><Folder className="w-3 h-3 mr-1"/> 新建单元</Button></div>
+                            <div className="pt-2"><Button variant="secondary" size="sm" onClick={() => addUnit(vol.id)} className="text-xs text-slate-600 h-8"><Folder className="w-3 h-3 mr-1"/> {copy.addUnitLabel}</Button></div>
                           </div>
                         </div>
                       </div>
                       );
                     })}
-                    {draft.volumes.length === 0 && <div className="text-center p-12 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400">目前没有册次，点击右上角添加。</div>}
+                    {draft.volumes.length === 0 && <div className="text-center p-12 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400">{copy.noVolumesText}</div>}
                   </div>
                 </div>
               </div>
@@ -1101,7 +1311,7 @@ export function TextbookLibraryManager({ scope }: TextbookLibraryManagerProps) {
                     </div>
                     <h3 className="font-semibold text-slate-700 mb-2">管理章节资源</h3>
                     <p className="text-sm text-slate-500 leading-relaxed">
-                      在左侧选中任意一个章节即可编辑资源，也可以在册次标题旁直接<span className="text-indigo-500 font-medium">从 PDF 导入章节结构</span>。
+                      {copy.sidePanelHint}
                     </p>
                   </div>
                 )}
