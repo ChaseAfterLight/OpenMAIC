@@ -58,6 +58,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDraftCache } from '@/lib/hooks/use-draft-cache';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { getSupportedDocumentType, readTextFileContent } from '@/lib/utils/document-upload';
+import { getActiveModule } from '@/lib/module-host/runtime';
+import { isEducationWorkbenchModuleId } from '@/lib/module-host/education';
 
 const log = createLogger('Home');
 
@@ -86,6 +88,12 @@ function HomePage() {
   const { t, locale } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
+  const activeModule = getActiveModule();
+  const activeModuleHome = activeModule.routes?.home;
+  const shouldRedirectToEducationWorkbench =
+    isEducationWorkbenchModuleId(activeModule.id) &&
+    Boolean(activeModuleHome) &&
+    activeModuleHome !== '/';
   const [authReady, setAuthReady] = useState(false);
   const [form, setForm] = useState<FormState>(initialFormState);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -157,6 +165,17 @@ function HomePage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    if (!shouldRedirectToEducationWorkbench || !activeModuleHome) {
+      return;
+    }
+    router.replace(activeModuleHome);
+  }, [activeModuleHome, router, shouldRedirectToEducationWorkbench]);
+
+  useEffect(() => {
+    if (shouldRedirectToEducationWorkbench) {
+      return;
+    }
+
     let cancelled = false;
     async function checkAuth() {
       try {
@@ -185,10 +204,12 @@ function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, shouldRedirectToEducationWorkbench]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
+    if (shouldRedirectToEducationWorkbench) return;
+
     if (!themeOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
@@ -214,6 +235,8 @@ function HomePage() {
   };
 
   useEffect(() => {
+    if (shouldRedirectToEducationWorkbench) return;
+
     if (!authReady) return;
 
     // Clear stale media store to prevent cross-course thumbnail contamination.
@@ -225,6 +248,16 @@ function HomePage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Store hydration on mount
     loadClassrooms();
   }, [authReady]);
+
+  if (shouldRedirectToEducationWorkbench) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center bg-white dark:bg-slate-950">
+        <div className="text-center text-muted-foreground">
+          <p>{locale === 'zh-CN' ? '正在进入工作台...' : 'Redirecting to your workbench...'}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!authReady) {
     return (

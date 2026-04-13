@@ -29,12 +29,13 @@ import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
 import { getStorageAdapter } from '@/lib/storage';
 import {
-  buildK12LessonPackTitle,
-  buildK12TextbookResourceReferenceText,
-  mergeK12TextbookResourcesIntoReferenceText,
-  resolveK12LessonPackMetadata,
-} from '@/lib/module-host/k12';
-import { getModuleById } from '@/lib/module-host/runtime';
+  buildEducationLessonPackTitle,
+  buildEducationResourceReferenceText,
+  getEducationModulePresets,
+  isEducationWorkbenchModuleId,
+  mergeEducationResourcesIntoReferenceText,
+  resolveEducationLessonPackMetadata,
+} from '@/lib/module-host/education';
 import {
   type K12ModulePresets,
   type K12TextbookResource,
@@ -61,7 +62,7 @@ function mergeSelectedTextbookResourcesIntoPdfText(
   }
 
   const locale = session.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US';
-  const resourceReference = buildK12TextbookResourceReferenceText({
+  const resourceReference = buildEducationResourceReferenceText({
     resources,
     locale,
   });
@@ -70,7 +71,7 @@ function mergeSelectedTextbookResourcesIntoPdfText(
   }
 
   const currentPdfText = session.pdfText ?? '';
-  const nextPdfText = mergeK12TextbookResourcesIntoReferenceText({
+  const nextPdfText = mergeEducationResourcesIntoReferenceText({
     baseText: currentPdfText,
     resources,
     locale,
@@ -191,11 +192,16 @@ async function parsePdfFileToAsset(args: {
 }
 
 function buildLessonPackMetadata(session: GenerationSessionState, locale: SupportedLocale) {
-  if (session.requirements.moduleId !== 'k12' || !session.requirements.k12) {
+  if (
+    !isEducationWorkbenchModuleId(session.requirements.moduleId) ||
+    !session.requirements.k12
+  ) {
     return undefined;
   }
 
-  const presets = getModuleById('k12').presets as K12ModulePresets | undefined;
+  const presets = getEducationModulePresets(session.requirements.moduleId) as
+    | K12ModulePresets
+    | undefined;
   if (!presets) {
     return {
       durationMinutes: session.requirements.k12.durationMinutes,
@@ -203,7 +209,7 @@ function buildLessonPackMetadata(session: GenerationSessionState, locale: Suppor
       exportStatus: 'not_exported' as const,
     };
   }
-  const resolved = resolveK12LessonPackMetadata({
+  const resolved = resolveEducationLessonPackMetadata({
     input: session.requirements.k12,
     presets,
     locale,
@@ -225,17 +231,19 @@ type PreviewAgent = {
 
 function buildPreviewStage(session: GenerationSessionState): Stage {
   const locale = (session.requirements.language === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale;
-  const k12Module = getModuleById('k12');
-  const k12Presets = k12Module.presets as K12ModulePresets | undefined;
+  const educationPresets = getEducationModulePresets(session.requirements.moduleId) as
+    | K12ModulePresets
+    | undefined;
   const requirement = session.requirements.requirement.trim();
+  const isEducationModule = isEducationWorkbenchModuleId(session.requirements.moduleId);
 
   return {
     id: nanoid(10),
     name:
-      session.requirements.moduleId === 'k12'
-        ? buildK12LessonPackTitle({
+      isEducationModule
+        ? buildEducationLessonPackTitle({
             input: session.requirements.k12,
-            presets: k12Presets,
+            presets: educationPresets,
             locale,
             requirement: session.requirements.requirement,
             supplementaryPdfName: session.pdfFileName,

@@ -69,7 +69,7 @@ export const k12ModuleManifest: BusinessModule = {
   enabled: true,
   capabilities: ['generation', 'validation', 'export', 'template', 'ui'],
   routes: {
-    home: '/',
+    home: '/k12',
     setup: '/settings',
     generator: '/generation-preview',
     preview: '/classroom',
@@ -89,8 +89,8 @@ export const k12ModuleManifest: BusinessModule = {
   promptContext: k12PromptContextProvider,
   home: {
     badge: {
-      'zh-CN': 'K12 业务模块',
-      'en-US': 'K12 Business Module',
+      'zh-CN': 'K12',
+      'en-US': 'K12',
     },
     slogan: {
       'zh-CN': '从教材章节出发，快速生成适合小学课堂的备课包',

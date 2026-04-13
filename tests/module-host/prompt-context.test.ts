@@ -4,11 +4,14 @@ import {
   buildSceneModuleContext,
   composePromptContext,
 } from '@/lib/module-host/prompt-context';
+import { getDefaultEducationStructuredInput } from '@/lib/module-host/education';
 import { getDefaultK12StructuredInput, syncK12StructuredInput } from '@/lib/module-host/k12';
 import type { K12ModulePresets } from '@/lib/module-host/types';
+import { adultEducationModuleManifest } from '@/modules/adult-education/manifest';
 import { k12ModuleManifest } from '@/modules/k12/manifest';
 
 const presets = k12ModuleManifest.presets as unknown as K12ModulePresets;
+const adultPresets = adultEducationModuleManifest.presets as unknown as K12ModulePresets;
 
 describe('prompt context composer', () => {
   it('composes hard rules, strategy, module, source, and stage context in a stable order', () => {
@@ -67,5 +70,19 @@ describe('prompt context composer', () => {
     expect(context).toContain('## Core Module Context');
     expect(context).toContain('expert-level terminology');
     expect(context).toContain('Keep quiz wording clear');
+  });
+
+  it('uses adult education module provider context for adult-education workflows', () => {
+    const context = buildOutlineModuleContext({
+      moduleId: 'adult-education',
+      language: 'zh-CN',
+      k12: getDefaultEducationStructuredInput(adultPresets),
+      promptPolicy: { level: 'professional' },
+    });
+
+    expect(context).toContain('## 成人教育模块上下文');
+    expect(context).toContain('成人学习、职业培训或继续教育场景');
+    expect(context).toContain('工作坊');
+    expect(context).not.toContain('小学教师备课场景');
   });
 });

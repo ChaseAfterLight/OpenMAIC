@@ -1,5 +1,5 @@
 export type SupportedLocale = 'zh-CN' | 'en-US';
-export type ModuleId = 'core' | 'k12';
+export type ModuleId = 'core' | 'k12' | 'adult-education';
 export type PromptPolicyLevel = 'light' | 'balanced' | 'professional' | 'expert';
 export type PromptPolicyStage = 'outline' | 'slide' | 'quiz' | 'interactive' | 'pbl';
 

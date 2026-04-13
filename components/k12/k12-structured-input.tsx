@@ -25,6 +25,7 @@ interface K12StructuredInputProps {
   compact?: boolean;
   className?: string;
   showTextbookSection?: boolean;
+  copyVariant?: 'k12' | 'adult-education';
 }
 
 const copy = {
@@ -67,6 +68,41 @@ const copy = {
   },
 } as const;
 
+function getStructuredInputCopy(
+  locale: SupportedLocale,
+  copyVariant: 'k12' | 'adult-education',
+) {
+  const base = copy[locale];
+  if (copyVariant !== 'adult-education') {
+    return base;
+  }
+
+  return {
+    ...base,
+    structured: locale === 'zh-CN' ? '培训参数' : 'Training setup',
+    textbook: locale === 'zh-CN' ? '课程资料' : 'Course materials',
+    lessonType: locale === 'zh-CN' ? '训练方式' : 'Delivery format',
+    edition: locale === 'zh-CN' ? '资料版本' : 'Resource edition',
+    volume: locale === 'zh-CN' ? '资料集' : 'Collection',
+    unit: locale === 'zh-CN' ? '模块' : 'Module',
+    chapter: locale === 'zh-CN' ? '章节主题' : 'Section',
+    noEdition:
+      locale === 'zh-CN'
+        ? '当前方向下还没有可用资料目录，可直接补充培训要求或上传参考资料。'
+        : 'No resource catalog is available for this focus area yet. You can still continue with trainer notes and uploaded materials.',
+    noSelection:
+      locale === 'zh-CN'
+        ? '选择课程资料是可选的；如果跳过，系统会只根据你的培训要求和上传资料生成。'
+        : 'Linking a course resource is optional. If you skip it, generation will rely on your training brief and uploaded materials.',
+    noChapter:
+      locale === 'zh-CN'
+        ? '当前资料还没有配置细分章节，可继续通过补充说明和资料生成。'
+        : 'This resource does not have section data yet. You can still continue with trainer notes and supporting files.',
+    chapterSummary: locale === 'zh-CN' ? '内容摘要' : 'Content summary',
+    chapterResources: locale === 'zh-CN' ? '配套资料' : 'Linked resources',
+  };
+}
+
 export function K12StructuredInputFields({
   presets,
   value,
@@ -75,8 +111,9 @@ export function K12StructuredInputFields({
   compact = false,
   className,
   showTextbookSection = true,
+  copyVariant = 'k12',
 }: K12StructuredInputProps) {
-  const text = copy[locale];
+  const text = getStructuredInputCopy(locale, copyVariant);
   const selection = getK12TextbookSelection(presets, value);
   const triggerClassName = compact
     ? 'h-10 rounded-2xl border-slate-200 bg-white text-xs shadow-sm dark:border-slate-800 dark:bg-slate-900'

@@ -52,6 +52,7 @@ import {
   saveStageData,
   saveLessonPackVersion,
 } from '@/lib/utils/stage-storage';
+import { getActiveModule } from '@/lib/module-host/runtime';
 
 const detailCopy = {
   'zh-CN': {
@@ -183,6 +184,38 @@ const detailCopy = {
   },
 } as const;
 
+function getDetailCopy(locale: 'zh-CN' | 'en-US', moduleId: string) {
+  const base = detailCopy[locale];
+  if (moduleId !== 'adult-education') {
+    return base;
+  }
+
+  return {
+    ...base,
+    lessonPlan: locale === 'zh-CN' ? '培训设计' : 'Training Plan',
+    practice: locale === 'zh-CN' ? '演练互动' : 'Practice',
+    metadata: locale === 'zh-CN' ? '培训信息' : 'Training metadata',
+    planSummary: locale === 'zh-CN' ? '培训概览' : 'Training summary',
+    gradeSubject: locale === 'zh-CN' ? '学习对象与方向' : 'Audience / Focus',
+    lessonTypeDuration: locale === 'zh-CN' ? '训练方式时长' : 'Format / duration',
+    textbookChapter: locale === 'zh-CN' ? '资源章节' : 'Resource section',
+    metadataCompletionHint:
+      locale === 'zh-CN'
+        ? '缺少信息时可直接补充，也可从已有培训包中选择。'
+        : 'Missing fields can be filled manually or selected from existing training packs.',
+    gradePlaceholder: locale === 'zh-CN' ? '填写或选择学习对象' : 'Type or pick audience',
+    subjectPlaceholder: locale === 'zh-CN' ? '填写或选择培训方向' : 'Type or pick focus area',
+    editionPlaceholder: locale === 'zh-CN' ? '填写或选择资料版本' : 'Type or pick resource edition',
+    unitPlaceholder: locale === 'zh-CN' ? '填写或选择模块' : 'Type or pick module',
+    chapterPlaceholder: locale === 'zh-CN' ? '填写或选择章节主题' : 'Type or pick section',
+    saveMetadata: locale === 'zh-CN' ? '保存培训信息' : 'Save training metadata',
+    savingMetadata: locale === 'zh-CN' ? '保存中...' : 'Saving...',
+    metadataSaved: locale === 'zh-CN' ? '培训信息已更新' : 'Training metadata updated',
+    metadataSaveFailed:
+      locale === 'zh-CN' ? '保存培训信息失败，请重试' : 'Failed to update training metadata',
+  };
+}
+
 function formatDate(locale: 'zh-CN' | 'en-US', timestamp: number) {
   return new Date(timestamp).toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US', {
     month: 'short',
@@ -226,7 +259,8 @@ export function LessonPackDetailClient() {
   const packId = params?.id as string;
   const { locale } = useI18n();
   const activeLocale = locale === 'zh-CN' ? 'zh-CN' : 'en-US';
-  const copy = detailCopy[activeLocale];
+  const activeModule = getActiveModule();
+  const copy = getDetailCopy(activeLocale, activeModule.id);
   const SlideSceneIcon = SCENE_TYPE_ICON.slide;
   const PracticeSceneIcon = SCENE_TYPE_ICON.interactive;
 

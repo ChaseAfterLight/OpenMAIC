@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 
 import { LessonPackDetailClient } from '@/components/workbench/lesson-pack-detail-client';
+import { isEducationWorkbenchModuleId } from '@/lib/module-host/education';
 import { getActiveModuleId } from '@/lib/module-host/runtime';
 import { requirePageRole } from '@/lib/server/auth-guards';
 
@@ -10,7 +11,7 @@ export default async function LessonPackDetailPage() {
     forbiddenPath: '/forbidden',
   });
 
-  if (getActiveModuleId() !== 'k12') {
+  if (!isEducationWorkbenchModuleId(getActiveModuleId())) {
     redirect('/');
   }
 

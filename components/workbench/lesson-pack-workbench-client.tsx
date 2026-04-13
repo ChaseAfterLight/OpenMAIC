@@ -166,6 +166,37 @@ const workbenchCopy = {
   },
 } as const;
 
+function getWorkbenchCopy(locale: SupportedLocale, moduleId: string) {
+  const base = workbenchCopy[locale];
+  if (moduleId !== 'adult-education') {
+    return base;
+  }
+
+  return {
+    ...base,
+    searchPlaceholder:
+      locale === 'zh-CN'
+        ? '搜索标题、资料版本、模块或章节主题...'
+        : 'Search by title, resource edition, module, or section...',
+    textbookPlaceholder:
+      locale === 'zh-CN' ? '全部资料与章节' : 'All resources and sections',
+    textbookClear:
+      locale === 'zh-CN' ? '清除资料筛选' : 'Clear resource filter',
+    textbookHint:
+      locale === 'zh-CN' ? '支持按资料目录任意层级筛选' : 'Filter by any level of the resource outline',
+    textbookEmpty:
+      locale === 'zh-CN' ? '当前没有可用的资料目录。' : 'No resource catalog is available yet.',
+    createTitle: locale === 'zh-CN' ? '新建培训任务' : 'Create Training Pack',
+    createHint:
+      locale === 'zh-CN'
+        ? '输入培训目标并生成后，将自动进入课堂编辑器。结束后也可继续在工作台里管理。'
+        : 'After generation, you will automatically enter the editor. You can always manage the training pack here later.',
+    myLibrary: locale === 'zh-CN' ? '我的培训包' : 'My Training Packs',
+    openPack: locale === 'zh-CN' ? '培训详情' : 'Training details',
+    textbookEntry: locale === 'zh-CN' ? '资源库' : 'Resources',
+  };
+}
+
 function formatTimestamp(timestamp: number, locale: SupportedLocale) {
   return new Date(timestamp).toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US', {
     month: 'short',
@@ -247,9 +278,12 @@ export function LessonPackWorkbenchClient() {
   const { locale, setLocale } = useI18n();
   const { theme, setTheme } = useTheme();
   const activeLocale = (locale === 'zh-CN' ? 'zh-CN' : 'en-US') as SupportedLocale;
-  const copy = workbenchCopy[activeLocale];
   const activeModule = getActiveModule();
+  const copy = getWorkbenchCopy(activeLocale, activeModule.id);
   const moduleBadge = resolveLocalizedText(activeModule.home.badge, activeLocale);
+  const moduleTitle = resolveLocalizedText(activeModule.metadata.title, activeLocale);
+  const moduleDescription = resolveLocalizedText(activeModule.metadata.description, activeLocale);
+  const resourceEntryLabel = copy.textbookEntry;
   const authUser = useAuthSessionStore((s) => s.user);
 
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
@@ -373,7 +407,7 @@ export function LessonPackWorkbenchClient() {
             <Sparkles className="size-4" />
           </div>
           <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
-            {copy.title}
+            {moduleTitle}
           </span>
           <Badge
             variant="secondary"
@@ -389,7 +423,7 @@ export function LessonPackWorkbenchClient() {
             size="sm"
             onClick={() => router.push(authUser?.role === 'admin' ? '/admin/textbooks' : '/textbooks')}
           >
-            {copy.textbookEntry}
+            {resourceEntryLabel}
           </Button>
           {authUser?.role === 'admin' ? (
             <Button variant="outline" size="sm" onClick={() => router.push('/admin/users')}>
@@ -450,7 +484,7 @@ export function LessonPackWorkbenchClient() {
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-4xl">
             {copy.myLibrary}
           </h1>
-          <p className="text-base text-slate-500 dark:text-slate-400">{copy.description}</p>
+          <p className="text-base text-slate-500 dark:text-slate-400">{moduleDescription}</p>
         </div>
 
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/60 bg-white/60 p-3 shadow-sm backdrop-blur-md dark:border-slate-800/60 dark:bg-slate-900/60 md:flex-row md:items-center md:justify-between">
@@ -530,7 +564,7 @@ export function LessonPackWorkbenchClient() {
               className="mt-4 rounded-xl bg-indigo-600 hover:bg-indigo-700"
             >
               <Plus className="mr-2 size-4" />
-              立即创建
+              {copy.createTitle}
             </Button>
           </div>
         ) : (

@@ -88,10 +88,12 @@ interface TextbookLibraryModalProps {
   presets?: K12ModulePresets;
   value?: K12StructuredInput;
   locale?: SupportedLocale;
+  copyVariant?: 'k12' | 'adult-education';
   onSelect: (selection: TextbookSelection) => void;
 }
 
 const DEFAULT_LOCALE: SupportedLocale = 'zh-CN';
+type ResourceLibraryCopyVariant = 'k12' | 'adult-education';
 
 function getBookGradient(id: string) {
   const gradients = [
@@ -274,14 +276,76 @@ function sourceLabel(locale: SupportedLocale, source: 'all' | 'official' | 'pers
   return '全部';
 }
 
+function getLibraryCopy(locale: SupportedLocale, copyVariant: ResourceLibraryCopyVariant) {
+  if (copyVariant !== 'adult-education') {
+    return {
+      title: locale === 'en-US' ? 'Textbook Resource Center' : '教材资源中心',
+      searchPlaceholder:
+        locale === 'en-US'
+          ? 'Search textbooks, editions, chapters...'
+          : '搜索教材名称、版本、章节...',
+      emptyText: locale === 'en-US' ? 'No textbooks found' : '没有找到符合条件的教材',
+      subjectLabel: locale === 'en-US' ? 'Subject' : '学科',
+      gradeLabel: locale === 'en-US' ? 'Grade' : '年级',
+      publisherLabel: locale === 'en-US' ? 'Publisher' : '出版社',
+      editionLabel: locale === 'en-US' ? 'Edition' : '版本',
+      loadingLibraries:
+        locale === 'en-US' ? 'Loading textbook libraries...' : '正在加载教材库...',
+      loadingDetails:
+        locale === 'en-US' ? 'Loading textbook details...' : '正在加载教材详情...',
+      chooseSection: locale === 'en-US' ? 'Choose chapter' : '选择章节',
+      current: locale === 'en-US' ? 'Current' : '当前',
+      unitCount: locale === 'en-US' ? 'units' : '单元',
+      chapterResources: locale === 'en-US' ? 'Chapter resources' : '章节资料',
+      chapterResourcesHint:
+        locale === 'en-US'
+          ? 'Download the attached source documents directly'
+          : '可直接下载该章节附带的源文件',
+      pickLeftFirst:
+        locale === 'en-US' ? 'Choose a textbook on the left first' : '请先在左侧选择一本教材',
+      cardMetaFallback: locale === 'en-US' ? 'Publisher' : '出版社',
+    };
+  }
+
+  return {
+    title: locale === 'en-US' ? 'Course Resource Library' : '课程资料库',
+    searchPlaceholder:
+      locale === 'en-US'
+        ? 'Search resources, editions, modules, or sections...'
+        : '搜索资料名称、版本、模块或章节主题...',
+    emptyText: locale === 'en-US' ? 'No resources found' : '没有找到符合条件的资料',
+    subjectLabel: locale === 'en-US' ? 'Focus' : '方向',
+    gradeLabel: locale === 'en-US' ? 'Audience' : '对象',
+    publisherLabel: locale === 'en-US' ? 'Provider' : '机构',
+    editionLabel: locale === 'en-US' ? 'Edition' : '资料版本',
+    loadingLibraries:
+      locale === 'en-US' ? 'Loading resource libraries...' : '正在加载资料库...',
+    loadingDetails:
+      locale === 'en-US' ? 'Loading resource details...' : '正在加载资料详情...',
+    chooseSection: locale === 'en-US' ? 'Choose section' : '选择章节主题',
+    current: locale === 'en-US' ? 'Current' : '当前',
+    unitCount: locale === 'en-US' ? 'modules' : '模块',
+    chapterResources: locale === 'en-US' ? 'Linked resources' : '配套资料',
+    chapterResourcesHint:
+      locale === 'en-US'
+        ? 'Download the linked supporting materials directly'
+        : '可直接下载该主题附带的参考资料',
+    pickLeftFirst:
+      locale === 'en-US' ? 'Choose a resource on the left first' : '请先在左侧选择一份资料',
+    cardMetaFallback: locale === 'en-US' ? 'Provider' : '机构',
+  };
+}
+
 export function TextbookLibraryModal({
   open,
   onOpenChange,
   presets: _presets,
   value,
   locale = DEFAULT_LOCALE,
+  copyVariant = 'k12',
   onSelect,
 }: TextbookLibraryModalProps) {
+  const text = getLibraryCopy(locale, copyVariant);
   const [activeBook, setActiveBook] = useState<TextbookCard | null>(null);
   const [activeChapterPath, setActiveChapterPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -537,16 +601,13 @@ export function TextbookLibraryModal({
     setSearchQuery('');
   };
 
-  const emptyText =
-    locale === 'en-US' ? 'No textbooks found' : '没有找到符合条件的教材';
-
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className="max-w-[1100px] h-[85vh] p-0 flex flex-col overflow-hidden rounded-3xl bg-slate-50 dark:bg-slate-950 border-slate-200/60 dark:border-slate-800/60 shadow-2xl">
         <DialogHeader className="px-6 py-4 border-b border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-slate-900 flex flex-row items-center justify-between sticky top-0 z-10">
           <DialogTitle className="flex items-center gap-2 text-lg font-bold">
             <BookOpen className="size-5 text-indigo-500" />
-            {locale === 'en-US' ? 'Textbook Resource Center' : '教材资源中心'}
+            {text.title}
           </DialogTitle>
 
           <div className="flex items-center gap-4">
@@ -555,11 +616,7 @@ export function TextbookLibraryModal({
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={
-                  locale === 'en-US'
-                    ? 'Search textbooks, editions, chapters...'
-                    : '搜索教材名称、版本、章节...'
-                }
+                placeholder={text.searchPlaceholder}
                 className="h-9 pl-9 rounded-full bg-slate-100 border-transparent dark:bg-slate-800 focus-visible:bg-white transition-colors"
               />
             </div>
@@ -601,7 +658,7 @@ export function TextbookLibraryModal({
 
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium text-slate-500 dark:text-slate-400 w-16">
-                    {locale === 'en-US' ? 'Subject' : '学科'}
+                    {text.subjectLabel}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {subjectOptions.map((subject) => (
@@ -623,7 +680,7 @@ export function TextbookLibraryModal({
 
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium text-slate-500 dark:text-slate-400 w-16">
-                    {locale === 'en-US' ? 'Grade' : '年级'}
+                    {text.gradeLabel}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {gradeOptions.map((grade) => (
@@ -645,7 +702,7 @@ export function TextbookLibraryModal({
 
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium text-slate-500 dark:text-slate-400 w-16">
-                    {locale === 'en-US' ? 'Publisher' : '出版社'}
+                    {text.publisherLabel}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {publisherOptions.map((publisher) => (
@@ -667,7 +724,7 @@ export function TextbookLibraryModal({
 
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium text-slate-500 dark:text-slate-400 w-16">
-                    {locale === 'en-US' ? 'Edition' : '版本'}
+                    {text.editionLabel}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {editionOptions.map((edition) => (
@@ -693,9 +750,7 @@ export function TextbookLibraryModal({
               {isInitialLoading ? (
                 <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
                   <Loader2 className="size-5 animate-spin" />
-                  <p className="text-sm">
-                    {locale === 'en-US' ? 'Loading textbook libraries...' : '正在加载教材库...'}
-                  </p>
+                  <p className="text-sm">{text.loadingLibraries}</p>
                 </div>
               ) : filteredBooks.length > 0 ? (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
@@ -737,7 +792,7 @@ export function TextbookLibraryModal({
                               variant="secondary"
                               className="bg-white/20 hover:bg-white/30 text-white backdrop-blur-md border-0 self-start text-[10px] shadow-sm"
                             >
-                              {book.publisher || (locale === 'en-US' ? 'Publisher' : '出版社')}
+                              {book.publisher || text.cardMetaFallback}
                             </Badge>
                             <div className="space-y-1 mt-auto mb-4">
                               <h4 className="font-bold text-base leading-tight drop-shadow-md line-clamp-3">
@@ -770,7 +825,7 @@ export function TextbookLibraryModal({
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-3">
                   <FilterX className="size-10 opacity-30" />
-                  <p className="text-sm">{emptyText}</p>
+                  <p className="text-sm">{text.emptyText}</p>
                   <Button variant="link" onClick={handleClearFilters}>
                     {locale === 'en-US' ? 'Clear filters' : '清除所有筛选'}
                   </Button>
@@ -783,9 +838,7 @@ export function TextbookLibraryModal({
             {isInitialLoading ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 bg-slate-50/30 dark:bg-slate-900/30">
                 <Loader2 className="size-5 animate-spin" />
-                <p className="text-sm">
-                  {locale === 'en-US' ? 'Loading textbook details...' : '正在加载教材详情...'}
-                </p>
+                <p className="text-sm">{text.loadingDetails}</p>
               </div>
             ) : activeBook ? (
               <>
@@ -809,10 +862,10 @@ export function TextbookLibraryModal({
                     <div className="min-w-0 flex-1">
                       <h3 className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2">
                         <Book className="size-4 text-indigo-500" />
-                        {locale === 'en-US' ? 'Choose chapter' : '选择章节'}
+                        {text.chooseSection}
                       </h3>
                       <p className="text-sm text-slate-500 mt-1 line-clamp-2">
-                        {locale === 'en-US' ? 'Current' : '当前'}：{activeBook.name} ({activeBook.edition})
+                        {text.current}：{activeBook.name} ({activeBook.edition})
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {activeBook.publisher ? (
@@ -827,7 +880,7 @@ export function TextbookLibraryModal({
                           variant="secondary"
                           className="text-[10px] px-1.5 py-0 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-none font-normal"
                         >
-                          {activeBook.units.length} {locale === 'en-US' ? 'units' : '单元'}
+                          {activeBook.units.length} {text.unitCount}
                         </Badge>
                       </div>
                     </div>
@@ -880,12 +933,10 @@ export function TextbookLibraryModal({
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <h4 className="text-sm font-semibold text-slate-800">
-                            {locale === 'en-US' ? 'Chapter resources' : '章节资料'}
+                            {text.chapterResources}
                           </h4>
                           <p className="mt-1 text-xs text-slate-500">
-                            {locale === 'en-US'
-                              ? 'Download the attached source documents directly'
-                              : '可直接下载该章节附带的源文件'}
+                            {text.chapterResourcesHint}
                           </p>
                         </div>
                         <Badge
@@ -939,11 +990,7 @@ export function TextbookLibraryModal({
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-slate-50/30 dark:bg-slate-900/30">
                 <BookOpen className="size-12 opacity-20 mb-4" />
-                <p className="text-sm">
-                  {locale === 'en-US'
-                    ? 'Choose a textbook on the left first'
-                    : '请先在左侧选择一本教材'}
-                </p>
+                <p className="text-sm">{text.pickLeftFirst}</p>
               </div>
             )}
           </div>

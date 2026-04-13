@@ -1,6 +1,10 @@
 import type { ModuleId } from '@/lib/module-host/types';
 
-export const AVAILABLE_MODULE_IDS = ['core', 'k12'] as const satisfies readonly ModuleId[];
+export const AVAILABLE_MODULE_IDS = [
+  'core',
+  'k12',
+  'adult-education',
+] as const satisfies readonly ModuleId[];
 
 function isModuleId(value: string): value is ModuleId {
   return (AVAILABLE_MODULE_IDS as readonly string[]).includes(value);

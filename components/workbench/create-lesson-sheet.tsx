@@ -33,13 +33,14 @@ import {
 
 import { getActiveModule } from '@/lib/module-host/runtime';
 import {
-  buildK12RequirementText,
-  getDefaultK12StructuredInput,
-} from '@/lib/module-host/k12';
+  buildEducationRequirementText,
+  getDefaultEducationStructuredInput,
+  getEducationModulePresets,
+  isEducationWorkbenchModuleId,
+} from '@/lib/module-host/education';
 import {
   resolveLocalizedList,
   resolveLocalizedText,
-  type K12ModulePresets,
   type K12StructuredInput,
   type PromptPolicyLevel,
   type SupportedLocale,
@@ -132,6 +133,34 @@ const sheetCopy = {
   },
 } as const;
 
+function getSheetCopy(locale: SupportedLocale, moduleId: string) {
+  const base = sheetCopy[locale];
+  if (moduleId !== 'adult-education') {
+    return base;
+  }
+
+  return {
+    ...base,
+    libraryTitle: locale === 'zh-CN' ? '关联课程资料与章节' : 'Link course materials',
+    libraryHint:
+      locale === 'zh-CN'
+        ? '从资源库里挑一份课程资料，作为这次培训的内容锚点。'
+        : 'Pick a resource from the library as the content anchor for this training pack.',
+    libraryPlaceholder:
+      locale === 'zh-CN'
+        ? '从资源中心选择课程资料与章节...'
+        : 'Choose a course resource and section from the library...',
+    libraryChapterLabel: locale === 'zh-CN' ? '已选内容：' : 'Selected section:',
+    libraryNoChapter: locale === 'zh-CN' ? '尚未选择章节主题' : 'No section selected yet',
+    promptTitle: locale === 'zh-CN' ? '你想如何组织这次培训？' : 'How should this training be delivered?',
+    k12Title: locale === 'zh-CN' ? '基础培训信息' : 'Core training details',
+    k12Hint:
+      locale === 'zh-CN'
+        ? '这里保留训练方式和时长，资料章节已经放在上方。'
+        : 'Keep the training format and duration here. The linked resource section is handled above.',
+  };
+}
+
 export function CreateLessonSheet({
   open,
   onOpenChange,
@@ -141,27 +170,27 @@ export function CreateLessonSheet({
   const router = useRouter();
 
   const activeModule = getActiveModule();
-  const isK12Module = activeModule.id === 'k12';
-  const k12Presets = (isK12Module ? activeModule.presets : undefined) as
-    | K12ModulePresets
-    | undefined;
+  const isEducationModule = isEducationWorkbenchModuleId(activeModule.id);
+  const educationPresets = getEducationModulePresets(activeModule.id);
   const modulePlaceholder = resolveLocalizedText(
     activeModule.home.requirementPlaceholder,
     activeLocale,
   );
   const moduleSubmitLabel = resolveLocalizedText(activeModule.home.submitLabel, activeLocale);
   const quickPrompts = resolveLocalizedList(activeModule.home.quickPrompts, activeLocale);
-  const text = sheetCopy[activeLocale];
+  const text = getSheetCopy(activeLocale, activeModule.id);
+  const copyVariant = activeModule.id === 'adult-education' ? 'adult-education' : 'k12';
+  const isAdultEducationModule = activeModule.id === 'adult-education';
 
   const currentModelId = useSettingsStore((s) => s.modelId);
   const [form, setForm] = useState<FormState>(initialFormState);
-  const [k12Form, setK12Form] = useState<K12StructuredInput>(() =>
-    getDefaultK12StructuredInput(k12Presets, { includeGradeAndSubject: false }),
+  const [educationForm, setEducationForm] = useState<K12StructuredInput>(() =>
+    getDefaultEducationStructuredInput(educationPresets, { includeGradeAndSubject: false }),
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [selectedTextbook, setSelectedTextbook] = useState<Textbook | null>(null);
-  const [selectedChapterTitle, setSelectedChapterTitle] = useState('');
+  const [selectedResource, setSelectedResource] = useState<Textbook | null>(null);
+  const [selectedSectionTitle, setSelectedSectionTitle] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -207,7 +236,7 @@ export function CreateLessonSheet({
       setError(activeLocale === 'zh-CN' ? '请先完成模型配置' : 'Please configure a model first');
       return;
     }
-    if (!isK12Module && !form.requirement.trim()) {
+    if (!isEducationModule && !form.requirement.trim()) {
       setError(activeLocale === 'zh-CN' ? '请输入课堂需求' : 'Please describe the lesson');
       return;
     }
@@ -217,26 +246,45 @@ export function CreateLessonSheet({
 
     try {
       const userProfile = useUserProfileStore.getState();
-      const textbookContext = selectedTextbook
+      const resourceContext = selectedResource
         ? [
-            `${activeLocale === 'zh-CN' ? '关联教材' : 'Linked textbook'}：${selectedTextbook.name}`,
-            `${activeLocale === 'zh-CN' ? '章节' : 'Chapter'}：${
-              selectedChapterTitle ||
-              (activeLocale === 'zh-CN' ? '尚未选择章节' : 'No chapter selected yet')
+            `${activeLocale === 'zh-CN'
+              ? isAdultEducationModule
+                ? '关联资料'
+                : '关联教材'
+              : isAdultEducationModule
+                ? 'Linked resource'
+                : 'Linked textbook'}：${selectedResource.name}`,
+            `${activeLocale === 'zh-CN'
+              ? isAdultEducationModule
+                ? '章节主题'
+                : '章节'
+              : isAdultEducationModule
+                ? 'Section'
+                : 'Chapter'}：${
+              selectedSectionTitle ||
+              (activeLocale === 'zh-CN'
+                ? isAdultEducationModule
+                  ? '尚未选择章节主题'
+                  : '尚未选择章节'
+                : isAdultEducationModule
+                  ? 'No section selected yet'
+                  : 'No chapter selected yet')
             }`,
           ].join('\n')
         : '';
       const requirements: UserRequirements = {
         moduleId: activeModule.id,
-        k12: isK12Module ? k12Form : undefined,
+        k12: isEducationModule ? educationForm : undefined,
         promptPolicy: { level: form.promptPolicyLevel },
         requirement:
-          isK12Module && k12Presets
-            ? buildK12RequirementText({
-                input: k12Form,
-                presets: k12Presets,
+          isEducationModule && educationPresets
+            ? buildEducationRequirementText({
+                moduleId: activeModule.id,
+                input: educationForm,
+                presets: educationPresets,
                 locale: activeLocale,
-                freeform: [textbookContext, form.requirement].filter(Boolean).join('\n'),
+                freeform: [resourceContext, form.requirement].filter(Boolean).join('\n'),
                 supplementaryPdfName: form.pdfFile?.name,
               })
             : form.requirement.trim(),
@@ -317,7 +365,7 @@ export function CreateLessonSheet({
 
           <div className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(79,70,229,0.07),_transparent_44%)] px-6 py-6">
             <div className="space-y-6">
-              {isK12Module && k12Presets ? (
+              {isEducationModule && educationPresets ? (
                 <section className="space-y-3">
                   <div className="flex items-start gap-3">
                     <div className="mt-0.5 h-10 w-1.5 rounded-full bg-emerald-500" />
@@ -343,23 +391,23 @@ export function CreateLessonSheet({
                     }}
                     className="group flex cursor-pointer items-center justify-between gap-4 rounded-[24px] border border-dashed border-slate-200/90 bg-slate-50/80 p-4 text-left transition-all hover:border-indigo-300 hover:bg-indigo-50/40 dark:border-slate-700 dark:bg-slate-900/50 dark:hover:border-indigo-500/40 dark:hover:bg-indigo-500/10"
                   >
-                    {selectedTextbook ? (
+                    {selectedResource ? (
                       <div className="flex min-w-0 items-center gap-4">
                         <div className="flex size-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 ring-1 ring-indigo-500/10 dark:bg-indigo-500/20 dark:text-indigo-300">
                           <BookOpen className="size-5" />
                         </div>
                         <div className="min-w-0">
                           <h4 className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                            {selectedTextbook.name}
+                            {selectedResource.name}
                           </h4>
                           <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
-                            {selectedTextbook.edition}
+                            {selectedResource.edition}
                           </p>
                           <p className="mt-1.5 truncate text-xs text-slate-500 dark:text-slate-400">
                             <span className="font-medium text-slate-600 dark:text-slate-300">
                               {text.libraryChapterLabel}
                             </span>{' '}
-                            {selectedChapterTitle || text.libraryNoChapter}
+                            {selectedSectionTitle || text.libraryNoChapter}
                           </p>
                         </div>
                       </div>
@@ -380,7 +428,7 @@ export function CreateLessonSheet({
                     )}
 
                     <div className="flex shrink-0 items-center gap-1 rounded-xl bg-white/80 px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition-colors group-hover:bg-white group-hover:text-indigo-600 dark:bg-slate-900/60 dark:text-slate-300 dark:group-hover:bg-slate-800 dark:group-hover:text-indigo-300">
-                      {selectedTextbook ? text.libraryChange : text.libraryPick}
+                      {selectedResource ? text.libraryChange : text.libraryPick}
                       <ChevronRight className="size-3.5" />
                     </div>
                   </div>
@@ -442,7 +490,7 @@ export function CreateLessonSheet({
                 ) : null}
               </section>
 
-              {isK12Module && k12Presets ? (
+              {isEducationModule && educationPresets ? (
                 <section className="space-y-3">
                   <div className="flex items-start gap-3">
                     <div className="mt-0.5 h-10 w-1.5 rounded-full bg-cyan-500" />
@@ -458,12 +506,13 @@ export function CreateLessonSheet({
 
                   <div className="rounded-[28px] bg-slate-50/80 p-4 ring-1 ring-slate-200/70 dark:bg-slate-900/50 dark:ring-slate-800/70">
                     <K12StructuredInputFields
-                      presets={k12Presets}
-                      value={k12Form}
+                      presets={educationPresets}
+                      value={educationForm}
                       locale={activeLocale}
-                      onChange={setK12Form}
+                      onChange={setEducationForm}
                       compact
                       showTextbookSection={false}
+                      copyVariant={copyVariant}
                     />
                   </div>
                 </section>
@@ -555,15 +604,16 @@ export function CreateLessonSheet({
       <TextbookLibraryModal
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
-        presets={k12Presets}
-        value={k12Form}
+        presets={educationPresets}
+        value={educationForm}
         locale={activeLocale}
+        copyVariant={copyVariant}
         onSelect={(selection) => {
-          setSelectedTextbook(selection.textbook);
-          setSelectedChapterTitle(
+          setSelectedResource(selection.textbook);
+          setSelectedSectionTitle(
             selection.chapterTitlePath.join(' · ') || selection.chapterPath.join(' · '),
           );
-          setK12Form((current) => ({
+          setEducationForm((current) => ({
             ...current,
             textbookSource: selection.textbook.source,
             textbookLibraryId: selection.libraryId,

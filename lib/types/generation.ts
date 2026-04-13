@@ -10,6 +10,7 @@ import type { MediaGenerationRequest } from '@/lib/media/types';
 import type {
   K12StructuredInput,
   K12TextbookResource,
+  ModuleId,
   PromptPolicy,
 } from '@/lib/module-host/types';
 
@@ -69,8 +70,8 @@ export interface UploadedDocument {
  * All details (topic, duration, style, etc.) should be included in the requirement text
  */
 export interface UserRequirements {
-  moduleId?: 'core' | 'k12'; // Active business module for prompt and UI selection
-  k12?: K12StructuredInput; // Structured K12 settings when active business module is k12
+  moduleId?: ModuleId; // Active business module for prompt and UI selection
+  k12?: K12StructuredInput; // Structured education-workbench settings for K12-compatible modules
   promptPolicy?: PromptPolicy; // User-selected prompt professional level and strategy defaults
   requirement: string; // Single free-form text for all user input
   language: 'zh-CN' | 'en-US'; // Course language - critical for generation
@@ -122,7 +123,7 @@ export interface LegacyUserRequirements {
  */
 export interface SceneOutline {
   id: string;
-  moduleId?: 'core' | 'k12';
+  moduleId?: ModuleId;
   k12?: K12StructuredInput;
   promptPolicy?: PromptPolicy;
   type: 'slide' | 'quiz' | 'interactive' | 'pbl';
