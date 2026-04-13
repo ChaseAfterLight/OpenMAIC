@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
 import { AgentBar } from '@/components/agent/agent-bar';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { GenerationToolbar } from '@/components/generation/generation-toolbar';
-import { K12StructuredInputFields } from '@/components/k12/k12-structured-input';
+import { EducationStructuredInputFields } from '@/components/education/education-structured-input';
 import { SettingsDialog } from '@/components/settings';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,9 +20,9 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  TextbookLibraryModal,
+  ResourceLibraryModal,
   type Textbook,
-} from '@/components/workbench/TextbookLibraryModal';
+} from '@/components/workbench/resource-library-modal';
 import {
   Sheet,
   SheetContent,
@@ -505,7 +505,7 @@ export function CreateLessonSheet({
                   </div>
 
                   <div className="rounded-[28px] bg-slate-50/80 p-4 ring-1 ring-slate-200/70 dark:bg-slate-900/50 dark:ring-slate-800/70">
-                    <K12StructuredInputFields
+                    <EducationStructuredInputFields
                       presets={educationPresets}
                       value={educationForm}
                       locale={activeLocale}
@@ -601,7 +601,7 @@ export function CreateLessonSheet({
         </SheetContent>
       </Sheet>
 
-      <TextbookLibraryModal
+      <ResourceLibraryModal
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
         presets={educationPresets}

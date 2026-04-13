@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterTextbookCards,
   type TextbookCard,
-} from '@/components/workbench/TextbookLibraryModal';
+} from '@/components/workbench/resource-library-modal';
 
 const cards: TextbookCard[] = [
   {
@@ -69,7 +69,7 @@ const cards: TextbookCard[] = [
   },
 ];
 
-describe('textbook library modal filters', () => {
+describe('resource library modal filters', () => {
   it('filters textbook cards by source, publisher, grade, and search query', () => {
     const filtered = filterTextbookCards(cards, {
       searchQuery: '大数',

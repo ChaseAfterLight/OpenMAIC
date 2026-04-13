@@ -10,7 +10,7 @@ import type { TextbookChapterTreeNode } from '@/lib/utils/textbook-chapter-tree'
 
 export type ChapterNode = TextbookChapterTreeNode;
 
-interface TextbookChapterSelectorProps {
+interface ResourceChapterSelectorProps {
   treeData: ChapterNode[];
   value: string[];
   onChange: (value: string[]) => void;
@@ -39,7 +39,7 @@ function resolveDisplayText(treeData: ChapterNode[], value: string[]) {
   return labels.length > 0 ? labels.join(' · ') : null;
 }
 
-export function TextbookChapterSelector({
+export function ResourceChapterSelector({
   treeData,
   value,
   onChange,
@@ -49,7 +49,7 @@ export function TextbookChapterSelector({
   clearLabel = '清除当前筛选',
   helperText = '支持选择任意层级',
   emptyLabel = '暂无可用教材目录',
-}: TextbookChapterSelectorProps) {
+}: ResourceChapterSelectorProps) {
   const [open, setOpen] = useState(false);
   const [activePath, setActivePath] = useState<string[]>(value);
   const contentId = useId();

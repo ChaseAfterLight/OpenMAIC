@@ -82,7 +82,7 @@ export interface TextbookCardFilters {
   editionFilter: string;
 }
 
-interface TextbookLibraryModalProps {
+interface ResourceLibraryModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   presets?: K12ModulePresets;
@@ -336,7 +336,7 @@ function getLibraryCopy(locale: SupportedLocale, copyVariant: ResourceLibraryCop
   };
 }
 
-export function TextbookLibraryModal({
+export function ResourceLibraryModal({
   open,
   onOpenChange,
   presets: _presets,
@@ -344,7 +344,7 @@ export function TextbookLibraryModal({
   locale = DEFAULT_LOCALE,
   copyVariant = 'k12',
   onSelect,
-}: TextbookLibraryModalProps) {
+}: ResourceLibraryModalProps) {
   const text = getLibraryCopy(locale, copyVariant);
   const [activeBook, setActiveBook] = useState<TextbookCard | null>(null);
   const [activeChapterPath, setActiveChapterPath] = useState<string[]>([]);

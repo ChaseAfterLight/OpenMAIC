@@ -44,7 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { TextbookChapterSelector } from '@/components/ui/textbook-chapter-selector';
+import { ResourceChapterSelector } from '@/components/ui/resource-chapter-selector';
 import { ThumbnailSlide } from '@/components/slide-renderer/components/ThumbnailSlide';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useTheme } from '@/lib/hooks/use-theme';
@@ -501,7 +501,7 @@ export function LessonPackWorkbenchClient() {
           <div className="flex flex-wrap items-center gap-3">
             {isHydrated ? (
               <>
-                <TextbookChapterSelector
+                <ResourceChapterSelector
                   treeData={chapterTreeData}
                   value={chapterPath}
                   onChange={setChapterPath}

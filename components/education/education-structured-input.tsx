@@ -17,7 +17,7 @@ import {
   type SupportedLocale,
 } from '@/lib/module-host/types';
 
-interface K12StructuredInputProps {
+interface EducationStructuredInputProps {
   presets: K12ModulePresets;
   value: K12StructuredInput;
   locale: SupportedLocale;
@@ -103,7 +103,7 @@ function getStructuredInputCopy(
   };
 }
 
-export function K12StructuredInputFields({
+export function EducationStructuredInputFields({
   presets,
   value,
   locale,
@@ -112,7 +112,7 @@ export function K12StructuredInputFields({
   className,
   showTextbookSection = true,
   copyVariant = 'k12',
-}: K12StructuredInputProps) {
+}: EducationStructuredInputProps) {
   const text = getStructuredInputCopy(locale, copyVariant);
   const selection = getK12TextbookSelection(presets, value);
   const triggerClassName = compact
