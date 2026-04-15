@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowUpRight, BookOpen, FileOutput, Library, Monitor, MoreHorizontal, Pencil, Plus } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -56,6 +56,7 @@ interface WorkbenchLibraryGridProps {
   copy: WorkbenchLibraryCopy;
   locale: SupportedLocale;
   search: string;
+  chapterSelector: ReactNode;
   statusFilter: string;
   sortBy: 'recent' | 'oldest';
   groupedClassrooms: GroupedClassrooms[];
@@ -145,6 +146,7 @@ export function WorkbenchLibraryGrid({
   copy,
   locale,
   search,
+  chapterSelector,
   statusFilter,
   sortBy,
   groupedClassrooms,
@@ -163,39 +165,41 @@ export function WorkbenchLibraryGrid({
 }: WorkbenchLibraryGridProps) {
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <div className="flex flex-col gap-4 rounded-[28px] border border-slate-200/70 bg-white/85 p-4 shadow-sm backdrop-blur-xl dark:border-slate-800/70 dark:bg-slate-950/85 md:flex-row md:items-center md:justify-between">
-        <div className="relative min-w-0 flex-1">
-          <BookOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={copy.searchPlaceholder}
-            className="h-11 rounded-2xl border-slate-200 bg-white/85 pl-9 dark:border-slate-800 dark:bg-slate-950/80"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-            <SelectTrigger className="h-11 w-[130px] rounded-2xl border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80">
-              <SelectValue placeholder={copy.status} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{copy.all}</SelectItem>
-              <SelectItem value="draft">{copy.draft}</SelectItem>
-              <SelectItem value="in_progress">{copy.inProgress}</SelectItem>
-              <SelectItem value="ready">{copy.ready}</SelectItem>
-              <SelectItem value="archived">{copy.archived}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={sortBy} onValueChange={(value) => onSortByChange(value as 'recent' | 'oldest')}>
-            <SelectTrigger className="h-11 w-[140px] rounded-2xl border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80">
-              <SelectValue placeholder={copy.sort} />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectItem value="recent">{copy.recent}</SelectItem>
-              <SelectItem value="oldest">{copy.oldest}</SelectItem>
-            </SelectContent>
-          </Select>
+      <div className="flex flex-col gap-3 rounded-[28px] border border-slate-200/70 bg-white/85 p-4 shadow-sm backdrop-blur-xl dark:border-slate-800/70 dark:bg-slate-950/85">
+        <div className="flex flex-col gap-3 xl:flex-row xl:flex-nowrap xl:items-center">
+          <div className="relative min-w-0 flex-[1.05]">
+            <BookOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={copy.searchPlaceholder}
+              className="h-11 rounded-2xl border-slate-200 bg-white/85 pl-9 dark:border-slate-800 dark:bg-slate-950/80"
+            />
+          </div>
+          <div className="min-w-0 xl:w-[340px] xl:max-w-[380px]">{chapterSelector}</div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2 xl:ml-auto xl:flex-nowrap">
+            <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+              <SelectTrigger className="h-10 w-[92px] rounded-2xl border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80">
+                <SelectValue placeholder={copy.status} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{copy.all}</SelectItem>
+                <SelectItem value="draft">{copy.draft}</SelectItem>
+                <SelectItem value="in_progress">{copy.inProgress}</SelectItem>
+                <SelectItem value="ready">{copy.ready}</SelectItem>
+                <SelectItem value="archived">{copy.archived}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={sortBy} onValueChange={(value) => onSortByChange(value as 'recent' | 'oldest')}>
+              <SelectTrigger className="h-10 w-[100px] rounded-2xl border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80">
+                <SelectValue placeholder={copy.sort} />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="recent">{copy.recent}</SelectItem>
+                <SelectItem value="oldest">{copy.oldest}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -214,7 +218,7 @@ export function WorkbenchLibraryGrid({
         <div className="flex flex-col gap-10 pb-12">
           {groupedClassrooms.map(({ groupKey, items }) => (
             <section key={groupKey} className="flex flex-col">
-              <div className="sticky top-[72px] z-10 -mx-2 mb-4 flex items-center gap-3 rounded-3xl bg-slate-50/95 px-2 py-3 backdrop-blur dark:bg-slate-950/95">
+              <div className="-mx-2 mb-4 flex items-center gap-3 rounded-3xl bg-slate-50/95 px-2 py-3 backdrop-blur dark:bg-slate-950/95">
                 <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10">
                   <Library className="size-4 text-indigo-600 dark:text-indigo-400" />
                 </div>

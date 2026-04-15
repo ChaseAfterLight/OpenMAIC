@@ -75,14 +75,22 @@ export function WorkbenchSidebarShell({
             collapsed ? 'w-[88px]' : 'w-[300px]',
           )}
         >
-          <div className="flex items-center justify-between border-b border-slate-200/70 px-4 py-3 dark:border-slate-800/70">
+          <div
+            className={cn(
+              'flex items-center border-b border-slate-200/70 px-4 py-3 dark:border-slate-800/70',
+              collapsed ? 'justify-center' : 'justify-between',
+            )}
+          >
             <span className={cn('text-xs font-semibold uppercase tracking-[0.24em] text-slate-400', collapsed && 'sr-only')}>
               Workbench
             </span>
             <Button
               variant="ghost"
               size="icon"
-              className="size-9 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+              className={cn(
+                'size-9 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100',
+                collapsed && 'mx-auto',
+              )}
               onClick={onToggleCollapsed}
               aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             >

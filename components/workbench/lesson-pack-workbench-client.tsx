@@ -17,8 +17,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { ResourceChapterSelector } from '@/components/ui/resource-chapter-selector';
 import { CreateLessonSheet } from '@/components/workbench/create-lesson-sheet';
-import { WorkbenchChapterFilterPanel } from '@/components/workbench/workbench-chapter-filter-panel';
 import { WorkbenchLibraryGrid } from '@/components/workbench/workbench-library-grid';
 import { WorkbenchSidebarShell } from '@/components/workbench/workbench-sidebar-shell';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -54,7 +54,10 @@ const workbenchCopy = {
     description: '管理所有的教案与课件资产。',
     filters: '章节筛选',
     searchPlaceholder: '搜索标题、教材版本或章节...',
+    textbookPlaceholder: '全部教材与章节',
+    textbookConfirm: '确认选择',
     textbookClear: '清除筛选',
+    textbookHint: '支持选择任意层级',
     textbookEmpty: '当前没有可用的教材目录。',
     status: '状态',
     sort: '排序',
@@ -94,7 +97,10 @@ const workbenchCopy = {
     description: 'Manage your lesson plans and slide assets.',
     filters: 'Chapter Filters',
     searchPlaceholder: 'Search by title, textbook edition, or chapter...',
+    textbookPlaceholder: 'All textbooks and chapters',
+    textbookConfirm: 'Apply',
     textbookClear: 'Clear filter',
+    textbookHint: 'Select any level',
     textbookEmpty: 'No textbook catalog is available yet.',
     status: 'Status',
     sort: 'Sort',
@@ -142,6 +148,10 @@ function getWorkbenchCopy(locale: SupportedLocale, moduleId: string) {
       locale === 'zh-CN'
         ? '搜索标题、资料版本、模块或章节主题...'
         : 'Search by title, resource edition, module, or section...',
+    textbookPlaceholder: locale === 'zh-CN' ? '全部资料与章节' : 'All resources and sections',
+    textbookConfirm: locale === 'zh-CN' ? '确认选择' : 'Apply',
+    textbookHint:
+      locale === 'zh-CN' ? '支持按资料目录任意层级筛选' : 'Filter by any level of the resource outline',
     textbookEmpty:
       locale === 'zh-CN' ? '当前没有可用的资料目录。' : 'No resource catalog is available yet.',
     createTitle: locale === 'zh-CN' ? '新建培训任务' : 'Create Training Pack',
@@ -387,15 +397,6 @@ export function LessonPackWorkbenchClient() {
     router.replace('/auth/login');
   };
 
-  const handleChapterToggle = useCallback((nodeId: string) => {
-    setExpandedTreeKeys((previous) => {
-      const next = new Set(previous);
-      if (next.has(nodeId)) next.delete(nodeId);
-      else next.add(nodeId);
-      return next;
-    });
-  }, []);
-
   const sidebarContent = (collapsed: boolean): ReactNode => (
     <div className="flex h-full flex-col gap-4">
       <nav className="flex flex-col gap-4">
@@ -435,19 +436,6 @@ export function LessonPackWorkbenchClient() {
           ),
         )}
       </nav>
-
-      {collapsed ? null : (
-        <WorkbenchChapterFilterPanel
-          treeData={chapterTreeData}
-          value={chapterPath}
-          expandedKeys={expandedTreeKeys}
-          title={copy.filters}
-          emptyLabel={copy.textbookEmpty}
-          clearLabel={copy.textbookClear}
-          onChange={setChapterPath}
-          onToggleExpanded={handleChapterToggle}
-        />
-      )}
 
       <div className="mt-auto flex flex-col gap-2">
         <Button
@@ -546,6 +534,19 @@ export function LessonPackWorkbenchClient() {
             copy={copy}
             locale={activeLocale}
             search={search}
+            chapterSelector={
+              <ResourceChapterSelector
+                treeData={chapterTreeData}
+                value={chapterPath}
+                onChange={setChapterPath}
+                placeholder={copy.textbookPlaceholder}
+                confirmLabel={copy.textbookConfirm}
+                clearLabel={copy.textbookClear}
+                helperText={copy.textbookHint}
+                emptyLabel={copy.textbookEmpty}
+                className="h-11 rounded-2xl"
+              />
+            }
             statusFilter={statusFilter}
             sortBy={sortBy}
             groupedClassrooms={groupedClassrooms}
