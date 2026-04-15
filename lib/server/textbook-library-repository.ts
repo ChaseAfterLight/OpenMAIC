@@ -49,7 +49,6 @@ import type {
 } from '@/lib/server/textbook-library-types';
 
 const log = createLogger('TextbookLibraryRepository');
-const STORE_ROW_ID = 'default';
 const TEXTBOOK_COVER_DOWNLOAD_URL_PREFIX = '/api/storage?action=downloadImage&id=';
 const POSTGRES_LIBRARIES_TABLE = 'textbook_libraries';
 const POSTGRES_IMPORT_DRAFTS_TABLE = 'textbook_pdf_import_drafts';
@@ -213,14 +212,6 @@ async function seedStoreIfNeeded(store: TextbookLibraryStore): Promise<TextbookL
   } else {
     await replacePostgresLibraries('official', 'draft', seededStore.officialDraft);
     await replacePostgresLibraries('official', 'published', seededStore.officialPublished);
-    await getStoragePgPool(config.databaseUrl).query(
-      `
-        UPDATE textbook_library_store
-        SET updated_at = $2
-        WHERE id = $1
-      `,
-      [STORE_ROW_ID, timestamp],
-    );
   }
   log.info(
     `教材库已自动导入内置教材种子: draft=${seededStore.officialDraft.length}, published=${seededStore.officialPublished.length}`,
@@ -477,28 +468,6 @@ async function writeFileStore(store: TextbookLibraryStore): Promise<void> {
 async function ensurePostgresSchema(config: PostgresObjectStorageConfig): Promise<void> {
   const pool = getStoragePgPool(config.databaseUrl);
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS textbook_library_store (
-      id TEXT PRIMARY KEY,
-      updated_at BIGINT NOT NULL
-    );
-  `);
-  await pool.query(`
-    ALTER TABLE textbook_library_store
-    DROP COLUMN IF EXISTS official_draft;
-  `);
-  await pool.query(`
-    ALTER TABLE textbook_library_store
-    DROP COLUMN IF EXISTS official_published;
-  `);
-  await pool.query(`
-    ALTER TABLE textbook_library_store
-    DROP COLUMN IF EXISTS personal_libraries;
-  `);
-  await pool.query(`
-    ALTER TABLE textbook_library_store
-    DROP COLUMN IF EXISTS pdf_import_drafts;
-  `);
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS ${POSTGRES_LIBRARIES_TABLE} (
       scope TEXT NOT NULL,
       view TEXT NOT NULL,
@@ -549,16 +518,6 @@ async function ensurePostgresSchema(config: PostgresObjectStorageConfig): Promis
     CREATE INDEX IF NOT EXISTS textbook_pdf_import_drafts_owner_updated_idx
     ON ${POSTGRES_IMPORT_DRAFTS_TABLE} (owner_user_id, updated_at DESC);
   `);
-  await pool.query(
-    `
-      INSERT INTO textbook_library_store (
-        id,
-        updated_at
-      ) VALUES ($1, $2)
-      ON CONFLICT (id) DO NOTHING
-    `,
-    [STORE_ROW_ID, Date.now()],
-  );
 }
 
 export async function ensureTextbookLibraryStorageReady(): Promise<void> {
@@ -937,29 +896,18 @@ async function readStore(options?: {
     return seededStore;
   }
 
-  const [officialDraft, officialPublished, personalLibraries, metadataResult] = await Promise.all([
+  const [officialDraft, officialPublished, personalLibraries, pdfImportDrafts] = await Promise.all([
     listPostgresLibraries({ scope: 'official', view: 'draft' }),
     listPostgresLibraries({ scope: 'official', view: 'published' }),
     listPostgresLibraries({ scope: 'personal', view: 'draft' }),
-    getStoragePgPool(config.databaseUrl).query(
-      `
-        SELECT updated_at
-        FROM textbook_library_store
-        WHERE id = $1
-        LIMIT 1
-      `,
-      [STORE_ROW_ID],
-    ),
+    includeImportDrafts ? listPostgresImportDrafts() : Promise.resolve([]),
   ]);
-  if ((metadataResult.rowCount ?? 0) === 0) {
-    return createEmptyStore();
-  }
   const store = {
     officialDraft,
     officialPublished,
     personalLibraries,
-    pdfImportDrafts: includeImportDrafts ? await listPostgresImportDrafts() : [],
-    updatedAt: Number(metadataResult.rows[0].updated_at) || Date.now(),
+    pdfImportDrafts,
+    updatedAt: Date.now(),
   };
   const seededStore = await seedStoreIfNeeded(store);
   if (await migrateStoredTextbookCovers(seededStore)) {
@@ -985,14 +933,6 @@ async function writeStore(store: TextbookLibraryStore): Promise<void> {
     replacePostgresLibraries('official', 'published', nextStore.officialPublished),
     replacePostgresLibraries('personal', 'draft', nextStore.personalLibraries),
   ]);
-  await getStoragePgPool(config.databaseUrl).query(
-    `
-      UPDATE textbook_library_store
-      SET updated_at = $2
-      WHERE id = $1
-    `,
-    [STORE_ROW_ID, nextStore.updatedAt],
-  );
 }
 
 function matchesLibraryQuery(library: TextbookLibraryRecord, options: ListTextbookLibrariesOptions): boolean {

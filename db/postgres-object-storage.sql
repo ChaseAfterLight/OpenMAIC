@@ -217,19 +217,11 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions (expires_at);
 
-CREATE TABLE IF NOT EXISTS textbook_library_store (
-  id TEXT PRIMARY KEY,
-  updated_at BIGINT NOT NULL
-);
-
-ALTER TABLE textbook_library_store
-  DROP COLUMN IF EXISTS official_draft;
-ALTER TABLE textbook_library_store
-  DROP COLUMN IF EXISTS official_published;
-ALTER TABLE textbook_library_store
-  DROP COLUMN IF EXISTS personal_libraries;
-ALTER TABLE textbook_library_store
-  DROP COLUMN IF EXISTS pdf_import_drafts;
+DROP TABLE IF EXISTS adaptive_practices CASCADE;
+DROP TABLE IF EXISTS diagnostic_assessments CASCADE;
+DROP TABLE IF EXISTS personalized_explanations CASCADE;
+DROP TABLE IF EXISTS learning_sessions CASCADE;
+DROP TABLE IF EXISTS textbook_library_store CASCADE;
 
 CREATE TABLE IF NOT EXISTS textbook_libraries (
   scope TEXT NOT NULL,
