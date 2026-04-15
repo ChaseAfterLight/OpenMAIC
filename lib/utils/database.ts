@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
+import type { SupportedLocale } from '@/lib/module-host/types';
 import type {
   LessonPackMetadata,
   LessonPackVersionSource,
@@ -53,7 +54,8 @@ export interface StageRecord {
   createdAt: number; // timestamp
   updatedAt: number; // timestamp
   lessonPack?: LessonPackMetadata;
-  language?: string;
+  language?: SupportedLocale;
+  languageDirective?: string;
   style?: string;
   currentSceneId?: string;
   agentIds?: string[]; // Agent IDs selected at creation time
@@ -357,6 +359,38 @@ class MAICDatabase extends Dexie {
       mediaFiles: 'id, stageId, [stageId+type]',
       generatedAgents: 'id, stageId',
     });
+
+    // Version 10: Add languageDirective while keeping legacy language for compatibility.
+    const LOCALE_TO_DIRECTIVE: Record<string, string> = {
+      'zh-CN': 'Deliver the entire course in Chinese (Simplified, zh-CN).',
+      'en-US': 'Deliver the entire course in English (en-US).',
+      'ja-JP': 'Deliver the entire course in Japanese (ja-JP).',
+      'ru-RU': 'Deliver the entire course in Russian (ru-RU).',
+    };
+    this.version(10)
+      .stores({
+        stages: 'id, updatedAt',
+        scenes: 'id, stageId, order, [stageId+order]',
+        audioFiles: 'id, createdAt',
+        imageFiles: 'id, createdAt',
+        snapshots: '++id',
+        chatSessions: 'id, stageId, [stageId+createdAt]',
+        playbackState: 'stageId',
+        stageOutlines: 'stageId',
+        lessonPackVersions: 'id, stageId, createdAt, [stageId+createdAt]',
+        mediaFiles: 'id, stageId, [stageId+type]',
+        generatedAgents: 'id, stageId',
+      })
+      .upgrade(async (tx) => {
+        const table = tx.table('stages');
+        await table.toCollection().modify((stage: Record<string, unknown>) => {
+          const lang = stage.language as string | undefined;
+          if (lang && !stage.languageDirective) {
+            stage.languageDirective =
+              LOCALE_TO_DIRECTIVE[lang] || `Deliver the entire course in ${lang}.`;
+          }
+        });
+      });
   }
 }
 

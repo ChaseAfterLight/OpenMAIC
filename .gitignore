@@ -82,3 +82,4 @@ scripts/*
 !/scripts/storage/
 !/scripts/storage/*.mjs
 /skills/
+tests/generation/*.eval.result.md

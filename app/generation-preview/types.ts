@@ -37,6 +37,8 @@ export interface GenerationSessionState {
   // Web search context
   researchContext?: string;
   researchSources?: Array<{ title: string; url: string }>;
+  // Language directive inferred from outline generation
+  languageDirective?: string;
 }
 
 export type GenerationStep = {
@@ -63,17 +65,17 @@ export const ALL_STEPS: GenerationStep[] = [
     type: 'analysis',
   },
   {
-    id: 'agent-generation',
-    title: 'generation.agentGeneration',
-    description: 'generation.agentGenerationDesc',
-    icon: Bot,
-    type: 'writing',
-  },
-  {
     id: 'outline',
     title: 'generation.generatingOutlines',
     description: 'generation.generatingOutlinesDesc',
     icon: FileText,
+    type: 'writing',
+  },
+  {
+    id: 'agent-generation',
+    title: 'generation.agentGeneration',
+    description: 'generation.agentGenerationDesc',
+    icon: Bot,
     type: 'writing',
   },
   {

@@ -133,6 +133,7 @@ export async function persistClassroom(
     updatedAt: normalizedStage.updatedAt,
     lessonPack: normalizedStage.lessonPack,
     language: normalizedStage.language,
+    languageDirective: normalizedStage.languageDirective,
     style: normalizedStage.style,
     currentSceneId: stageRecord.currentSceneId,
     agentIds: normalizedStage.agentIds,

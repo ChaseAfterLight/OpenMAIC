@@ -52,6 +52,11 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
       ...data.stage,
       createdAt: data.stage.createdAt || now,
       updatedAt: now,
+      language: data.stage.language,
+      languageDirective: data.stage.languageDirective,
+      style: data.stage.style,
+      currentSceneId: data.currentSceneId || undefined,
+      agentIds: data.stage.agentIds,
     });
 
     // Save to stages table
@@ -64,6 +69,7 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
       updatedAt: now,
       lessonPack: stage.lessonPack,
       language: stage.language,
+      languageDirective: stage.languageDirective,
       style: stage.style,
       currentSceneId: data.currentSceneId || undefined,
       agentIds: stage.agentIds,

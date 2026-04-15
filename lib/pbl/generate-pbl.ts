@@ -32,11 +32,12 @@ export interface GeneratePBLConfig {
   projectDescription: string;
   targetSkills: string[];
   issueCount?: number;
-  language: SupportedLocale;
+  language?: SupportedLocale;
   moduleId?: ModuleId;
   promptPolicy?: PromptPolicy;
   k12?: K12StructuredInput;
   moduleContext?: string;
+  languageDirective?: string;
 }
 
 export interface GeneratePBLCallbacks {
@@ -59,6 +60,15 @@ export function resolvePBLModuleContext(
   }).content;
 }
 
+function resolvePBLLanguageDirective(config: Pick<GeneratePBLConfig, 'languageDirective' | 'language'>): string {
+  if (config.languageDirective?.trim()) {
+    return config.languageDirective.trim();
+  }
+  return config.language === 'en-US'
+    ? 'Deliver the entire course in English (en-US).'
+    : 'Deliver the entire course in Chinese (Simplified, zh-CN).';
+}
+
 /**
  * Generate a complete PBL project configuration using an agentic loop.
  *
@@ -71,8 +81,9 @@ export async function generatePBLContent(
   model: LanguageModel,
   callbacks?: GeneratePBLCallbacks,
 ): Promise<PBLProjectConfig> {
-  const { language } = config;
   const moduleContext = resolvePBLModuleContext(config);
+  const { language } = config;
+  const languageDirective = resolvePBLLanguageDirective(config);
 
   // Initialize shared state
   const projectConfig: PBLProjectConfig = {
@@ -89,7 +100,7 @@ export async function generatePBLContent(
   );
   const projectMCP = new ProjectMCP(projectConfig);
   const agentMCP = new AgentMCP(projectConfig);
-  const issueboardMCP = new IssueboardMCP(projectConfig, agentMCP, language);
+  const issueboardMCP = new IssueboardMCP(projectConfig, agentMCP, languageDirective);
 
   callbacks?.onProgress?.('Starting PBL project generation...');
 
@@ -310,18 +321,19 @@ export async function generatePBLContent(
 
   // Run the agentic loop
   const systemPrompt = buildPBLSystemPrompt({
-    ...config,
+    projectTopic: config.projectTopic,
+    projectDescription: config.projectDescription,
+    targetSkills: config.targetSkills,
+    issueCount: config.issueCount,
     moduleContext,
+    languageDirective,
   });
 
   const _result = await callLLM(
     {
       model,
       system: systemPrompt,
-      prompt:
-        language === 'zh-CN'
-          ? `请设计一个PBL项目。现在从 project_info 模式开始，先设置项目标题和描述。`
-          : `Design a PBL project. Start in project_info mode by setting the project title and description.`,
+      prompt: `Design a PBL project. Start in project_info mode by setting the project title and description.`,
       tools: pblTools,
       stopWhen: stepCountIs(30),
       onStepFinish: ({ toolCalls, text }) => {
@@ -348,7 +360,7 @@ export async function generatePBLContent(
   callbacks?.onProgress?.('PBL structure generated. Running post-processing...');
 
   // Post-processing: activate first issue and generate initial questions
-  await postProcessPBL(projectConfig, model, language, moduleContext, callbacks);
+  await postProcessPBL(projectConfig, model, { language, languageDirective, moduleContext }, callbacks);
 
   callbacks?.onProgress?.('PBL project generation complete!');
 
@@ -364,11 +376,15 @@ export async function generatePBLContent(
 async function postProcessPBL(
   config: PBLProjectConfig,
   model: LanguageModel,
-  language: SupportedLocale,
-  moduleContext: string,
+  contextConfig: {
+    language?: SupportedLocale;
+    languageDirective: string;
+    moduleContext: string;
+  },
   callbacks?: GeneratePBLCallbacks,
 ): Promise<void> {
   const { issueboard, agents } = config;
+  const { language, languageDirective, moduleContext } = contextConfig;
 
   if (issueboard.issues.length === 0) {
     return;
@@ -402,6 +418,10 @@ async function postProcessPBL(
 ${firstIssue.participants.length > 0 ? `**参与者**: ${firstIssue.participants.join('、')}` : ''}
 ${firstIssue.notes ? `**备注**: ${firstIssue.notes}` : ''}
 
+## 语言要求
+
+${languageDirective}
+
 ## 你的任务
 
 根据以上任务信息，生成1-3个具体、可操作的引导问题，帮助学生理解和完成这个任务。每个问题应：
@@ -419,15 +439,22 @@ ${firstIssue.notes ? `**备注**: ${firstIssue.notes}` : ''}
 ${firstIssue.participants.length > 0 ? `**Participants**: ${firstIssue.participants.join(', ')}` : ''}
 ${firstIssue.notes ? `**Notes**: ${firstIssue.notes}` : ''}
 
+## Language Directive
+
+${languageDirective}
+
 ## Your Task
 
-Based on the issue information above, generate 1-3 specific, actionable questions that will help students understand and complete this issue. Each question should:
-- Guide students toward key learning objectives
-- Be specific and actionable
-- Help break down the problem
-- Encourage critical thinking
+Generate a welcome message for the student working on this issue. The message should:
+1. Start with a friendly greeting introducing yourself as the guiding assistant for this issue (use a natural, localized title — do NOT use the English term "Question Agent" directly in non-English contexts)
+2. Present 1-3 specific, actionable guiding questions based on the issue information above, each question should:
+   - Guide students toward key learning objectives
+   - Be specific and actionable
+   - Help break down the problem
+   - Encourage critical thinking
+3. End by encouraging the student to type \`@question\` anytime for help (keep the literal \`@question\` as-is since it triggers the agent system)
 
-Format your response as a numbered list.`;
+Format the questions as a numbered list.`;
 
     const questionResult = await callLLM(
       {
@@ -441,16 +468,10 @@ Format your response as a numbered list.`;
     const generatedQuestions = questionResult.text;
     firstIssue.generated_questions = generatedQuestions;
 
-    // Add welcome message to chat
-    const welcomeMessage =
-      language === 'zh-CN'
-        ? `你好！我是这个任务的提问助手："${firstIssue.title}"\n\n为了引导你的学习，我准备了一些问题：\n\n${generatedQuestions}\n\n随时 @question 我来获取帮助或澄清！`
-        : `Hello! I'm your Question Agent for this issue: "${firstIssue.title}"\n\nTo help guide your work, I've prepared some questions for you:\n\n${generatedQuestions}\n\nFeel free to @question me anytime if you need help or clarification!`;
-
     config.chat.messages.push({
       id: `msg_welcome_${Date.now()}`,
       agent_name: firstIssue.question_agent_name,
-      message: welcomeMessage,
+      message: generatedQuestions,
       timestamp: Date.now(),
       read_by: [],
     });

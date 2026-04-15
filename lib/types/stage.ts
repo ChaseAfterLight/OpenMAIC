@@ -2,6 +2,7 @@
 import type { Slide } from '@/lib/types/slides';
 import type { Action } from '@/lib/types/action';
 import type { PBLProjectConfig } from '@/lib/pbl/types';
+import type { SupportedLocale } from '@/lib/module-host/types';
 
 export type SceneType = 'slide' | 'quiz' | 'interactive' | 'pbl';
 
@@ -40,7 +41,8 @@ export interface Stage {
   updatedAt: number;
   lessonPack?: LessonPackMetadata;
   // Stage metadata
-  language?: string;
+  language?: SupportedLocale;
+  languageDirective?: string;
   style?: string;
   // Whiteboard data
   whiteboard?: Whiteboard[];

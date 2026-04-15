@@ -11,7 +11,10 @@ import {
 } from '@/lib/server/classroom-job-repository';
 import type { ClassroomGenerationJob } from '@/lib/server/classroom-job-types';
 
-function jobMessage(input: Pick<GenerateClassroomInput, 'language'> | undefined, key: 'queued' | 'started' | 'completed' | 'failed') {
+function jobMessage(
+  input: Pick<GenerateClassroomInput, 'language'> | undefined,
+  key: 'queued' | 'started' | 'completed' | 'failed',
+) {
   const locale = input?.language === 'en-US' ? 'en-US' : 'zh-CN';
   const messages = {
     'zh-CN': {
@@ -35,7 +38,7 @@ function buildInputSummary(input: GenerateClassroomInput): ClassroomGenerationJo
   return {
     requirementPreview:
       input.requirement.length > 200 ? `${input.requirement.slice(0, 197)}...` : input.requirement,
-    language: input.language || 'zh-CN',
+    language: input.language === 'en-US' ? 'en-US' : 'zh-CN',
     hasPdf: !!input.pdfContent,
     pdfTextLength: input.pdfContent?.text.length || 0,
     pdfImageCount: input.pdfContent?.images.length || 0,

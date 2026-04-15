@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getStageRecord: vi.fn(),
+  getStageOutlinesRecord: vi.fn(),
   listScenesByStageId: vi.fn(),
   replaceScenesByStageId: vi.fn(),
   saveStageRecord: vi.fn(),
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/server/storage-repository', () => ({
   getStageRecord: mocks.getStageRecord,
+  getStageOutlinesRecord: mocks.getStageOutlinesRecord,
   listScenesByStageId: mocks.listScenesByStageId,
   replaceScenesByStageId: mocks.replaceScenesByStageId,
   saveStageRecord: mocks.saveStageRecord,
@@ -19,6 +21,7 @@ import { persistClassroom, readClassroom } from '@/lib/server/classroom-storage'
 describe('classroom storage migration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getStageOutlinesRecord.mockResolvedValue(null);
   });
 
   it('persists classroom JSON through the server storage repository', async () => {
@@ -30,7 +33,7 @@ describe('classroom storage migration', () => {
       createdAt: 1710000000000,
       updatedAt: 1710000005000,
       lessonPack: { status: 'draft' as const },
-      language: 'en-US',
+      language: 'en-US' as const,
       style: 'interactive',
       currentSceneId: 'scene-1',
       agentIds: ['agent-1'],

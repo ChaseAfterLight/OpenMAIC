@@ -5,6 +5,9 @@ Question Count: {{questionCount}}, Difficulty: {{difficulty}}, Question Types: {
 
 {{moduleContext}}
 
+## Language Directive
+{{languageDirective}}
+
 **Language Requirement**: Questions and options must be in the same language as the title and description above.
 
 Output JSON array directly (no explanation, no code blocks, no LaTeX):

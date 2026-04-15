@@ -25,6 +25,7 @@ import { MONO_LOGO_PROVIDERS } from '@/lib/ai/providers';
 import type { SettingsSection } from '@/lib/types/settings';
 import { MediaPopover } from '@/components/generation/media-popover';
 import { getSupportedDocumentType, SUPPORTED_DOCUMENT_ACCEPT } from '@/lib/utils/document-upload';
+import type { SupportedLocale } from '@/lib/module-host/types';
 
 // ─── Constants ───────────────────────────────────────────────
 const MAX_PDF_SIZE_MB = 50;
@@ -32,8 +33,8 @@ const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
 
 // ─── Types ───────────────────────────────────────────────────
 export interface GenerationToolbarProps {
-  language: 'zh-CN' | 'en-US';
-  onLanguageChange: (lang: 'zh-CN' | 'en-US') => void;
+  language?: SupportedLocale;
+  onLanguageChange?: (value: SupportedLocale) => void;
   webSearch: boolean;
   onWebSearchChange: (v: boolean) => void;
   onSettingsOpen: (section?: SettingsSection) => void;
@@ -45,8 +46,8 @@ export interface GenerationToolbarProps {
 
 // ─── Component ───────────────────────────────────────────────
 export function GenerationToolbar({
-  language,
-  onLanguageChange,
+  language: _language,
+  onLanguageChange: _onLanguageChange,
   webSearch,
   onWebSearchChange,
   onSettingsOpen,
@@ -420,20 +421,6 @@ export function GenerationToolbar({
           <TooltipContent>{t('toolbar.webSearchNoProvider')}</TooltipContent>
         </Tooltip>
       )}
-
-      {/* ── Language pill ── */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={() => onLanguageChange(language === 'zh-CN' ? 'en-US' : 'zh-CN')}
-            className={pillMuted}
-          >
-            <Globe className="size-3.5" />
-            <span>{language === 'zh-CN' ? '中文' : 'EN'}</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{t('toolbar.languageHint')}</TooltipContent>
-      </Tooltip>
 
       {/* ── Separator ── */}
       <div className="w-px h-4 bg-border/60 mx-1" />

@@ -43,7 +43,7 @@ describe('generateClassroom fallback resolution', () => {
     vi.clearAllMocks();
 
     mocks.resolveModel.mockImplementation(async (...args: unknown[]) => {
-      const [{ modelString, providerType }] = args as [
+      const [{ modelString, providerType } = {}] = args as [
         { modelString?: string; providerType?: string } | undefined,
       ];
 
