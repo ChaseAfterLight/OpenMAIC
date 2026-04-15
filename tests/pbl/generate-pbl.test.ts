@@ -37,7 +37,7 @@ describe('resolvePBLModuleContext', () => {
     });
 
     expect(context).toContain('## 提示词策略');
-    expect(context).toContain('当前请求来自小学教师备课场景');
+    expect(context).toContain('当前请求来自教师备课场景');
     expect(context).toContain('优先围绕章节摘要、关键词和教材资料组织课堂内容');
     expect(context).toContain('PBL 任务必须脚手架清晰、目标具体');
   });

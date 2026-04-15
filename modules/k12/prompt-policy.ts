@@ -8,7 +8,7 @@ import type {
 function buildBalancedK12Lines(locale: SupportedLocale): string[] {
   if (locale === 'zh-CN') {
     return [
-      '- 当前请求来自小学教师备课场景，而不是通用自学场景。',
+      '- 当前请求来自教师备课场景，而不是通用自学场景。',
       '- 如果用户没有明确说明，默认按小学 3-6 年级理解。',
       '- 输出目标应偏向“教师可直接拿去上课或改课”的教学包，而不是泛化科普内容。',
       '- 优先生成 slide 和 quiz 场景；只有在交互确实能帮助理解时才使用 interactive；除非用户明确要求，否则不要使用 pbl。',

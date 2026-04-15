@@ -51,7 +51,7 @@ describe('prompt context composer', () => {
       k12: input,
     });
 
-    expect(context).toContain('当前请求来自小学教师备课场景');
+    expect(context).toContain('当前请求来自教师备课场景');
     expect(context).toContain('教师可直接拿去上课或改课');
     expect(context).toContain('优先围绕章节摘要、关键词和教材资料组织课堂内容');
     expect(context).toContain('### 当前结构化备课参数');
@@ -83,6 +83,6 @@ describe('prompt context composer', () => {
     expect(context).toContain('## 成人教育模块上下文');
     expect(context).toContain('成人学习、职业培训或继续教育场景');
     expect(context).toContain('工作坊');
-    expect(context).not.toContain('小学教师备课场景');
+    expect(context).not.toContain('教师备课场景');
   });
 });
