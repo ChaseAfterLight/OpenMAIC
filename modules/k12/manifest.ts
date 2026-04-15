@@ -81,7 +81,7 @@ export const k12ModuleManifest: BusinessModule = {
       'en-US': 'OpenMAIC K12',
     },
     description: {
-      'zh-CN': '面向小学教师的 AI 备课与课堂生成工具，快速产出教案、课件和练习。',
+      'zh-CN': '面向教师的 AI 备课与课堂生成工具，快速产出教案、课件和练习。',
       'en-US':
         'An AI lesson planning and classroom generation workspace for elementary teachers.',
     },
